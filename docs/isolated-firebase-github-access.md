@@ -1,0 +1,29 @@
+# Isolated Firebase access through GitHub Actions (not configured)
+
+This is an optional, **read-only** first step toward remote work without Cloud Shell. It is not a Cloud Shell session and does not give the agent direct Firebase Console access. No Google access has been granted or checked by adding this workflow. It is restricted to the isolated test project `chatbox-test-2c236731bf` (project number `1012186851732`), not the production project.
+
+A Google Cloud project administrator must first configure Workload Identity Federation and service-account impersonation in that project. This can be done in Google Cloud Console, but may require enabling relevant APIs; enabling APIs and granting IAM roles are consequential changes and may affect billing or quotas. The owner must explicitly approve them. No service-account key or long-lived token is required. Do not paste credentials into chat, commit them, or upload them to Drive.
+
+## Trust requirements
+
+The GitHub OIDC provider must use issuer `https://token.actions.githubusercontent.com` and restrict its attribute condition to the following claims (including the immutable repository and owner IDs). Adapt the attribute mapping to the provider settings; the claims below are illustrative CEL and must be applied at the Google Cloud trust boundary, not merely in workflow code:
+
+```
+assertion.repository_id == '1466284145' &&
+assertion.repository_owner_id == '359412232' &&
+assertion.ref == 'refs/heads/arena/f649c1bd-chatbox' &&
+assertion.workflow_ref == 'Ishtiakru/Chatbox/.github/workflows/isolated-firebase-access.yml@refs/heads/arena/f649c1bd-chatbox'
+```
+
+The provider's attribute mapping must include `google.subject=assertion.sub` and `attribute.repository_id=assertion.repository_id`. Grant `roles/iam.workloadIdentityUser` **on the isolated service account**, only to the principal set for repository ID `1466284145` in this pool. Give that account the minimum read-only project permission needed for `resourcemanager.projects.get` (for example, a reviewed role containing it). Do not grant broad project Owner/Editor roles. Branch and workflow restrictions do not protect against someone who can modify this branch's workflow; restrict who can push and review workflow changes. GitHub repository and workflow access remain security-sensitive.
+
+In GitHub repository Actions variables, the owner must set the two **public identifiers**, not secrets:
+
+- `CHATBOX_TEST_WIF_PROVIDER`: full provider resource name beginning `projects/1012186851732/locations/global/workloadIdentityPools/` and ending `/providers/PROVIDER_ID`.
+- `CHATBOX_TEST_SERVICE_ACCOUNT`: service account email ending `@chatbox-test-2c236731bf.iam.gserviceaccount.com`.
+
+The current GitHub integration was denied access to the Actions secrets API. Whether it can manage variables must be verified separately; the owner may need to configure them. Provider names and service-account emails are identifiers, not private keys.
+
+The workflow only runs for a push on the current branch with `[isolated-firebase-access]` in the commit message, or a manual dispatch where GitHub permits it. GitHub manual dispatch requires the workflow file to exist on the default branch, so it may not be available while this branch is unmerged. It reads project metadata using a short-lived credential; it does not deploy, enable APIs, change IAM, read chat data, or grant new access. No run has been requested. Configuring trust and running it require separate owner approval.
+
+Once the connection exists, any proposed write (such as changing test Firebase rules) needs separately reviewed least-privilege IAM and an explicit request. The workflow as supplied cannot edit Firebase. Production requires a separate review and authorization; never reuse this test-project trust for production.

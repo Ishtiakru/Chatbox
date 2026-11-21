@@ -1,0 +1,53 @@
+name: Isolated Firebase connection (read only)
+
+# Deliberate opt-in only. No deployment, secret keys or production project access.
+# The Google Cloud workload identity provider is the actual trust boundary and
+# must independently restrict repository ID, owner ID, branch and workflow.
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect-test-project:
+    if: >-
+      github.ref == 'refs/heads/arena/f649c1bd-chatbox' &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[isolated-firebase-access]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROJECT_ID: chatbox-test-2c236731bf
+      WIF_PROVIDER: ${{ vars.CHATBOX_TEST_WIF_PROVIDER }}
+      SERVICE_ACCOUNT: ${{ vars.CHATBOX_TEST_SERVICE_ACCOUNT }}
+    steps:
+      - name: Check public connection identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$WIF_PROVIDER" =~ ^projects/1012186851732/locations/global/workloadIdentityPools/[a-z0-9_-]+/providers/[a-z0-9_-]+$ ]]; then
+            echo 'Set CHATBOX_TEST_WIF_PROVIDER to a provider in the isolated test project.'; exit 1
+          fi
+          if [[ ! "$SERVICE_ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@chatbox-test-2c236731bf\.iam\.gserviceaccount\.com$ ]]; then
+            echo 'Set CHATBOX_TEST_SERVICE_ACCOUNT to a service account in the isolated test project.'; exit 1
+          fi
+      - name: Obtain a short-lived Google credential
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.CHATBOX_TEST_WIF_PROVIDER }}
+          service_account: ${{ vars.CHATBOX_TEST_SERVICE_ACCOUNT }}
+          project_id: chatbox-test-2c236731bf
+          create_credentials_file: true
+          cleanup_credentials: true
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Read isolated project metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud projects describe "$PROJECT_ID" --format='value(projectId)'
+          echo 'Read-only connection completed. No Firebase rules or resources were changed.'
