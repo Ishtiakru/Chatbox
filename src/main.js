@@ -1,6 +1,6 @@
 import './style.css';
-import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, X } from 'lucide';
-const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, X };
+import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X } from 'lucide';
+const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X };
 import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
@@ -41,7 +41,7 @@ const seeds = {
 const key = 'saira-demo-messages-v1';
 let saved = {};
 try { const parsed = JSON.parse(localStorage.getItem(key) || '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed; } catch { /* ignore invalid local data */ }
-const state = { view: 'chats', active: 'maya', search: '', draft: '', saved, modal: null, mobileChat: false, user: null, authReady: false, authLoading: false, authError: '', live: { ready: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false }, ai: { draft: '', messages: [], busy: false, error: '' }, admin: { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false }, publicWelcome: '' };
+const state = { view: LIVE_CHAT_ENABLED ? 'live' : 'chats', active: 'maya', search: '', draft: '', saved, modal: null, mobileChat: false, user: null, authReady: false, authLoading: false, authError: '', live: { ready: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false }, ai: { draft: '', messages: [], busy: false, error: '' }, admin: { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false }, publicWelcome: '' };
 const root = document.querySelector('#app');
 const testProject = resolveFirebaseConfig(import.meta.env);
 document.documentElement.classList.toggle('test-firebase-project', testProject.isTestProject);
@@ -145,6 +145,10 @@ root.addEventListener('click', event => {
  else if (action === 'live-close') { respondToLiveRequest('closed'); }
  else if (action === 'live-retry') { if (state.user && !state.live.ready && !state.live.connecting) initializeLive(state.user); }
  else if (action === 'live-copy-id') { copyCurrentChatboxId(); }
+ else if (action === 'live-new-toggle') { state.live.newOpen = !state.live.newOpen; render(); }
+ else if (action === 'live-list') { stopCallsForPage(); state.live.screen = 'list'; render(); }
+ else if (action === 'live-details') { stopCallsForPage(); state.live.screen = 'details'; render(); }
+ else if (action === 'live-thread') { state.live.screen = 'thread'; render(); resumeCallsForPage(); }
  else if (action === 'block-retry') { if (EXPERIMENTAL_BLOCKING_ENABLED && state.user && blockController) blockController.setUser(state.user.uid); }
  else if (action === 'block-add' || action === 'block-remove') { changeBlock(action === 'block-add'); }
  else if (action === 'sign-in') { beginSignIn(); }
@@ -205,7 +209,7 @@ let pageActive = true;
 // pending imports and dispose discovery as well as active media while hidden.
 // Browser suspension can still delay or prevent lifecycle events.
 function callPageAvailable() {
-  return canUseCallPage({enabled:EXPERIMENTAL_CALLS_ENABLED, pageActive, hidden:document.hidden, view:state.view, authenticated:isCurrentAuthUser(state.user)});
+  return state.live.screen === 'thread' && canUseCallPage({enabled:EXPERIMENTAL_CALLS_ENABLED, pageActive, hidden:document.hidden, view:state.view, authenticated:isCurrentAuthUser(state.user)});
 }
 function stopCallsForPage() {
   callInitGeneration++;
@@ -367,7 +371,7 @@ function selectLiveConversation(id) {
   peerProfileController?.dispose(); peerProfileController = null;
   state.live.peerProfile = null;
   const draft = liveDrafts.read(id);
-  state.live.selected = id; state.live.messages = []; state.live.hasOlder = false; state.live.loadingOlder = false; state.live.messagesFromCache = true; state.live.historyReset = false; state.live.messageDraft = draft.text; state.live.error = draft.error; state.live.call = null;
+  state.live.selected = id; state.live.screen = 'thread'; state.live.newOpen = false; state.live.messages = []; state.live.hasOlder = false; state.live.loadingOlder = false; state.live.messagesFromCache = true; state.live.historyReset = false; state.live.messageDraft = draft.text; state.live.error = draft.error; state.live.call = null;
   const generation = liveGeneration, threadGeneration = liveThreadGeneration;
   messageFeed = liveApi.watchMessages(id, page => {
     if (generation !== liveGeneration || threadGeneration !== liveThreadGeneration || state.live.selected !== id) return;
