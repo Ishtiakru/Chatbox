@@ -25,9 +25,20 @@ test('only the two test identities can use the base chat candidate', async () =>
   await assertFails(getDocs(collection(outsider,'conversations')));
   const conversation = {participants:['lab-alice','lab-bob'],createdBy:'lab-alice',status:'pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()};
   await assertSucceeds(setDoc(doc(alice,'conversations','lab'),conversation));
+  // The initiator must not accept their own request or write before acceptance.
+  await assertFails(updateDoc(doc(alice,'conversations','lab'),{status:'active',updatedAt:serverTimestamp()}));
+  await assertFails(setDoc(doc(alice,'conversations','lab','messages','early'),{senderId:'lab-alice',body:'Too early',sentAt:serverTimestamp()}));
   await assertSucceeds(updateDoc(doc(bob,'conversations','lab'),{status:'active',updatedAt:serverTimestamp()}));
   await assertSucceeds(setDoc(doc(alice,'conversations','lab','messages','hello'),{senderId:'lab-alice',body:'Hello',sentAt:serverTimestamp()}));
   await assertSucceeds(getDoc(doc(bob,'conversations','lab','messages','hello')));
+  await assertSucceeds(setDoc(doc(bob,'conversations','lab','messages','reply'),{senderId:'lab-bob',body:'Hi',sentAt:serverTimestamp()}));
+  await assertSucceeds(getDoc(doc(alice,'conversations','lab','messages','reply')));
+  // An outsider cannot read or send, even if they claim an allowed sender ID.
   await assertFails(getDoc(doc(outsider,'conversations','lab','messages','hello')));
   await assertFails(setDoc(doc(outsider,'conversations','lab','messages','no'),{senderId:'lab-outsider',body:'No',sentAt:serverTimestamp()}));
+  await assertFails(setDoc(doc(outsider,'conversations','lab','messages','forged'),{senderId:'lab-alice',body:'No',sentAt:serverTimestamp()}));
+  await assertFails(updateDoc(doc(bob,'conversations','lab','messages','hello'),{body:'Altered'}));
+  await assertSucceeds(updateDoc(doc(bob,'conversations','lab'),{status:'closed',updatedAt:serverTimestamp()}));
+  await assertSucceeds(getDoc(doc(alice,'conversations','lab','messages','reply')));
+  await assertFails(setDoc(doc(alice,'conversations','lab','messages','late'),{senderId:'lab-alice',body:'Too late',sentAt:serverTimestamp()}));
 });
