@@ -1,22 +1,32 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithCredential, reauthenticateWithPopup, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createGoogleReauth } from './google-reauth.js';
+import { createNativeAuthGate, watchAfterNativeGate } from './native-auth-gate.js';
 
 import { resolveFirebaseConfig } from './firebase-config.js';
 
 // A test build never silently falls back to the real project on bad input.
 const {config: firebaseConfig, isTestProject} = resolveFirebaseConfig(import.meta.env);
-// Native OAuth uses google-services.json; until a matching test Android build
-// is implemented, refuse to mix its production client with a test project.
-if (isTestProject && Capacitor.isNativePlatform()) throw new Error('Test Firebase configuration is supported in browsers only.');
+const native = Capacitor.isNativePlatform();
+const nativeIdentity = registerPlugin('NativeFirebaseIdentity');
+const nativeReady = createNativeAuthGate({
+  isNative: native,
+  isTestProject,
+  nativeTestOptIn: import.meta.env.VITE_CHATBOX_NATIVE_TEST_MODE === 'true',
+  webConfig: firebaseConfig,
+  getIdentity: () => nativeIdentity.getIdentity(),
+});
 export { isTestProject };
 export const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
-export const watchAuth = (callback, onError) => onAuthStateChanged(auth, callback, onError);
+export const watchAuth = (callback, onError) => native
+  ? watchAfterNativeGate(nativeReady, (cb, err) => onAuthStateChanged(auth, cb, err), callback, onError)
+  : onAuthStateChanged(auth, callback, onError);
 export const isCurrentAuthUser = user => !!user && auth.currentUser === user;
 async function nativeGoogleCredential() {
+  await nativeReady();
   const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
   const result = await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true });
   const idToken = result.credential?.idToken;

@@ -34,3 +34,19 @@ jobs:
       - name: Compile diagnostic Android Java
         working-directory: android
         run: ./gradlew --no-daemon --max-workers=2 :app:compileDebugJavaWithJavac
+      - name: Build isolated debug variant with synthetic test configuration
+        env:
+          VITE_CHATBOX_TEST_MODE: 'true'
+          VITE_CHATBOX_NATIVE_TEST_MODE: 'true'
+          VITE_CHATBOX_TEST_FIREBASE_CONFIG: '{"projectId":"chatbox-test-123","apiKey":"synthetic-web-key","authDomain":"chatbox-test-123.firebaseapp.com","messagingSenderId":"123456","appId":"1:123456:web:abc123"}'
+          VITE_ENABLE_FIRESTORE_CHAT: 'true'
+        run: |
+          cat > android/app/google-services.json <<'JSON'
+          {"project_info":{"project_number":"123456","project_id":"chatbox-test-123","storage_bucket":"example.invalid"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456:android:abc123","android_client_info":{"package_name":"com.chatbox.test"}},"oauth_client":[{"client_type":3,"client_id":"synthetic-web-client.invalid"}],"api_key":[{"current_key":"synthetic-api-key"}]}],"configuration_version":"1"}
+          JSON
+          npm run build
+          npx cap sync android
+          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug -PchatboxIsolatedTest=true)
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.chatbox.test'"
+          (cd android && ./gradlew --no-daemon :app:tasks --all -PchatboxIsolatedTest=true) > /tmp/chatbox-test-tasks.txt
+          if grep -Eq '^assembleRelease([[:space:]]|$)' /tmp/chatbox-test-tasks.txt; then echo 'Test release variant unexpectedly enabled'; exit 1; fi
