@@ -1,0 +1,36 @@
+name: Android diagnostic compile smoke test
+
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+
+permissions:
+  contents: read
+
+jobs:
+  android-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Create synthetic Firebase Android configuration
+        run: |
+          cat > android/app/google-services.json <<'JSON'
+          {"project_info":{"project_number":"1030482946047","project_id":"chatbox-afb8c","storage_bucket":"example.invalid"},"client":[{"client_info":{"mobilesdk_app_id":"1:1030482946047:android:abcdef1234","android_client_info":{"package_name":"com.chatbox.apk"}},"oauth_client":[{"client_type":3,"client_id":"synthetic-web-client.invalid"}],"api_key":[{"current_key":"synthetic-api-key"}]}],"configuration_version":"1"}
+          JSON
+      - name: Install and sync default Android wrapper
+        run: |
+          npm ci --no-audit --no-fund
+          npm run android:sync
+      - name: Compile diagnostic Android Java
+        working-directory: android
+        run: ./gradlew --no-daemon --max-workers=2 :app:compileDebugJavaWithJavac
