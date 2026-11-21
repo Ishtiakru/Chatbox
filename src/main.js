@@ -9,6 +9,8 @@ import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_EN
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
+import { copyChatboxId } from './copy-chatbox-id.js';
+import { liveIdFeedback } from './live-id-view.js';
 import { disposeLiveResources } from './live-lifecycle.js';
 import { createPeerProfileController } from './peer-profile-controller.js';
 import { createSlowOperationNotice } from './slow-operation-notice.js';
@@ -142,6 +144,7 @@ root.addEventListener('click', event => {
  else if (action === 'live-accept') { respondToLiveRequest('active'); }
  else if (action === 'live-close') { respondToLiveRequest('closed'); }
  else if (action === 'live-retry') { if (state.user && !state.live.ready && !state.live.connecting) initializeLive(state.user); }
+ else if (action === 'live-copy-id') { copyCurrentChatboxId(); }
  else if (action === 'block-retry') { if (EXPERIMENTAL_BLOCKING_ENABLED && state.user && blockController) blockController.setUser(state.user.uid); }
  else if (action === 'block-add' || action === 'block-remove') { changeBlock(action === 'block-add'); }
  else if (action === 'sign-in') { beginSignIn(); }
@@ -267,6 +270,19 @@ async function beginSignOut() {
     state.authLoading = false;
     render();
   }
+}
+
+async function copyCurrentChatboxId() {
+  const user = state.user, generation = liveGeneration;
+  if (!user || state.view !== 'live' || !LIVE_CHAT_ENABLED) return;
+  // Invoke writeText before the first await to preserve the browser's user gesture.
+  let clipboard;
+  try { clipboard = navigator.clipboard; } catch { /* unavailable in this environment */ }
+  const copied = await copyChatboxId(user.uid, clipboard);
+  if (generation !== liveGeneration || state.user !== user || !isCurrentAuthUser(user)) return;
+  state.live.idCopyStatus = copied ? 'copied' : 'unavailable';
+  const feedback = root.querySelector('.live-id-feedback');
+  if (state.view === 'live' && feedback) feedback.textContent = liveIdFeedback(state.live.idCopyStatus);
 }
 
 // Listener generations prevent stale responses from a signed-out account from reappearing.
