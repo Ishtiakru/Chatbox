@@ -13,6 +13,7 @@ import { copyChatboxId } from './copy-chatbox-id.js';
 import { liveIdFeedback } from './live-id-view.js';
 import { disposeLiveResources } from './live-lifecycle.js';
 import { createPeerProfileController } from './peer-profile-controller.js';
+import { createConversationProfiles } from './conversation-profiles.js';
 import { createSlowOperationNotice } from './slow-operation-notice.js';
 import { createLiveDrafts } from './live-drafts.js';
 import { createAccountOperationGuard } from './account-operation-guard.js';
@@ -106,10 +107,13 @@ function render(scroll = false) {
  const selectionStart = document.activeElement?.selectionStart;
  const selectionEnd = document.activeElement?.selectionEnd;
  const liveScrollTop = document.querySelector('#live-messages')?.scrollTop;
+ const liveListScrollTop = document.querySelector('.live-list')?.scrollTop;
  root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live chats')}${navButton('ai','sparkles','Saira AI')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live')}${navButton('ai','sparkles','Saira')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
  createIcons({ icons });
  const liveMessages = document.querySelector('#live-messages');
  if (liveMessages && liveScrollTop != null) liveMessages.scrollTop = liveScrollTop;
+ const liveList = document.querySelector('.live-list');
+ if (liveList && liveListScrollTop != null) liveList.scrollTop = liveListScrollTop;
  // The app rerenders its DOM; reattach current streams without persisting them.
  for (const [id, stream] of [['call-local', state.live.call?.localStream], ['call-remote', state.live.call?.remoteStream]]) {
    const element = document.getElementById(id);
@@ -202,6 +206,7 @@ let liveApi = null;
 let callController = null;
 let blockController = null;
 let peerProfileController = null;
+let conversationProfiles = null;
 let callInitGeneration = 0;
 let cloudGeneration = 0;
 let pageActive = true;
@@ -296,8 +301,8 @@ function resetLive() {
   liveGeneration++;
   liveThreadGeneration++;
   callInitGeneration++;
-  disposeLiveResources({callController, blockController, stopConversations, messageFeed, peerProfileController});
-  callController = null; blockController = null; stopConversations = null; messageFeed = null; peerProfileController = null; liveApi = null;
+  disposeLiveResources({callController, blockController, stopConversations, messageFeed, peerProfileController, conversationProfiles});
+  callController = null; blockController = null; stopConversations = null; messageFeed = null; peerProfileController = null; conversationProfiles = null; liveApi = null;
   state.live = { ready: false, connecting: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false, block:null };
 }
 // Snapshot errors are terminal. Clear previously authorized data and stop all
@@ -336,10 +341,22 @@ async function initializeLive(user) {
       blockController.setUser(user.uid);
     }
     state.live.ready = true; state.live.connecting = false;
+    state.live.conversationProfiles = new Map();
+    conversationProfiles = createConversationProfiles({subscribe: api.watchPeerProfile, onChange: (uid, profile) => {
+      if (generation !== liveGeneration || state.user !== user) return;
+      const previous = state.live.conversationProfiles.get(uid);
+      if (profile && previous?.name === profile.name) return;
+      if (!profile && !previous) return;
+      if (profile) state.live.conversationProfiles.set(uid, profile);
+      else state.live.conversationProfiles.delete(uid);
+      if (state.view === 'live') render();
+    }});
     stopConversations = liveApi.watchConversations(user.uid, conversations => {
       if (generation !== liveGeneration) return;
       const oldSelected = state.live.conversations.find(c => c.id === state.live.selected);
       state.live.conversations = conversations;
+      conversationProfiles?.sync(conversations, user.uid);
+      if (generation !== liveGeneration) return;
       const selected = conversations.find(c => c.id === state.live.selected);
       if (state.live.selected && !selected) { liveThreadGeneration++; callInitGeneration++; callController?.dispose(); callController = null; messageFeed?.stop(); messageFeed = null; peerProfileController?.dispose(); peerProfileController = null; state.live.peerProfile = null; state.live.selected = null; state.live.messages = []; state.live.hasOlder = false; state.live.loadingOlder = false; state.live.messagesFromCache = true; state.live.historyReset = false; state.live.messageDraft = ''; state.live.call = null; }
       else if (selected) {
