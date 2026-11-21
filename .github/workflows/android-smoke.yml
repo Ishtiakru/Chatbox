@@ -34,6 +34,21 @@ jobs:
       - name: Compile diagnostic Android Java
         working-directory: android
         run: ./gradlew --no-daemon --max-workers=2 :app:compileDebugJavaWithJavac
+      - name: Smoke-test release signing with disposable CI-only key
+        run: |
+          if (cd android && ./gradlew --no-daemon :app:assembleRelease > /tmp/release-without-key.log 2>&1); then
+            echo 'Release unexpectedly built without signing inputs'; exit 1
+          fi
+          grep -q 'Release signing requires an external non-debug keystore' /tmp/release-without-key.log
+          keytool -genkeypair -keystore "$RUNNER_TEMP/chatbox-ci-fixture.jks" -storepass ci-test-only -keypass ci-test-only -alias ci-fixture -dname 'CN=Disposable CI Fixture,O=Testing,C=US' -keyalg RSA -keysize 2048 -validity 1
+          export CHATBOX_RELEASE_KEYSTORE="$RUNNER_TEMP/chatbox-ci-fixture.jks"
+          export CHATBOX_RELEASE_KEY_ALIAS=ci-fixture
+          export CHATBOX_RELEASE_STORE_PASSWORD=ci-test-only
+          export CHATBOX_RELEASE_KEY_PASSWORD=ci-test-only
+          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleRelease)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk | grep "package: name='com.chatbox.apk'"
+          rm -f "$RUNNER_TEMP/chatbox-ci-fixture.jks" android/app/build/outputs/apk/release/app-release.apk
       - name: Build isolated debug variant with synthetic test configuration
         env:
           VITE_CHATBOX_TEST_MODE: 'true'

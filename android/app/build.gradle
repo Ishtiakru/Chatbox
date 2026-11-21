@@ -3,6 +3,17 @@ apply plugin: 'com.android.application'
 // A separate, debug-only package for a future isolated Firebase test APK.
 // Standard builds keep their original application ID and release behavior.
 def isolatedTestBuild = project.findProperty('chatboxIsolatedTest') == 'true'
+def releaseStore = System.getenv('CHATBOX_RELEASE_KEYSTORE')
+def releaseAlias = System.getenv('CHATBOX_RELEASE_KEY_ALIAS')
+def releaseStorePassword = System.getenv('CHATBOX_RELEASE_STORE_PASSWORD')
+def releaseKeyPassword = System.getenv('CHATBOX_RELEASE_KEY_PASSWORD')
+def signingValuesPresent = [releaseStore, releaseAlias, releaseStorePassword, releaseKeyPassword].every { it != null && !it.trim().isEmpty() }
+def releaseStoreFile = signingValuesPresent ? file(releaseStore).canonicalFile : null
+def repositoryRoot = rootProject.projectDir.parentFile.canonicalFile
+def releaseSigningReady = signingValuesPresent && releaseStoreFile.isFile()
+    && !releaseStoreFile.toPath().startsWith(repositoryRoot.toPath())
+    && !releaseAlias.equalsIgnoreCase('androiddebugkey')
+    && !releaseStoreFile.name.equalsIgnoreCase('debug.keystore')
 
 android {
     namespace = "com.chatbox.apk"
@@ -21,8 +32,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningReady && !isolatedTestBuild) {
+            release {
+                storeFile releaseStoreFile
+                storePassword releaseStorePassword
+                keyAlias releaseAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningReady && !isolatedTestBuild) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -32,6 +54,16 @@ android {
 androidComponents {
     beforeVariants(selector().withBuildType("release")) { variant ->
         if (isolatedTestBuild) variant.enable = false
+    }
+}
+
+// Never silently produce an unsigned release or accept the usual Android debug
+// key. This validates presence and location, not the key's provenance, strength,
+// Google OAuth registration or suitability for a production release.
+gradle.taskGraph.whenReady { graph ->
+    if (!isolatedTestBuild && graph.allTasks.any { it.project == project && it.name.toLowerCase(java.util.Locale.ROOT).contains('release') }
+            && !releaseSigningReady) {
+        throw new GradleException('Release signing requires an external non-debug keystore and all four CHATBOX_RELEASE_* environment variables. Do not use a debug key.')
     }
 }
 

@@ -23,6 +23,16 @@ test('standard Android sync refuses a test-project configuration', async () => {
   assert.match(marker.stderr, /standard Android sync/);
 });
 
+test('release signing requires external environment-provided values and does not reuse the debug alias', async () => {
+  const {readFileSync} = await import('node:fs');
+  const gradle = readFileSync('android/app/build.gradle', 'utf8');
+  for (const key of ['CHATBOX_RELEASE_KEYSTORE','CHATBOX_RELEASE_KEY_ALIAS','CHATBOX_RELEASE_STORE_PASSWORD','CHATBOX_RELEASE_KEY_PASSWORD']) assert.ok(gradle.includes(`System.getenv('${key}')`));
+  assert.match(gradle, /androiddebugkey/);
+  assert.match(gradle, /repositoryRoot/);
+  assert.match(gradle, /Release signing requires/);
+  assert.match(gradle, /if \(isolatedTestBuild\) variant\.enable = false/);
+});
+
 test('native wrapper identifies the intended app and avoids device backups', async () => {
   const { readFileSync } = await import('node:fs');
   const config = JSON.parse(readFileSync('capacitor.config.json', 'utf8'));
