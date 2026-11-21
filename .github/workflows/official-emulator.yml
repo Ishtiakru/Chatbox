@@ -29,6 +29,8 @@ jobs:
         run: |
           npm test
           npm run build
+      - name: Standalone base, admin and calls candidates
+        run: npm run test:rules
       - name: Combined candidate, simulated accounts
         run: npm run test:combined
       - name: Message cooldown candidate
