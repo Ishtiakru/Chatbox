@@ -3,6 +3,7 @@ import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Searc
 const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, X };
 import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
+import { resolveFirebaseConfig } from './firebase-config.js';
 import { authErrorMessage } from './auth-errors.js';
 import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY } from './feature-flags.js';
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
@@ -40,6 +41,8 @@ let saved = {};
 try { const parsed = JSON.parse(localStorage.getItem(key) || '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed; } catch { /* ignore invalid local data */ }
 const state = { view: 'chats', active: 'maya', search: '', draft: '', saved, modal: null, mobileChat: false, user: null, authReady: false, authLoading: false, authError: '', live: { ready: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false }, ai: { draft: '', messages: [], busy: false, error: '' }, admin: { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false }, publicWelcome: '' };
 const root = document.querySelector('#app');
+const testProject = resolveFirebaseConfig(import.meta.env);
+document.documentElement.classList.toggle('test-firebase-project', testProject.isTestProject);
 const liveDrafts = createLiveDrafts();
 const slowLiveWrite = createSlowOperationNotice(visible => {
   state.live.pendingNotice = visible;
@@ -101,7 +104,7 @@ function render(scroll = false) {
  const selectionStart = document.activeElement?.selectionStart;
  const selectionEnd = document.activeElement?.selectionEnd;
  const liveScrollTop = document.querySelector('#live-messages')?.scrollTop;
- root.innerHTML = `<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live chats')}${navButton('ai','sparkles','Saira AI')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live')}${navButton('ai','sparkles','Saira')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
+ root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live chats')}${navButton('ai','sparkles','Saira AI')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live')}${navButton('ai','sparkles','Saira')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
  createIcons({ icons });
  const liveMessages = document.querySelector('#live-messages');
  if (liveMessages && liveScrollTop != null) liveMessages.scrollTop = liveScrollTop;

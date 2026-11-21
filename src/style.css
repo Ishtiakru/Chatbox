@@ -21,3 +21,8 @@
 .load-older{align-self:center;border:1px solid #d9e9d6;background:#f3f8f0;color:#416e4d;border-radius:9px;padding:9px 14px;font-size:11px;cursor:pointer}.load-older:disabled{opacity:.6;cursor:wait}
 .admin-delegates{margin-top:20px;font-size:11px;color:#617764}.delegate-row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #edf1ea}.delegate-row span{overflow-wrap:anywhere}
 .request-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.live-chat-head>.account-button{margin-top:10px}
+
+/* A browser-only test build must be visibly distinct from the real project. */
+.test-project-banner{position:fixed;z-index:20;top:0;left:0;right:0;min-height:30px;padding:7px 10px;text-align:center;background:#854416;color:#fff;font-size:11px;font-weight:700;line-height:16px}
+.test-firebase-project .app-shell{margin-top:30px;height:calc(100dvh - 30px)}
+@media(max-width:700px){.test-firebase-project .feature-page{top:30px}}

@@ -29,6 +29,12 @@ jobs:
         run: |
           npm test
           npm run build
+      - name: Build browser-only test configuration
+        env:
+          VITE_CHATBOX_TEST_MODE: 'true'
+          VITE_CHATBOX_TEST_FIREBASE_CONFIG: '{"projectId":"chatbox-test-123","apiKey":"public-key","authDomain":"chatbox-test-123.firebaseapp.com","messagingSenderId":"123456","appId":"1:123456:web:abc123"}'
+          VITE_ENABLE_FIRESTORE_CHAT: 'true'
+        run: npm run build
       - name: Standalone base, admin and calls candidates
         run: npm run test:rules
       - name: Combined candidate, simulated accounts

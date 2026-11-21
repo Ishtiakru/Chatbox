@@ -3,18 +3,14 @@ import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signI
 import { Capacitor } from '@capacitor/core';
 import { createGoogleReauth } from './google-reauth.js';
 
-// Firebase web configuration identifies the project; it is not an admin credential.
-// Authorization must be enforced by Firebase rules and trusted backend code.
-const firebaseConfig = {
-  apiKey: 'AIzaSyAFc4L8Mo8oI8yN2jgQsVSti2xiYJbDTYU',
-  authDomain: 'chatbox-afb8c.firebaseapp.com',
-  projectId: 'chatbox-afb8c',
-  storageBucket: 'chatbox-afb8c.firebasestorage.app',
-  messagingSenderId: '1030482946047',
-  appId: '1:1030482946047:web:4685bcc689904a658229ca',
-  measurementId: 'G-F4661XK99F',
-};
+import { resolveFirebaseConfig } from './firebase-config.js';
 
+// A test build never silently falls back to the real project on bad input.
+const {config: firebaseConfig, isTestProject} = resolveFirebaseConfig(import.meta.env);
+// Native OAuth uses google-services.json; until a matching test Android build
+// is implemented, refuse to mix its production client with a test project.
+if (isTestProject && Capacitor.isNativePlatform()) throw new Error('Test Firebase configuration is supported in browsers only.');
+export { isTestProject };
 export const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();

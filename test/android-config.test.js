@@ -9,6 +9,15 @@ test('Android setup requires matching project, package, and Google web OAuth cli
   assert.throws(() => validateAndroidFirebaseConfig({...good,client:[{...good.client[0],oauth_client:[]}]}), /OAuth/);
 });
 
+test('Android sync refuses the browser-only test-project configuration', async () => {
+  const {spawnSync} = await import('node:child_process');
+  const result = spawnSync(process.execPath, ['scripts/check-android-firebase.mjs'], {
+    encoding:'utf8', env:{...process.env, VITE_CHATBOX_TEST_FIREBASE_CONFIG:'{}'},
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /browser-only/);
+});
+
 test('native wrapper identifies the intended app and avoids device backups', async () => {
   const { readFileSync } = await import('node:fs');
   const config = JSON.parse(readFileSync('capacitor.config.json', 'utf8'));
