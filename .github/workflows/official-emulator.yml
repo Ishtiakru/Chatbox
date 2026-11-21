@@ -1,0 +1,42 @@
+name: Official local Firestore emulator tests
+
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+
+permissions:
+  contents: read
+
+jobs:
+  official-emulator:
+    name: Experimental rules (demo project only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Unit tests and web build
+        run: |
+          npm test
+          npm run build
+      - name: Combined candidate, simulated accounts
+        run: npm run test:combined
+      - name: Message cooldown candidate
+        run: npm run test:rate
+      - name: Request cooldown candidate
+        run: npm run test:request-rate
+      - name: Calls and admin against the request candidate
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'CHATBOX_TEST_RULES_FILE=firestore.request-limited-experimental.rules node --test --test-concurrency=1 integration/call-rules.js integration/firestore-calls.js integration/spark-admin-rules.js'

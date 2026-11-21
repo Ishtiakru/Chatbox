@@ -1,0 +1,13 @@
+{
+  "appId": "com.chatbox.apk",
+  "appName": "Chatbox",
+  "webDir": "dist",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": [
+        "google.com"
+      ]
+    }
+  }
+}
