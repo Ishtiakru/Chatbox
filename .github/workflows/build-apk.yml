@@ -26,7 +26,7 @@ jobs:
           java-version: 17
 
       - name: Bubblewrap কোর ইনস্টল
-        run: npm install -g @bubblewrap/cli
+        run: npm install -g @bubblewrap/core @bubblewrap/cli
 
       - name: সাইনিং-কী + twa-manifest
         run: |
