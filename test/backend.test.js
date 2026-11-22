@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { cleanInput, validateProposal, parseProposal, responseText, isAdministrator } from '../functions/logic.js';
+import { cleanInput, validateProposal, parseProposal, responseText, isAdministrator, limitAnswer } from '../functions/logic.js';
 import { askProvider } from '../functions/provider.js';
 
 test('only narrowly scoped proposals are allowed', () => {
@@ -25,6 +25,11 @@ test('AI adapter sends only requested content and does not leak provider errors'
   assert.equal(JSON.parse(request.body).input, 'question');
   await assert.rejects(askProvider({key:'test-key',instructions:'s',input:'q',fetchImpl:async () => ({ok:false})}), /provider request failed/);
   assert.equal(responseText({output:[]}), '');
+});
+test('backend answer truncation preserves Unicode pairs at the boundary', () => {
+  assert.equal(limitAnswer('x'.repeat(3999) + '🙂'), 'x'.repeat(3999));
+  assert.equal(limitAnswer('x'.repeat(3998) + '🙂more'), 'x'.repeat(3998) + '🙂');
+  assert.equal(limitAnswer('hello'), 'hello');
 });
 test('release knowledge corresponds to the curated document', () => {
   const knowledge = JSON.parse(readFileSync('functions/knowledge.generated.json', 'utf8'));

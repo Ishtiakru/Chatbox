@@ -24,6 +24,12 @@ export function responseText(payload) {
     .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
     .map(item => item.text).join('\n').trim();
 }
+// Keep the output bound without emitting half of a Unicode surrogate pair.
+export function limitAnswer(text, max = 4000) {
+  const result = text.slice(0, max);
+  const last = result.charCodeAt(result.length - 1);
+  return last >= 0xD800 && last <= 0xDBFF ? result.slice(0, -1) : result;
+}
 export function isAdministrator(record, uid) {
   return Boolean(uid && record && typeof record.uid === 'string' && record.uid === uid);
 }

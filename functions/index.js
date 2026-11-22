@@ -4,7 +4,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import { cleanInput, parseProposal, isAdministrator } from './logic.js';
+import { cleanInput, parseProposal, isAdministrator, limitAnswer } from './logic.js';
 import { updateWelcome, changeAdministrator, OperationError } from './admin-operations.js';
 import { askProvider } from './provider.js';
 
@@ -51,7 +51,7 @@ export const askSaira = onCall(aiOptions, async request => {
   const question = checkedText(request.data?.question);
   await limit(uid, 'saira');
   const answer = await provider(`You are Saira, a helpful app guide. Answer in the user's language. Only claim facts grounded in this curated app knowledge. If the knowledge is incomplete or may be outdated, say so. Do not claim planned features are available. Knowledge version ${knowledge.version}:\n${knowledge.content}`, question);
-  return { answer: answer.slice(0, 4000), knowledgeVersion: knowledge.version, knowledgeHash: knowledge.sha256 };
+  return { answer: limitAnswer(answer), knowledgeVersion: knowledge.version, knowledgeHash: knowledge.sha256 };
 });
 
 // Natural-language interpretation does not mutate anything and the only supported operation is set_welcome.

@@ -17,6 +17,7 @@ import { createConversationProfiles } from './conversation-profiles.js';
 import { createSlowOperationNotice } from './slow-operation-notice.js';
 import { createLiveDrafts } from './live-drafts.js';
 import { createAccountOperationGuard } from './account-operation-guard.js';
+import { changeAdminTarget } from './admin-target-confirmation.js';
 import { canUseCallPage } from './call-page-lifecycle.js';
 
 const contacts = [
@@ -176,7 +177,15 @@ root.addEventListener('input', event => {
  if (event.target.id === 'live-search') { state.live.search = event.target.value; render(); }
  if (event.target.id === 'ai-input') state.ai.draft = event.target.value;
  if (event.target.id === 'admin-command') { state.admin.command = event.target.value; state.admin.proposal = null; }
- if (event.target.id === 'admin-target') state.admin.target = event.target.value;
+ if (event.target.id === 'admin-target' && changeAdminTarget(state.admin, event.target.value)) {
+   // Avoid a full rerender while typing, but immediately reflect invalidated
+   // confirmation in both the checkbox and submit button.
+   const form = event.target.form;
+   const checkbox = form?.querySelector('#admin-confirm');
+   const submit = form?.querySelector('button[type="submit"]');
+   if (checkbox) checkbox.checked = false;
+   if (submit) submit.disabled = true;
+ }
  if (event.target.id === 'admin-confirm') { state.admin.confirm = event.target.checked; render(); }
  if (event.target.id === 'search') { const pos = event.target.selectionStart; state.search = event.target.value; render(); const search = document.querySelector('#search'); search.focus(); try { search.setSelectionRange(pos,pos); } catch {} }
 });
