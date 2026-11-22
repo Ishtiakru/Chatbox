@@ -56,9 +56,22 @@ data class SparkAppearance(
     val menu: String = "bottom"
 )
 
+data class SparkAppUpdate(
+    val active: Boolean = false,
+    val version: String = "",
+    val note: String = "",
+    val downloadUrl: String = ""
+)
+
 sealed interface SparkCommandProposal {
     data class SetWelcome(val value: String) : SparkCommandProposal
     data class SetTheme(val value: String) : SparkCommandProposal
     data class SetMenu(val value: String) : SparkCommandProposal
+    data class SetAppUpdate(
+        val active: Boolean,
+        val version: String,
+        val note: String,
+        val downloadUrl: String
+    ) : SparkCommandProposal
     data object Unsupported : SparkCommandProposal
 }

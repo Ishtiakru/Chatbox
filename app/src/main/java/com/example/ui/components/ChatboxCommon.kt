@@ -73,8 +73,13 @@ import com.example.ui.theme.AvatarPeachStart
 import com.example.ui.theme.AvatarYellowEnd
 import com.example.ui.theme.AvatarYellowInk
 import com.example.ui.theme.AvatarYellowStart
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.model.SparkAppUpdate
 import com.example.ui.theme.ChatboxButtonPurple
 import com.example.ui.theme.ChatboxOnlineDot
+import com.example.ui.theme.ChatboxUpdateGreenBg
 import com.example.ui.viewmodel.DemoModal
 
 @Composable
@@ -452,4 +457,113 @@ fun highlightSearchMatch(
             startIndex = matchIndex + trimmed.length
         }
     }
+}
+
+@Composable
+fun AppUpdateBadge(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String = "app_update_badge"
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = ChatboxUpdateGreenBg,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .testTag(testTag)
+    ) {
+        Text(
+            text = "update",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp
+            ),
+            color = Color.White,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+        )
+    }
+}
+
+@Composable
+fun AppUpdateDetailsDialog(
+    appUpdate: SparkAppUpdate,
+    currentVersion: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val hasSafeUrl = appUpdate.downloadUrl.startsWith("https://")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = ChatboxUpdateGreenBg
+            ) {
+                Text(
+                    text = "UPDATE",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        },
+        title = { Text("Chatbox v${appUpdate.version} available") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Installed version: v$currentVersion",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (appUpdate.note.isNotBlank()) {
+                    Text(
+                        text = appUpdate.note,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    Text(
+                        text = "A newer version of Chatbox has been published.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (hasSafeUrl) {
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(appUpdate.downloadUrl))
+                            )
+                        }
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("app_update_open_link_button")
+                ) {
+                    Text("Get update")
+                }
+            } else {
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag("app_update_dismiss_button")
+                ) {
+                    Text("Got it")
+                }
+            }
+        },
+        dismissButton = if (hasSafeUrl) {
+            {
+                TextButton(onClick = onDismiss) {
+                    Text("Later")
+                }
+            }
+        } else {
+            null
+        }
+    )
 }

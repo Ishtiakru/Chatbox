@@ -200,6 +200,39 @@
       },
       "required": ["value", "updatedBy", "updatedAt"]
     },
+    "SparkAppUpdate": {
+      "title": "SparkAppUpdate",
+      "description": "App update notice published from Spark Admin or backend so users see a green update badge next to the logo.",
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "description": "Whether an update notice is currently active."
+        },
+        "version": {
+          "type": "string",
+          "description": "Target app version string (1..32 chars when active)."
+        },
+        "note": {
+          "type": "string",
+          "description": "Short summary of what is new (0..240 chars)."
+        },
+        "downloadUrl": {
+          "type": "string",
+          "description": "Optional HTTPS release or store link (0..512 chars)."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin/delegate who published the update notice."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["active", "version", "note", "downloadUrl", "updatedBy", "updatedAt"]
+    },
     "UserFcmDevice": {
       "title": "UserFcmDevice",
       "description": "Owner-private Firebase Cloud Messaging registration token for push notifications on an Android device.",
@@ -255,6 +288,10 @@
     "/settings/{appearance}": {
       "schema": { "$ref": "#/entities/SparkAppearanceSetting" },
       "description": "Bounded appearance settings (sparkTheme and sparkMenu)."
+    },
+    "/settings/sparkUpdate": {
+      "schema": { "$ref": "#/entities/SparkAppUpdate" },
+      "description": "App update notice observed by signed-in clients."
     },
     "/userFcmTokens/{ownerId}/devices/{deviceId}": {
       "schema": { "$ref": "#/entities/UserFcmDevice" },

@@ -205,6 +205,18 @@ service cloud.firestore {
         && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidSparkUpdate(data) {
+      return data.keys().hasAll(['active', 'version', 'note', 'downloadUrl', 'updatedAt', 'updatedBy'])
+        && data.keys().hasOnly(['active', 'version', 'note', 'downloadUrl', 'updatedAt', 'updatedBy'])
+        && data.active is bool
+        && data.version is string && data.version.size() <= 32 && (!data.active || data.version.size() > 0)
+        && data.note is string && data.note.size() <= 240
+        && data.downloadUrl is string && data.downloadUrl.size() <= 512
+        && (data.downloadUrl == '' || data.downloadUrl.matches('^https://.*'))
+        && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
     match /profiles/{uid} {
       allow get: if isSignedIn() && isValidId(uid);
       allow list: if false;
@@ -336,6 +348,15 @@ service cloud.firestore {
         && recentlyAuthenticated()
         && isValidSparkPublic(incoming())
         && incoming().updatedBy == request.auth.uid;
+    }
+
+    match /settings/sparkUpdate {
+      allow get: if isSignedIn();
+      allow create, update: if isSparkAdmin()
+        && recentlyAuthenticated()
+        && isValidSparkUpdate(incoming())
+        && incoming().updatedBy == request.auth.uid;
+      allow list, delete: if false;
     }
 
     match /settings/{appearance} {

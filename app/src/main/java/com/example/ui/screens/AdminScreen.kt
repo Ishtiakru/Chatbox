@@ -82,6 +82,11 @@ fun AdminScreen(
     onVerifyGoogleAgain: () -> Unit,
     onCommandChange: (String) -> Unit,
     onPreviewCommand: () -> Unit,
+    onUpdateVersionChange: (String) -> Unit,
+    onUpdateNoteChange: (String) -> Unit,
+    onUpdateUrlChange: (String) -> Unit,
+    onPreviewPublishUpdate: () -> Unit,
+    onPreviewClearUpdate: () -> Unit,
     onApplyProposal: () -> Unit,
     onTargetEmailChange: (String) -> Unit,
     onTargetConfirmedChange: (Boolean) -> Unit,
@@ -121,6 +126,11 @@ fun AdminScreen(
                             onVerifyGoogleAgain = onVerifyGoogleAgain,
                             onCommandChange = onCommandChange,
                             onPreviewCommand = onPreviewCommand,
+                            onUpdateVersionChange = onUpdateVersionChange,
+                            onUpdateNoteChange = onUpdateNoteChange,
+                            onUpdateUrlChange = onUpdateUrlChange,
+                            onPreviewPublishUpdate = onPreviewPublishUpdate,
+                            onPreviewClearUpdate = onPreviewClearUpdate,
                             onApplyProposal = onApplyProposal,
                             onTargetEmailChange = onTargetEmailChange,
                             onTargetConfirmedChange = onTargetConfirmedChange,
@@ -142,6 +152,11 @@ fun AdminScreen(
                             onVerifyGoogleAgain = onVerifyGoogleAgain,
                             onCommandChange = onCommandChange,
                             onPreviewCommand = onPreviewCommand,
+                            onUpdateVersionChange = onUpdateVersionChange,
+                            onUpdateNoteChange = onUpdateNoteChange,
+                            onUpdateUrlChange = onUpdateUrlChange,
+                            onPreviewPublishUpdate = onPreviewPublishUpdate,
+                            onPreviewClearUpdate = onPreviewClearUpdate,
                             onApplyProposal = onApplyProposal,
                             onTargetEmailChange = onTargetEmailChange,
                             onTargetConfirmedChange = onTargetConfirmedChange,
@@ -221,6 +236,11 @@ private fun AdminControlsCard(
     onVerifyGoogleAgain: () -> Unit,
     onCommandChange: (String) -> Unit,
     onPreviewCommand: () -> Unit,
+    onUpdateVersionChange: (String) -> Unit,
+    onUpdateNoteChange: (String) -> Unit,
+    onUpdateUrlChange: (String) -> Unit,
+    onPreviewPublishUpdate: () -> Unit,
+    onPreviewClearUpdate: () -> Unit,
     onApplyProposal: () -> Unit,
     onTargetEmailChange: (String) -> Unit,
     onTargetConfirmedChange: (Boolean) -> Unit,
@@ -413,6 +433,12 @@ private fun AdminControlsCard(
                                 is SparkCommandProposal.SetWelcome -> "Set welcome: ${proposal.value}"
                                 is SparkCommandProposal.SetTheme -> "Set theme: ${proposal.value}"
                                 is SparkCommandProposal.SetMenu -> "Set menu: ${proposal.value}"
+                                is SparkCommandProposal.SetAppUpdate -> if (proposal.active) {
+                                    "Publish app update v${proposal.version}" +
+                                        if (proposal.note.isNotBlank()) " — ${proposal.note}" else ""
+                                } else {
+                                    "Clear active app update badge"
+                                }
                                 SparkCommandProposal.Unsupported -> ""
                             }
                             Surface(
@@ -447,6 +473,77 @@ private fun AdminControlsCard(
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+
+                    Text(
+                        text = "App update badge",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Publish a version update to display the green update badge beside the Chatbox logo for all signed-in users.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = uiState.updateVersionDraft,
+                        onValueChange = onUpdateVersionChange,
+                        enabled = !uiState.busy,
+                        singleLine = true,
+                        label = { Text("New version") },
+                        placeholder = { Text("1.1") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_update_version_input")
+                    )
+                    OutlinedTextField(
+                        value = uiState.updateNoteDraft,
+                        onValueChange = onUpdateNoteChange,
+                        enabled = !uiState.busy,
+                        minLines = 2,
+                        maxLines = 3,
+                        label = { Text("Release notes (optional)") },
+                        placeholder = { Text("Voice notes and new lavender design") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_update_note_input")
+                    )
+                    OutlinedTextField(
+                        value = uiState.updateUrlDraft,
+                        onValueChange = onUpdateUrlChange,
+                        enabled = !uiState.busy,
+                        singleLine = true,
+                        label = { Text("Update link (optional https://)") },
+                        placeholder = { Text("https://...") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_update_url_input")
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onPreviewPublishUpdate,
+                            enabled = !uiState.busy && uiState.updateVersionDraft.trim().isNotEmpty(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .minimumInteractiveComponentSize()
+                                .testTag("admin_preview_update_button")
+                        ) {
+                            Text("Preview update")
+                        }
+                        OutlinedButton(
+                            onClick = onPreviewClearUpdate,
+                            enabled = !uiState.busy,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("admin_clear_update_button")
+                        ) {
+                            Text("Clear")
                         }
                     }
 

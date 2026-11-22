@@ -304,7 +304,7 @@ test("Spark Admin enforces verified Google owner, blocks spoofed email, and supp
     updatedAt: now,
   }));
 
-  // Owner updates welcome & appearance
+  // Owner updates welcome, appearance, & app update notice
   await assertSucceeds(realOwner.collection("settings").doc("sparkPublic").set({
     welcome: "Welcome to Chatbox!",
     updatedBy: ALICE_UID,
@@ -315,11 +315,44 @@ test("Spark Admin enforces verified Google owner, blocks spoofed email, and supp
     updatedBy: ALICE_UID,
     updatedAt: new Date(Date.now() - 700),
   }));
+  await assertSucceeds(realOwner.collection("settings").doc("sparkUpdate").set({
+    active: true,
+    version: "1.1.0",
+    note: "Voice notes and lavender branding",
+    downloadUrl: "https://example.com/chatbox-v1.1.0.apk",
+    updatedBy: ALICE_UID,
+    updatedAt: new Date(Date.now() - 650),
+  }));
+  await assertSucceeds(outsider.collection("settings").doc("sparkUpdate").get());
 
-  // Invalid theme value rejected
+  // Invalid theme value and invalid sparkUpdate payloads rejected
   await assertFails(realOwner.collection("settings").doc("sparkTheme").set({
     value: "neon-red",
     updatedBy: ALICE_UID,
+    updatedAt: new Date(Date.now() - 600),
+  }));
+  await assertFails(realOwner.collection("settings").doc("sparkUpdate").set({
+    active: true,
+    version: "",
+    note: "Missing version",
+    downloadUrl: "",
+    updatedBy: ALICE_UID,
+    updatedAt: new Date(Date.now() - 600),
+  }));
+  await assertFails(realOwner.collection("settings").doc("sparkUpdate").set({
+    active: true,
+    version: "1.2.0",
+    note: "Bad scheme",
+    downloadUrl: "http://insecure.example.com/app.apk",
+    updatedBy: ALICE_UID,
+    updatedAt: new Date(Date.now() - 600),
+  }));
+  await assertFails(outsider.collection("settings").doc("sparkUpdate").set({
+    active: true,
+    version: "9.9.9",
+    note: "Unauthorized",
+    downloadUrl: "",
+    updatedBy: CHARLIE_UID,
     updatedAt: new Date(Date.now() - 600),
   }));
 

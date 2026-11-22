@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.R
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.AdminRole
+import com.example.data.model.SparkAppUpdate
 import com.example.data.model.SparkAppearance
 import com.example.data.model.SparkCommandProposal
 import com.example.data.model.SparkDelegation
@@ -77,6 +78,27 @@ class SparkAdminRepository(
                 menu = menu ?: "bottom"
             )
         }
+    }
+
+    fun observeSparkAppUpdate(): Flow<SparkAppUpdate> {
+        return db.collection("settings").document("sparkUpdate")
+            .snapshots()
+            .map { snap ->
+                if (!snap.exists() || snap.metadata.hasPendingWrites() || snap.metadata.isFromCache) {
+                    return@map SparkAppUpdate()
+                }
+                val active = snap.getBoolean("active") == true
+                val version = snap.getString("version")?.trim().orEmpty().take(32)
+                val note = snap.getString("note")?.trim().orEmpty().take(240)
+                val downloadUrl = snap.getString("downloadUrl")?.trim().orEmpty().take(512)
+                val safeUrl = if (downloadUrl.startsWith("https://")) downloadUrl else ""
+                SparkAppUpdate(
+                    active = active && version.isNotEmpty(),
+                    version = version,
+                    note = note,
+                    downloadUrl = safeUrl
+                )
+            }
     }
 
     suspend fun checkAdminStatus(uid: String, rawEmail: String?): Result<AdminStatusResult> {
@@ -178,6 +200,7 @@ class SparkAdminRepository(
             is SparkCommandProposal.SetWelcome -> "settings/sparkPublic"
             is SparkCommandProposal.SetTheme -> "settings/sparkTheme"
             is SparkCommandProposal.SetMenu -> "settings/sparkMenu"
+            is SparkCommandProposal.SetAppUpdate -> "settings/sparkUpdate"
             SparkCommandProposal.Unsupported -> "settings"
         }
         return try {
@@ -212,6 +235,26 @@ class SparkAdminRepository(
                         .set(
                             mapOf(
                                 "value" to proposal.value,
+                                "updatedBy" to uid,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                }
+                is SparkCommandProposal.SetAppUpdate -> {
+                    require(proposal.version.length <= 32)
+                    require(!proposal.active || proposal.version.isNotEmpty())
+                    require(proposal.note.length <= 240)
+                    require(proposal.downloadUrl.length <= 512)
+                    require(proposal.downloadUrl.isEmpty() || proposal.downloadUrl.startsWith("https://")) {
+                        "Update download URL must start with https://"
+                    }
+                    db.collection("settings").document("sparkUpdate")
+                        .set(
+                            mapOf(
+                                "active" to proposal.active,
+                                "version" to proposal.version,
+                                "note" to proposal.note,
+                                "downloadUrl" to proposal.downloadUrl,
                                 "updatedBy" to uid,
                                 "updatedAt" to FieldValue.serverTimestamp()
                             )

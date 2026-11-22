@@ -33,4 +33,6 @@
     <string name="cd_language_chevron">Choose language</string>
     <string name="cd_sign_in_info">Sign-in information</string>
     <string name="cd_brand_mark">Chatbox brand mark</string>
+    <string name="cd_app_update_badge">App update available</string>
+    <string name="cd_search_languages">Search languages</string>
 </resources>

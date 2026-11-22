@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.auth.reauthenticateCurrentGoogleUser
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.AdminRole
+import com.example.data.model.SparkAppUpdate
 import com.example.data.model.SparkAppearance
 import com.example.data.model.SparkCommandProposal
 import com.example.data.model.SparkDelegation
@@ -29,6 +30,9 @@ data class SparkAdminUiState(
     val role: AdminRole = AdminRole.NONE,
     val delegations: List<SparkDelegation> = emptyList(),
     val commandDraft: String = "",
+    val updateVersionDraft: String = "",
+    val updateNoteDraft: String = "",
+    val updateUrlDraft: String = "",
     val proposal: SparkCommandProposal? = null,
     val targetEmail: String = "",
     val targetConfirmed: Boolean = false,
@@ -79,6 +83,21 @@ class SparkAdminViewModel(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = SparkAppearance()
+        )
+
+    val appUpdate: StateFlow<SparkAppUpdate> = repository.observeSparkAppUpdate()
+        .catch { error ->
+            val firestoreError = generateSequence(error) { it.cause }
+                .filterIsInstance<FirebaseFirestoreException>()
+                .firstOrNull()
+            if (firestoreError == null && error is CancellationException) throw error
+            Log.w(TAG, "Error observing spark app update", error)
+            emit(SparkAppUpdate())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = SparkAppUpdate()
         )
 
     fun checkAdminAccess() {
@@ -147,6 +166,55 @@ class SparkAdminViewModel(
         val proposal = SparkAdminCommands.parseSparkCommand(draft)
         _uiState.value = _uiState.value.copy(
             proposal = proposal,
+            error = "",
+            notice = ""
+        )
+    }
+
+    fun updateAppVersionDraft(text: String) {
+        _uiState.value = _uiState.value.copy(updateVersionDraft = text.take(32), proposal = null)
+    }
+
+    fun updateAppNoteDraft(text: String) {
+        _uiState.value = _uiState.value.copy(updateNoteDraft = text.take(240), proposal = null)
+    }
+
+    fun updateAppUrlDraft(text: String) {
+        _uiState.value = _uiState.value.copy(updateUrlDraft = text.take(512), proposal = null)
+    }
+
+    fun previewPublishAppUpdate() {
+        val version = _uiState.value.updateVersionDraft.trim()
+        val note = _uiState.value.updateNoteDraft.trim()
+        val url = _uiState.value.updateUrlDraft.trim()
+        if (version.isEmpty()) {
+            _uiState.value = _uiState.value.copy(error = "Enter a version number (e.g. 1.1).")
+            return
+        }
+        if (url.isNotEmpty() && !url.startsWith("https://")) {
+            _uiState.value = _uiState.value.copy(error = "Download link must start with https://")
+            return
+        }
+        _uiState.value = _uiState.value.copy(
+            proposal = SparkCommandProposal.SetAppUpdate(
+                active = true,
+                version = version,
+                note = note,
+                downloadUrl = url
+            ),
+            error = "",
+            notice = ""
+        )
+    }
+
+    fun previewClearAppUpdate() {
+        _uiState.value = _uiState.value.copy(
+            proposal = SparkCommandProposal.SetAppUpdate(
+                active = false,
+                version = "",
+                note = "",
+                downloadUrl = ""
+            ),
             error = "",
             notice = ""
         )

@@ -31,8 +31,7 @@ class DemoPreferencesRepository(private val context: Context) {
 
     val loginLanguage: Flow<String> =
         context.demoDataStore.data.map { prefs ->
-            val lang = prefs[loginLanguageKey]
-            if (lang == "en" || lang == "bn") lang else "bn"
+            com.example.data.model.WorldLanguages.normalizeCode(prefs[loginLanguageKey] ?: "en-US")
         }
 
     val quickReaction: Flow<String> =
@@ -49,7 +48,7 @@ class DemoPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setLoginLanguage(languageCode: String) {
-        val normalized = if (languageCode == "en") "en" else "bn"
+        val normalized = com.example.data.model.WorldLanguages.normalizeCode(languageCode)
         context.demoDataStore.edit { prefs ->
             prefs[loginLanguageKey] = normalized
         }

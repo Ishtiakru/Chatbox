@@ -33,6 +33,10 @@ object SparkAdminCommands {
         """^(?:স্বাগত|স্বাগতম)(?:\s+বার্তা(?:টি)?)?\s+$QUOTE_GROUP\s+(?:করো|করুন|করে\s+দাও|করে\s+দিন)\s*[।.!]?\s*$"""
     )
     private val validGmailRegex = Regex("""^[a-z0-9][a-z0-9._%+-]{0,63}@gmail\.com$""")
+    private val updateCommandRegex = Regex(
+        """^(?:update|app\s*update)\s*:\s*([\s\S]+)$""",
+        setOf(RegexOption.IGNORE_CASE)
+    )
 
     fun parseSparkCommand(input: String): SparkCommandProposal {
         val text = input.trim()
@@ -41,6 +45,34 @@ object SparkAdminCommands {
         if (themeDefaultRegex.matches(text)) return SparkCommandProposal.SetTheme("default")
         if (menuTopRegex.matches(text)) return SparkCommandProposal.SetMenu("top")
         if (menuBottomRegex.matches(text)) return SparkCommandProposal.SetMenu("bottom")
+
+        updateCommandRegex.matchEntire(text)?.let { match ->
+            val raw = match.groupValues[1].trim()
+            if (raw.equals("off", ignoreCase = true) ||
+                raw.equals("clear", ignoreCase = true) ||
+                raw.equals("none", ignoreCase = true)
+            ) {
+                return SparkCommandProposal.SetAppUpdate(
+                    active = false,
+                    version = "",
+                    note = "",
+                    downloadUrl = ""
+                )
+            }
+            val parts = raw.split("|").map { it.trim() }
+            val version = parts.getOrNull(0).orEmpty().take(32)
+            val note = parts.getOrNull(1).orEmpty().take(240)
+            val url = parts.getOrNull(2).orEmpty().take(512)
+            if (version.isEmpty() || (url.isNotEmpty() && !url.startsWith("https://"))) {
+                return SparkCommandProposal.Unsupported
+            }
+            return SparkCommandProposal.SetAppUpdate(
+                active = true,
+                version = version,
+                note = note,
+                downloadUrl = url
+            )
+        }
 
         val directMatch = directWelcomeRegex.matchEntire(text)
         val rawValue = directMatch?.groupValues?.getOrNull(1)
