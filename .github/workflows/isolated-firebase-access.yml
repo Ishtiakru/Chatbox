@@ -86,7 +86,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') && !contains(github.event.head_commit.message, '[appcheck-iam]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -253,5 +253,21 @@ jobs:
               found={str(x.get('shaHash','')).replace(':','').upper() for x in certs.get('certificates',[])}
               print('::notice::Existing APK SHA-1 registered: '+str('26D9B99EF0D08D27EE524B49BE031EE6AF60C366' in found))
               print('::notice::Existing APK SHA-256 registered: '+str('FA607FC61AE362D1D66BB365CC0C9A5DA2083A64D513B5B66728865918B6E935' in found))
+          del token
+          PYCODE
+      - name: Inspect isolated App Check write permission
+        if: ${{ contains(github.event.head_commit.message, '[appcheck-iam]') }}
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json,subprocess,urllib.error,urllib.request
+          token=subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          names=['firebaseappcheck.playIntegrityConfig.get','firebaseappcheck.playIntegrityConfig.update','firebase.clients.get','clientauthconfig.clients.create']
+          req=urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':names}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=30) as r: granted=set(json.load(r).get('permissions',[]))
+              for p in names: print('::notice::'+p+': '+('granted' if p in granted else 'not reported'))
+          except urllib.error.HTTPError as e:
+              print('::error::Permission lookup failed HTTP '+str(e.code)); raise SystemExit(1)
           del token
           PYCODE
