@@ -1,4 +1,4 @@
-# Lightfall Android APK — config প্রি-সেট + sdk/bin প্যাচ + skipSigning + apksigner
+# Lightfall Android APK — config প্রি-সেট + sdk/bin প্যাচ + skipSigning + apksigner + gradle ডায়াগ
 name: Build Lightfall APK
 
 on:
@@ -88,13 +88,22 @@ jobs:
           bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
 
-      - name: ত্রুটি-টেইল অ্যানোটেশনে
+      - name: ত্রুটি-ডায়াগ (gradle সরাসরি + লগ-টেইল)
         if: failure()
         run: |
           cd apkbuild
-          tail -n 25 build.log | cut -c1-180 | while IFS= read -r line; do
-            echo "::error::${line//%/Ø}"
-          done
+          echo "=== build.log টেইল:"
+          tail -n 8 build.log | cut -c1-160
+          echo "=== ডিরেক্টরি:"
+          ls
+          echo "=== gradle সরাসরি:"
+          if [ -f gradlew ]; then
+            ./gradlew --no-daemon assembleRelease 2>&1 | tail -n 20 | cut -c1-160 | while IFS= read -r line; do
+              echo "::error::${line//%/Ø}"
+            done
+          else
+            echo "::error::gradlew নেই — TwaGenerator পর্যন্ত পাওয়ায়নি"
+          fi
 
       - name: নিজে সাইন করা (apksigner)
         run: |
