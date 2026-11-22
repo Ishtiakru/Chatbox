@@ -1,6 +1,6 @@
-name: Isolated Firebase connection and approved test setup
+name: Isolated Firebase connection (read only)
 
-# One-time opt-in applies only to the explicitly approved isolated Android test app.
+# Deliberate opt-in only. No deployment, secret keys or production project access.
 # The Google Cloud workload identity provider is the actual trust boundary and
 # must independently restrict repository ID, owner ID, branch and workflow.
 on:
@@ -86,7 +86,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') && !contains(github.event.head_commit.message, '[enable-isolated-offplay]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -255,7 +255,3 @@ jobs:
               print('::notice::Existing APK SHA-256 registered: '+str('FA607FC61AE362D1D66BB365CC0C9A5DA2083A64D513B5B66728865918B6E935' in found))
           del token
           PYCODE
-      - name: Configure approved isolated test Android App Check
-        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[enable-isolated-offplay]') }}
-        shell: bash
-        run: python3 scripts/enable-isolated-offplay-once.py
