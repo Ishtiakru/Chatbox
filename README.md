@@ -168,3 +168,7 @@ npx firebase-tools deploy --only hosting --project chatbox-afb8c
 ```
 
 Deployment publishes the prototype to the project's Hosting site and may replace an existing deployment. Verify the target project and site first. The built-in `chatbox-afb8c.web.app` domain should already be an authorized Firebase Auth domain; confirm in Authentication settings before testing Google sign-in. The default build does not enable live chat, calls, admin access, or AI. Firestore rules require a separate reviewed deployment; `--only hosting` does not deploy them. Never share Firebase login credentials or service-account keys.
+
+### Lavender login adaptation
+
+The sign-in screen adapts the layout and artwork from the owner-provided `lavender-auth.zip` to the existing web/Capacitor client. Google sign-in uses the existing Firebase authentication implementation; the guest button opens only the local demo. The ZIP is a separate Android Compose project and its Firebase config, AI implementation, source QR and optional profile/status inputs were not imported. In particular, the source QR is not shown before admin authorization. Android OAuth certificate registration is still required for each debug signing key. No tests or deployments were performed for this adaptation.

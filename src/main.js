@@ -43,7 +43,7 @@ const seeds = {
 const key = 'saira-demo-messages-v1';
 let saved = {};
 try { const parsed = JSON.parse(localStorage.getItem(key) || '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed; } catch { /* ignore invalid local data */ }
-const state = { view: LIVE_CHAT_ENABLED ? 'live' : 'chats', active: 'maya', search: '', draft: '', saved, modal: null, mobileChat: false, user: null, authReady: false, authLoading: false, authError: '', live: { ready: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false }, ai: { draft: '', messages: [], busy: false, error: '' }, admin: { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false }, publicWelcome: '' };
+const state = { view: LIVE_CHAT_ENABLED ? 'live' : 'chats', active: 'maya', search: '', draft: '', saved, modal: null, mobileChat: false, user: null, authReady: false, authLoading: false, authError: '', loginGuest: false, loginLanguage: 'bn', live: { ready: false, error: '', conversations: [], selected: null, messages: [], hasOlder: false, loadingOlder: false, messagesFromCache: true, historyReset: false, peerProfile:null, peerDraft: '', messageDraft: '', busy: false }, ai: { draft: '', messages: [], busy: false, error: '' }, admin: { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false }, publicWelcome: '' };
 const root = document.querySelector('#app');
 const testProject = resolveFirebaseConfig(import.meta.env);
 document.documentElement.classList.toggle('test-firebase-project', testProject.isTestProject);
@@ -108,12 +108,23 @@ function modal() {
  if (!data) return '';
  return `<div class="modal-overlay" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('x')}</button><div class="modal-symbol">✳</div><span class="eyebrow">SAIRA / A LITTLE NOTE</span><h2 id="modal-title">${e(data[0])}</h2><p>${e(data[1])}</p><button class="primary-button" data-action="close-modal">Got it ${icon('arrow-right')}</button></section></div>`;
 }
+// Adapted from the lavender-auth design. Authentication still uses the existing
+// Firebase bridge; this screen does not grant access or expose the source QR.
+function loginScreen() {
+ const bn = state.loginLanguage === 'bn';
+ return `<main class="lavender-login" lang="${bn ? 'bn' : 'en'}"><div class="login-content"><div class="login-top"><label for="login-language" class="login-language-label">${bn ? 'ভাষা' : 'Language'}</label><select id="login-language" aria-label="${bn ? 'ভাষা নির্বাচন করুন' : 'Select language'}"><option value="bn" ${bn ? 'selected' : ''}>বাংলা (BD)</option><option value="en" ${!bn ? 'selected' : ''}>English (US)</option></select></div><div class="login-intro"><img class="login-logo" src="/chatbox-logo.jpg" alt="Chatbox"><h1>${bn ? 'Chatbox-এ স্বাগতম' : 'Welcome to Chatbox'}</h1><p>${bn ? 'আপনার কথোপকথন, এক সুন্দর জায়গায়।' : 'Your conversations, in one thoughtful space.'}</p></div><div class="login-actions"><button type="button" class="login-primary" data-action="sign-in" ${!state.authReady || state.authLoading ? 'disabled' : ''}>${!state.authReady ? (bn ? 'অ্যাকাউন্ট যাচাই হচ্ছে…' : 'Checking account…') : state.authLoading ? (bn ? 'সাইন ইন হচ্ছে…' : 'Signing in…') : (bn ? 'Google দিয়ে লগ ইন' : 'Log in with Google')}</button><p class="login-explanation">${bn ? 'নিরাপদে সাইন ইন করতে আপনার Google অ্যাকাউন্ট ব্যবহার করুন।' : 'Use your Google account to sign in.'}</p><button type="button" class="login-secondary" data-action="login-guest">${bn ? 'ডেমো দেখুন' : 'Explore the demo'}</button><p class="login-disclaimer">${bn ? 'ডেমোতে সাইন ইন হয় না; লাইভ ফিচারের জন্য সাইন ইন প্রয়োজন।' : 'Demo access does not sign you in; live features require an account.'}</p></div><div class="login-wordmark">✦ &nbsp; Chatbox</div></div></main>`;
+}
 function render(scroll = false) {
  const activeId = document.activeElement?.id;
  const selectionStart = document.activeElement?.selectionStart;
  const selectionEnd = document.activeElement?.selectionEnd;
  const liveScrollTop = document.querySelector('#live-messages')?.scrollTop;
  const liveListScrollTop = document.querySelector('.live-list')?.scrollTop;
+ if (!state.user && !state.loginGuest) {
+   root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}${loginScreen()}${modal()}`;
+   createIcons({ icons });
+   return;
+ }
  root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live chats')}${navButton('ai','sparkles','Saira AI')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live')}${navButton('ai','sparkles','Saira')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
  createIcons({ icons });
  const liveMessages = document.querySelector('#live-messages');
@@ -161,6 +172,7 @@ root.addEventListener('click', event => {
  else if (action === 'live-thread') { state.live.screen = 'thread'; render(); resumeCallsForPage(); }
  else if (action === 'block-retry') { if (EXPERIMENTAL_BLOCKING_ENABLED && state.user && blockController) blockController.setUser(state.user.uid); }
  else if (action === 'block-add' || action === 'block-remove') { changeBlock(action === 'block-add'); }
+ else if (action === 'login-guest') { state.loginGuest = true; state.view = 'chats'; render(); }
  else if (action === 'sign-in') { beginSignIn(); }
  else if (action === 'sign-out') { beginSignOut(); }
  else if (action === 'admin-check') { checkAdmin(); }
@@ -195,6 +207,9 @@ root.addEventListener('input', event => {
  }
  if (event.target.id === 'admin-confirm') { state.admin.confirm = event.target.checked; render(); }
  if (event.target.id === 'search') { const pos = event.target.selectionStart; state.search = event.target.value; render(); const search = document.querySelector('#search'); search.focus(); try { search.setSelectionRange(pos,pos); } catch {} }
+});
+root.addEventListener('change', event => {
+ if (event.target.id === 'login-language' && ['bn', 'en'].includes(event.target.value)) { state.loginLanguage = event.target.value; render(); }
 });
 root.addEventListener('submit', event => {
  if (event.target.id === 'ai-form') { event.preventDefault(); submitAi(); return; }
@@ -261,6 +276,7 @@ watchAuth(user => {
   state.ai = { draft: '', messages: [], busy: false, error: '' };
   state.admin = { status: 'idle', error: '', notice: '', command: '', proposal: null, target: '', confirm: false, busy: false };
   state.user = user;
+  if (user) state.loginGuest = false;
   state.authReady = true;
   render();
   if (user && LIVE_CHAT_ENABLED) initializeLive(user);

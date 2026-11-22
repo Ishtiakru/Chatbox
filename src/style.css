@@ -68,3 +68,10 @@
  .spark-menu-top .feature-page{top:67px;bottom:0}
  .spark-menu-top .messenger-page.messenger-screen-thread,.spark-menu-top .messenger-page.messenger-screen-details{top:0}
 }
+
+/* Login layout adapted from the supplied lavender-auth project. */
+.lavender-login{min-height:100dvh;overflow:auto;background:linear-gradient(180deg,#ece4fae8,#e5def6df),url('/login-lavender.jpg') center/cover fixed;color:#29213d;padding:max(20px,env(safe-area-inset-top)) 24px max(20px,env(safe-area-inset-bottom));display:flex;justify-content:center}
+.login-content{width:min(100%,440px);min-height:calc(100dvh - 40px);display:flex;flex-direction:column;align-items:center}
+.login-top{width:100%;display:flex;justify-content:center;align-items:center;gap:8px;color:#625773;font-size:13px}.login-top select{font:inherit;color:#544968;background:#ffffff9e;border:1px solid #d2c6e8;border-radius:25px;padding:9px 12px}.login-language-label{font-weight:700}
+.login-intro{text-align:center;margin:auto 0 30px}.login-logo{width:90px;height:90px;border-radius:50%;object-fit:cover;border:2px solid #fff;box-shadow:0 8px 26px #5e4b7e25}.login-intro h1{font-family:Manrope,system-ui,sans-serif;font-size:27px;letter-spacing:-.6px;margin-top:20px}.login-intro p{color:#6e617d;font-size:14px;line-height:1.6;margin-top:8px}
+.login-actions{width:100%;text-align:center}.login-primary,.login-secondary{width:100%;min-height:54px;border-radius:30px;font-weight:700;font-size:15px}.login-primary{border:0;background:#7658b4;color:white;box-shadow:0 5px 16px #7355a942}.login-primary:disabled{opacity:.65}.login-secondary{border:1.5px solid #7658b4;background:#ffffff88;color:#624999}.login-explanation,.login-disclaimer{color:#6e617d;font-size:12px;line-height:1.55;margin:11px 4px 22px}.login-disclaimer{margin-bottom:0}.login-wordmark{margin:auto 0 0;padding-top:36px;color:#665179;font-weight:700}
