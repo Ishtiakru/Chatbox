@@ -1,7 +1,9 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,8 +46,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -465,24 +469,58 @@ fun AppUpdateBadge(
     modifier: Modifier = Modifier,
     testTag: String = "app_update_badge"
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(6.dp),
-        color = ChatboxUpdateGreenBg,
+    Box(
         modifier = modifier
             .minimumInteractiveComponentSize()
-            .testTag(testTag)
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "update",
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 10.sp
-            ),
-            color = Color.White,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = ChatboxUpdateGreenBg
+        ) {
+            Text(
+                text = "update",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                ),
+                color = Color.White,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun ChatboxLogoWithUpdateBadge(
+    appUpdateActive: Boolean,
+    onUpdateClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    logoSize: Dp = 34.dp,
+    badgeTestTag: String = "app_update_badge"
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.chatbox_logo_lavender),
+            contentDescription = stringResource(id = R.string.cd_chatbox_logo),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(logoSize)
+                .clip(CircleShape)
         )
+        if (appUpdateActive) {
+            AppUpdateBadge(
+                onClick = onUpdateClick,
+                testTag = badgeTestTag
+            )
+        }
     }
 }
 

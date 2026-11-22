@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.AiExchange
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.SignInRequiredCard
 import com.example.ui.theme.ChatboxIncomingBubble
@@ -56,6 +57,8 @@ fun SairaAiScreen(
     isSignedIn: Boolean,
     authBusy: Boolean,
     uiState: SairaAiUiState,
+    appUpdateActive: Boolean = false,
+    onAppUpdateClick: () -> Unit = {},
     onSignIn: () -> Unit,
     onOpenOfflineDemo: () -> Unit,
     onDraftChange: (String) -> Unit,
@@ -78,16 +81,27 @@ fun SairaAiScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "YOUR APP COMPANION",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ChatboxLogoWithUpdateBadge(
+                        appUpdateActive = appUpdateActive,
+                        onUpdateClick = onAppUpdateClick,
+                        logoSize = 34.dp,
+                        badgeTestTag = "saira_app_update_badge"
                     )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Column {
+                        Text(
+                            text = "YOUR APP COMPANION",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                         Text(
                             text = "Saira AI",
                             style = MaterialTheme.typography.headlineSmall,
@@ -105,11 +119,12 @@ fun SairaAiScreen(
                             )
                         }
                     }
-                    Text(
-                        text = "Answers based on reviewed app knowledge.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        Text(
+                            text = "Answers based on reviewed app knowledge.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 Box(
                     modifier = Modifier

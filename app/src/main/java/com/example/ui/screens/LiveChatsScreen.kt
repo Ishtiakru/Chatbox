@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -72,6 +73,7 @@ import com.example.data.model.UiState
 import com.example.data.model.UserProfile
 import com.example.media.VoicePlaybackState
 import com.example.notifications.NotificationHelper
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.ConversationSearchBar
 import com.example.ui.components.MessengerAvatar
@@ -147,6 +149,8 @@ fun LiveChatsScreen(
     voicePlaybackState: VoicePlaybackState,
     profileReady: Boolean,
     quickReaction: String,
+    appUpdateActive: Boolean = false,
+    onAppUpdateClick: () -> Unit = {},
     onQuickReactionChange: (String) -> Unit,
     onSelectConversation: (String) -> Unit,
     onSetScreen: (LiveScreenMode) -> Unit,
@@ -202,6 +206,8 @@ fun LiveChatsScreen(
                     conversationMessages = conversationMessages,
                     threadState = threadState,
                     profileReady = profileReady,
+                    appUpdateActive = appUpdateActive,
+                    onAppUpdateClick = onAppUpdateClick,
                     onToggleNewConversation = onToggleNewConversation,
                     onSearchChange = onSearchChange,
                     onPeerDraftChange = onPeerDraftChange,
@@ -358,6 +364,8 @@ fun LiveChatsScreen(
                         conversationMessages = conversationMessages,
                         threadState = threadState,
                         profileReady = profileReady,
+                        appUpdateActive = appUpdateActive,
+                        onAppUpdateClick = onAppUpdateClick,
                         onToggleNewConversation = onToggleNewConversation,
                         onSearchChange = onSearchChange,
                         onPeerDraftChange = onPeerDraftChange,
@@ -380,6 +388,8 @@ private fun LiveListPane(
     conversationMessages: Map<String, List<LiveMessage>>,
     threadState: LiveThreadState,
     profileReady: Boolean,
+    appUpdateActive: Boolean,
+    onAppUpdateClick: () -> Unit,
     onToggleNewConversation: () -> Unit,
     onSearchChange: (String) -> Unit,
     onPeerDraftChange: (String) -> Unit,
@@ -432,17 +442,28 @@ private fun LiveListPane(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
-                Text(
-                    text = "CHATBOX · EXPERIMENTAL",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ChatboxLogoWithUpdateBadge(
+                    appUpdateActive = appUpdateActive,
+                    onUpdateClick = onAppUpdateClick,
+                    logoSize = 34.dp,
+                    badgeTestTag = "live_app_update_badge"
                 )
-                Text(
-                    text = "Messages",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Column {
+                    Text(
+                        text = "CHATBOX · EXPERIMENTAL",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Messages",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
             Surface(
                 onClick = onToggleNewConversation,
@@ -543,6 +564,13 @@ private fun LiveListPane(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
+        if (!threadState.isOnline) {
+            ChatboxNoticeBanner(
+                text = "Offline mode · viewing cached chats. Text messages you send will queue until reconnected.",
+                modifier = Modifier.testTag("live_list_offline_banner")
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
         if (threadState.pendingNotice) {
             ChatboxNoticeBanner(
                 text = "Still waiting for the service. The outcome is unknown; check the conversation before retrying."
@@ -903,6 +931,14 @@ private fun LiveConversationRow(
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (latestMessage?.pendingWrites == true) {
+                Icon(
+                    imageVector = Icons.Rounded.Schedule,
+                    contentDescription = "Queued for sending",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
                 )
             }
             Icon(

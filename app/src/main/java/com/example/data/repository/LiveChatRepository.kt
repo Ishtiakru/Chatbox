@@ -1,7 +1,6 @@
 package com.example.data.repository
 
 import android.content.Context
-import com.example.R
 import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
 import com.example.data.model.UserProfile
@@ -12,6 +11,7 @@ import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
@@ -19,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class MessagesSnapshot(
     val messages: List<LiveMessage>,
@@ -26,30 +27,67 @@ data class MessagesSnapshot(
     val oldestCursor: DocumentSnapshot?
 )
 
+enum class MessageSendOutcome {
+    SENT,
+    QUEUED_OFFLINE
+}
+
 class LiveChatRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
 ) {
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        ChatboxFirestoreProvider.getInstance(context)
     )
+
+    private companion object {
+        const val WRITE_ACK_TIMEOUT_MS = 1500L
+    }
 
     private fun requireUserId(): String {
         return auth.currentUser?.uid
             ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
     }
 
-    suspend fun registerProfile(uid: String, displayNameRaw: String?): Result<Unit> {
+    suspend fun registerProfile(
+        uid: String,
+        displayNameRaw: String?,
+        isOnline: Boolean = true,
+        onDeferredFailure: (String) -> Unit = {}
+    ): Result<Unit> {
         val path = "profiles/$uid"
         return try {
             val currentUid = requireUserId()
             check(currentUid == uid) { "Signed-in user changed; refusing cross-user profile write." }
             val displayName = (displayNameRaw ?: "Chatbox user").trim().take(80).ifEmpty { "Chatbox user" }
-            db.collection("profiles").document(uid)
-                .set(mapOf("uid" to uid, "displayName" to displayName))
-                .await()
+            val docRef = db.collection("profiles").document(uid)
+            val hasCachedProfile = runCatching {
+                docRef.get(Source.CACHE).await().exists()
+            }.getOrDefault(false)
+
+            val writeTask = docRef.set(mapOf("uid" to uid, "displayName" to displayName))
+            if (!isOnline) {
+                writeTask.addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.WRITE, path)
+                    onDeferredFailure(friendlyFirestoreMessage(error))
+                }
+                return Result.success(Unit)
+            }
+
+            val completed = withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) {
+                writeTask.await()
+                true
+            } ?: false
+
+            if (!completed) {
+                writeTask.addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.WRITE, path)
+                    onDeferredFailure(friendlyFirestoreMessage(error))
+                }
+                if (hasCachedProfile) {
+                    return Result.success(Unit)
+                }
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -62,9 +100,9 @@ class LiveChatRepository(
     fun observePeerProfile(peerUid: String): Flow<UserProfile?> {
         require(peerUid.isNotBlank()) { "Peer UID must not be blank" }
         return db.collection("profiles").document(peerUid)
-            .snapshots()
+            .snapshots(MetadataChanges.INCLUDE)
             .map { snapshot ->
-                if (!snapshot.exists() || snapshot.metadata.isFromCache) null
+                if (!snapshot.exists()) null
                 else snapshot.toObject(UserProfile::class.java)
             }
     }
@@ -73,7 +111,7 @@ class LiveChatRepository(
         require(userId.isNotBlank()) { "User ID must not be blank" }
         return db.collection("conversations")
             .whereArrayContains("participants", userId)
-            .snapshots()
+            .snapshots(MetadataChanges.INCLUDE)
             .map { snapshot ->
                 snapshot.documents.mapNotNull { doc ->
                     doc.toObject(Conversation::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -87,7 +125,7 @@ class LiveChatRepository(
             .collection("messages")
             .orderBy("sentAt", Query.Direction.ASCENDING)
             .limitToLast(pageSize)
-            .snapshots()
+            .snapshots(MetadataChanges.INCLUDE)
             .map { snapshot ->
                 val items = snapshot.documents.map { doc ->
                     val base = doc.toObject(LiveMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -115,10 +153,12 @@ class LiveChatRepository(
                 .orderBy("sentAt", Query.Direction.ASCENDING)
                 .endBefore(cursor)
                 .limitToLast(pageSize)
-                .get(Source.SERVER)
+                .get(Source.DEFAULT)
                 .await()
-            val items = snapshot.documents.mapNotNull { doc ->
-                doc.toObject(LiveMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            val items = snapshot.documents.map { doc ->
+                val base = doc.toObject(LiveMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: LiveMessage(id = doc.id)
+                base.copy(pendingWrites = doc.metadata.hasPendingWrites())
             }
             Result.success(items to snapshot.documents.firstOrNull())
         } catch (e: CancellationException) {
@@ -129,7 +169,11 @@ class LiveChatRepository(
         }
     }
 
-    suspend fun createConversation(uid: String, rawPeerUid: String): Result<String> {
+    suspend fun createConversation(
+        uid: String,
+        rawPeerUid: String,
+        isOnline: Boolean = true
+    ): Result<String> {
         val peerUid = rawPeerUid.trim()
         val path = "conversations"
         return try {
@@ -139,6 +183,9 @@ class LiveChatRepository(
                 "Enter a valid Chatbox ID."
             }
             require(peerUid != uid) { "You cannot start a conversation with yourself." }
+            if (!isOnline) {
+                return Result.failure(IllegalStateException("Starting a new conversation requires an internet connection."))
+            }
             val peerSnap = db.collection("profiles").document(peerUid).get(Source.SERVER).await()
             if (!peerSnap.exists()) {
                 return Result.failure(IllegalArgumentException("No Chatbox user found for that ID. They must sign in to Live chats first."))
@@ -190,8 +237,10 @@ class LiveChatRepository(
         rawBody: String,
         imageUrl: String? = null,
         audioUrl: String? = null,
-        audioDurationMs: Long? = null
-    ): Result<Unit> {
+        audioDurationMs: Long? = null,
+        isOnline: Boolean = true,
+        onDeferredFailure: (String) -> Unit = {}
+    ): Result<MessageSendOutcome> {
         val path = "conversations/$conversationId/messages"
         return try {
             val currentUid = requireUserId()
@@ -244,8 +293,30 @@ class LiveChatRepository(
             }
             val docRef = db.collection("conversations").document(conversationId)
                 .collection("messages").document()
-            docRef.set(payload).await()
-            Result.success(Unit)
+            val writeTask = docRef.set(payload)
+
+            if (!isOnline) {
+                writeTask.addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.CREATE, path)
+                    onDeferredFailure(friendlyFirestoreMessage(error))
+                }
+                return Result.success(MessageSendOutcome.QUEUED_OFFLINE)
+            }
+
+            val acked = withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) {
+                writeTask.await()
+                true
+            } ?: false
+
+            if (acked) {
+                Result.success(MessageSendOutcome.SENT)
+            } else {
+                writeTask.addOnFailureListener { error ->
+                    handleFirestoreError(error, OperationType.CREATE, path)
+                    onDeferredFailure(friendlyFirestoreMessage(error))
+                }
+                Result.success(MessageSendOutcome.QUEUED_OFFLINE)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -257,7 +328,7 @@ class LiveChatRepository(
     fun observeBlockedIds(uid: String): Flow<List<String>> {
         require(uid.isNotBlank()) { "User ID must not be blank" }
         return db.collection("userBlocks").document(uid).collection("blocked")
-            .snapshots()
+            .snapshots(MetadataChanges.INCLUDE)
             .map { snapshot -> snapshot.documents.map { it.id } }
     }
 

@@ -186,3 +186,56 @@ fun signOutUser(
         }
     }
 }
+
+suspend fun sendPasswordResetToGmail(rawEmail: String): Result<Unit> {
+    val email = rawEmail.trim().lowercase()
+    if (email.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+        return Result.failure(IllegalArgumentException("Please enter a valid Gmail address."))
+    }
+    return try {
+        Firebase.auth.sendPasswordResetEmail(email).await()
+        Result.success(Unit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: com.google.firebase.auth.FirebaseAuthException) {
+        Log.w(TAG, "Password reset failed (${e.errorCode}): ${e.message}", e)
+        val friendly = when (e.errorCode) {
+            "ERROR_OPERATION_NOT_ALLOWED" ->
+                "Email/Password sign-in is not enabled in Firebase Console yet. Enable Authentication → Sign-in method → Email/Password, or continue with Google Sign-In."
+            "ERROR_USER_NOT_FOUND" ->
+                "No password-based account was found for $email. If you use Google Sign-In, you don't need a separate password."
+            "ERROR_INVALID_EMAIL" ->
+                "Please enter a valid Gmail address."
+            else -> e.localizedMessage ?: "Could not send password reset email."
+        }
+        Result.failure(IllegalStateException(friendly, e))
+    } catch (e: Exception) {
+        Log.e(TAG, "Password reset error", e)
+        Result.failure(e)
+    }
+}
+
+fun openGmailInbox(context: Context): Boolean {
+    val gmailLaunch = context.packageManager.getLaunchIntentForPackage("com.google.android.gm")
+    if (gmailLaunch != null) {
+        return runCatching {
+            gmailLaunch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(gmailLaunch)
+            true
+        }.getOrDefault(false)
+    }
+    val emailAppIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+        addCategory(android.content.Intent.CATEGORY_APP_EMAIL)
+        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    if (runCatching { context.startActivity(emailAppIntent); true }.getOrDefault(false)) {
+        return true
+    }
+    val webIntent = android.content.Intent(
+        android.content.Intent.ACTION_VIEW,
+        android.net.Uri.parse("https://mail.google.com")
+    ).apply {
+        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    return runCatching { context.startActivity(webIntent); true }.getOrDefault(false)
+}

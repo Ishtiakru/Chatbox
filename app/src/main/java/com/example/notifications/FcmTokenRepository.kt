@@ -1,7 +1,7 @@
 package com.example.notifications
 
 import android.content.Context
-import com.example.R
+import com.example.data.repository.ChatboxFirestoreProvider
 import com.example.data.repository.OperationType
 import com.example.data.repository.handleFirestoreError
 import com.google.firebase.Firebase
@@ -19,9 +19,7 @@ class FcmTokenRepository(
     private val auth: FirebaseAuth = Firebase.auth
 ) {
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        ChatboxFirestoreProvider.getInstance(context)
     )
 
     suspend fun syncCurrentToken(): Result<String> {

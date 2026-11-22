@@ -8,7 +8,9 @@ import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
+import com.example.data.repository.AlwaysOnlineConnectivityProvider
 import com.example.data.repository.ChatMediaStorageRepository
+import com.example.data.repository.ConnectivityStatusProvider
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.friendlyFirestoreMessage
 import com.example.media.VoiceNotePlayer
@@ -56,6 +58,7 @@ data class LiveThreadState(
     val hasOlder: Boolean = false,
     val loadingOlder: Boolean = false,
     val messagesFromCache: Boolean = false,
+    val isOnline: Boolean = true,
     val busy: Boolean = false,
     val pendingNotice: Boolean = false,
     val error: String = "",
@@ -77,7 +80,8 @@ class LiveChatViewModel(
     private val currentUserId: String,
     displayName: String?,
     private val mediaRepository: ChatMediaStorageRepository? = null,
-    private val voiceRecorder: VoiceNoteRecorder? = null
+    private val voiceRecorder: VoiceNoteRecorder? = null,
+    private val connectivityObserver: ConnectivityStatusProvider = AlwaysOnlineConnectivityProvider
 ) : ViewModel() {
 
     private companion object {
@@ -174,8 +178,21 @@ class LiveChatViewModel(
             )
 
     init {
+        _threadState.value = _threadState.value.copy(isOnline = connectivityObserver.isCurrentlyOnline())
         viewModelScope.launch {
-            val result = repository.registerProfile(currentUserId, displayName)
+            connectivityObserver.isOnline.collect { online ->
+                _threadState.value = _threadState.value.copy(isOnline = online)
+            }
+        }
+        viewModelScope.launch {
+            val result = repository.registerProfile(
+                uid = currentUserId,
+                displayNameRaw = displayName,
+                isOnline = connectivityObserver.isCurrentlyOnline(),
+                onDeferredFailure = { msg ->
+                    _threadState.value = _threadState.value.copy(error = msg)
+                }
+            )
             result.onSuccess {
                 _profileReady.value = true
             }.onFailure { error ->
@@ -286,7 +303,7 @@ class LiveChatViewModel(
             olderMessages = cachedOlder,
             hasOlder = cachedOlder.isNotEmpty() || cachedMessages.size >= PAGE_SIZE.toInt(),
             loadingOlder = false,
-            messagesFromCache = cachedMessages.isEmpty(),
+            messagesFromCache = !connectivityObserver.isCurrentlyOnline() || cachedMessages.isEmpty(),
             error = savedError
         )
         messageObserverJob = viewModelScope.launch {
@@ -575,7 +592,11 @@ class LiveChatViewModel(
             return
         }
         runSlowTrackedWrite {
-            val result = repository.createConversation(currentUserId, peerUid)
+            val result = repository.createConversation(
+                uid = currentUserId,
+                rawPeerUid = peerUid,
+                isOnline = connectivityObserver.isCurrentlyOnline()
+            )
             result.onSuccess { newId ->
                 _threadState.value = _threadState.value.copy(
                     peerDraft = "",
@@ -608,6 +629,14 @@ class LiveChatViewModel(
         val pendingVoiceDurationMs = state.pendingVoiceDurationMs
         if (state.busy || state.isUploadingMedia) return
         if (text.trim().isEmpty() && pendingImage.isNullOrBlank() && pendingVoicePath.isNullOrBlank()) return
+
+        val online = connectivityObserver.isCurrentlyOnline()
+        if (!online && (!pendingImage.isNullOrBlank() || !pendingVoicePath.isNullOrBlank())) {
+            val msg = "You're offline. Text messages queue automatically, but photos and voice notes require an internet connection to upload."
+            errorsByConversation[conversationId] = msg
+            _threadState.value = _threadState.value.copy(error = msg)
+            return
+        }
 
         voicePlayer.stopIfKey("pending_voice")
         errorsByConversation[conversationId] = ""
@@ -699,7 +728,11 @@ class LiveChatViewModel(
                 rawBody = text,
                 imageUrl = uploadedImageUrl,
                 audioUrl = uploadedAudioUrl,
-                audioDurationMs = uploadedAudioDurationMs
+                audioDurationMs = uploadedAudioDurationMs,
+                isOnline = connectivityObserver.isCurrentlyOnline(),
+                onDeferredFailure = { msg ->
+                    handleDeferredMessageFailure(conversationId, msg)
+                }
             )
             result.onSuccess {
                 if (draftsByConversation[conversationId] == text) {
@@ -746,7 +779,16 @@ class LiveChatViewModel(
 
         errorsByConversation[conversationId] = ""
         runSlowTrackedWrite {
-            val result = repository.sendMessage(conversationId, currentUserId, normalized, null)
+            val result = repository.sendMessage(
+                conversationId = conversationId,
+                uid = currentUserId,
+                rawBody = normalized,
+                imageUrl = null,
+                isOnline = connectivityObserver.isCurrentlyOnline(),
+                onDeferredFailure = { msg ->
+                    handleDeferredMessageFailure(conversationId, msg)
+                }
+            )
             result.onFailure { error ->
                 val msg = friendlyFirestoreMessage(error)
                 errorsByConversation[conversationId] = msg
@@ -754,6 +796,13 @@ class LiveChatViewModel(
                     _threadState.value = _threadState.value.copy(error = msg)
                 }
             }
+        }
+    }
+
+    private fun handleDeferredMessageFailure(conversationId: String, message: String) {
+        errorsByConversation[conversationId] = message
+        if (_threadState.value.selectedId == conversationId) {
+            _threadState.value = _threadState.value.copy(error = message)
         }
     }
 

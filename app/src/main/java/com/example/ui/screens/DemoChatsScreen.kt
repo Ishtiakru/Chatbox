@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.DemoContact
 import com.example.data.model.DemoMessage
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ConversationSearchBar
 import com.example.ui.components.DemoAvatar
 import com.example.ui.components.DemoInfoModalDialog
@@ -99,6 +100,8 @@ fun DemoChatsScreen(
     userEmail: String?,
     isSignedIn: Boolean,
     authBusy: Boolean,
+    appUpdateActive: Boolean = false,
+    onAppUpdateClick: () -> Unit = {},
     onSelectContact: (String) -> Unit,
     onSearchChange: (String) -> Unit,
     onDraftChange: (String) -> Unit,
@@ -133,6 +136,8 @@ fun DemoChatsScreen(
                     userEmail = userEmail,
                     isSignedIn = isSignedIn,
                     authBusy = authBusy,
+                    appUpdateActive = appUpdateActive,
+                    onAppUpdateClick = onAppUpdateClick,
                     onSelectContact = { onSelectContact(it) },
                     onSearchChange = onSearchChange,
                     onNewChat = { onShowModal(DemoModal.NEW_CHAT) },
@@ -181,6 +186,8 @@ fun DemoChatsScreen(
                     userEmail = userEmail,
                     isSignedIn = isSignedIn,
                     authBusy = authBusy,
+                    appUpdateActive = appUpdateActive,
+                    onAppUpdateClick = onAppUpdateClick,
                     onSelectContact = { contactId ->
                         onSelectContact(contactId)
                         showingMobileThread = true
@@ -240,6 +247,8 @@ private fun DemoConversationListPane(
     userEmail: String?,
     isSignedIn: Boolean,
     authBusy: Boolean,
+    appUpdateActive: Boolean,
+    onAppUpdateClick: () -> Unit,
     onSelectContact: (String) -> Unit,
     onSearchChange: (String) -> Unit,
     onNewChat: () -> Unit,
@@ -261,13 +270,11 @@ private fun DemoConversationListPane(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.chatbox_logo),
-                    contentDescription = stringResource(id = R.string.cd_chatbox_logo),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
+                ChatboxLogoWithUpdateBadge(
+                    appUpdateActive = appUpdateActive,
+                    onUpdateClick = onAppUpdateClick,
+                    logoSize = 34.dp,
+                    badgeTestTag = "demo_app_update_badge"
                 )
                 Column {
                     Text(

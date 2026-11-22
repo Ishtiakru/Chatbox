@@ -26,7 +26,7 @@ data class DemoUiState(
     val searchQuery: String = "",
     val draft: String = "",
     val savedMessages: Map<String, List<DemoMessage>> = emptyMap(),
-    val loginLanguage: String = "bn",
+    val loginLanguage: String = "en-US",
     val activeModal: DemoModal? = null
 ) {
     val activeContact: DemoContact

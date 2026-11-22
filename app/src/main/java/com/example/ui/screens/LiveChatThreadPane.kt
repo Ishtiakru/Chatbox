@@ -45,6 +45,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SentimentSatisfied
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Videocam
@@ -182,7 +183,7 @@ internal fun LiveThreadPane(
     }
 
     val headerItemsCount =
-        (if (threadState.messagesFromCache) 1 else 0) +
+        (if (!threadState.isOnline || threadState.messagesFromCache) 1 else 0) +
             (if (threadState.hasOlder) 1 else 0)
 
     val galleryPickerLauncher = rememberLauncherForActivityResult(
@@ -475,13 +476,17 @@ internal fun LiveThreadPane(
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (threadState.messagesFromCache) {
+            if (!threadState.isOnline || threadState.messagesFromCache) {
                 item(key = "cache_hint") {
-                    Text(
-                        text = "Messages may be incomplete or out of date while awaiting a server update.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                    ChatboxNoticeBanner(
+                        text = if (!threadState.isOnline) {
+                            "You're offline. Viewing cached messages — new text messages will queue and send automatically when back online."
+                        } else {
+                            "Showing cached messages while syncing with the server…"
+                        },
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .testTag("live_offline_cache_banner")
                     )
                 }
             }
@@ -530,6 +535,7 @@ internal fun LiveThreadPane(
                         )
                         Text(
                             text = when {
+                                !threadState.isOnline -> "You're offline and no cached messages were saved for this conversation yet."
                                 threadState.messagesFromCache -> "Waiting for a server update."
                                 conversation.status == "active" -> "Say hello or send $quickReaction to get started."
                                 else -> "No messages to show."
@@ -577,6 +583,7 @@ internal fun LiveThreadPane(
                             message = message,
                             peerName = peerName,
                             isOwn = isOwn,
+                            isOnline = threadState.isOnline,
                             groupedWithPrev = groupedWithPrev,
                             groupedWithNext = groupedWithNext,
                             showIncomingAvatar = !isOwn && !groupedWithNext,
@@ -996,6 +1003,7 @@ private fun LiveMessageBubble(
     message: LiveMessage,
     peerName: String,
     isOwn: Boolean,
+    isOnline: Boolean,
     groupedWithPrev: Boolean,
     groupedWithNext: Boolean,
     showIncomingAvatar: Boolean,
@@ -1005,11 +1013,11 @@ private fun LiveMessageBubble(
     onImageClick: () -> Unit,
     onToggleVoicePlay: () -> Unit
 ) {
-    val timeText = remember(message.sentAt, message.pendingWrites) {
-        if (message.pendingWrites || message.sentAt == null) {
-            "Sending…"
-        } else {
-            DateFormat.getTimeInstance(DateFormat.SHORT, Locale.ENGLISH).format(message.sentAt.toDate())
+    val timeText = remember(message.sentAt, message.pendingWrites, isOnline) {
+        when {
+            message.pendingWrites && !isOnline -> "Queued · offline"
+            message.pendingWrites || message.sentAt == null -> "Sending…"
+            else -> DateFormat.getTimeInstance(DateFormat.SHORT, Locale.ENGLISH).format(message.sentAt.toDate())
         }
     }
 
@@ -1154,13 +1162,30 @@ private fun LiveMessageBubble(
             }
             if (!groupedWithNext || message.pendingWrites) {
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = timeText,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Normal,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                ) {
+                    if (message.pendingWrites) {
+                        Icon(
+                            imageVector = Icons.Rounded.Schedule,
+                            contentDescription = "Queued for delivery",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Normal,
+                        color = if (message.pendingWrites) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
             }
         }
     }

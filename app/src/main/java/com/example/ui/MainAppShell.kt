@@ -1,6 +1,8 @@
 package com.example.ui
 
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -74,11 +76,19 @@ import com.example.data.model.SparkAppearance
 import com.example.data.repository.ChatMediaStorageRepository
 import com.example.data.repository.DemoPreferencesRepository
 import com.example.data.repository.LiveChatRepository
+import com.example.data.repository.NetworkConnectivityObserver
 import com.example.data.repository.SparkAdminRepository
 import com.example.media.VoiceNoteRecorder
 import com.example.notifications.ActiveConversationTracker
 import com.example.notifications.FcmTokenRepository
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import com.example.data.model.DemoCatalog
+import com.example.ui.components.AppUpdateDetailsDialog
 import com.example.ui.components.AuthErrorDialog
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.screens.AdminScreen
 import com.example.ui.screens.AuthLoginScreen
@@ -86,6 +96,9 @@ import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.DemoChatsScreen
 import com.example.ui.screens.LiveChatsScreen
 import com.example.ui.screens.SairaAiScreen
+import com.example.ui.theme.ChatboxLavenderLogo
+import com.example.ui.theme.ChatboxLoginCanvasBottom
+import com.example.ui.theme.ChatboxLoginCanvasTop
 import com.example.ui.theme.ChatboxTheme
 import com.example.ui.viewmodel.DemoChatViewModel
 import com.example.ui.viewmodel.DemoModal
@@ -96,6 +109,7 @@ import com.example.ui.viewmodel.SparkAdminViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -145,6 +159,7 @@ fun ChatboxAppRoot(
     var authReady by remember { mutableStateOf(Firebase.auth.currentUser != null) }
     var authLoading by remember { mutableStateOf(false) }
     var authError by rememberSaveable { mutableStateOf<String?>(null) }
+    var splashDone by rememberSaveable { mutableStateOf(false) }
 
     val demoViewModel: DemoChatViewModel = viewModel(
         factory = remember(context) {
@@ -159,6 +174,11 @@ fun ChatboxAppRoot(
     val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
 
     val sairaAiViewModel: SairaAiViewModel = viewModel()
+
+    LaunchedEffect(Unit) {
+        delay(1200L)
+        splashDone = true
+    }
 
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
@@ -216,7 +236,11 @@ fun ChatboxAppRoot(
     }
 
     val signedInUser = currentUser
-    if (signedInUser == null) {
+    if (!splashDone) {
+        ChatboxTheme(lavenderAppearance = false) {
+            ChatboxLaunchSplash()
+        }
+    } else if (signedInUser == null) {
         ChatboxTheme(lavenderAppearance = false) {
             AuthLoginScreen(
                 language = demoUiState.loginLanguage,
@@ -239,7 +263,8 @@ fun ChatboxAppRoot(
                                 currentUserId = signedInUser.uid,
                                 displayName = signedInUser.displayName,
                                 mediaRepository = ChatMediaStorageRepository(context.applicationContext),
-                                voiceRecorder = VoiceNoteRecorder(context.applicationContext)
+                                voiceRecorder = VoiceNoteRecorder(context.applicationContext),
+                                connectivityObserver = NetworkConnectivityObserver(context.applicationContext)
                             ) as T
                         }
                     }
@@ -323,7 +348,17 @@ private fun AuthenticatedAppShell(
     val voicePlaybackState by liveViewModel.voicePlaybackState.collectAsStateWithLifecycle()
     val profileReady by liveViewModel.profileReady.collectAsStateWithLifecycle()
     val adminUiState by adminViewModel.uiState.collectAsStateWithLifecycle()
+    val appUpdate by adminViewModel.appUpdate.collectAsStateWithLifecycle()
     val quickReaction by prefsRepo.quickReaction.collectAsStateWithLifecycle(initialValue = "💜")
+    var showAppUpdateDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showAppUpdateDialog && appUpdate.active) {
+        AppUpdateDetailsDialog(
+            appUpdate = appUpdate,
+            currentVersion = DemoCatalog.APP_VERSION,
+            onDismiss = { showAppUpdateDialog = false }
+        )
+    }
 
     LaunchedEffect(pendingConversationId) {
         if (!pendingConversationId.isNullOrBlank()) {
@@ -354,6 +389,8 @@ private fun AuthenticatedAppShell(
         navController = navController,
         menuPosition = appearance.menu,
         userDisplayName = user.displayName,
+        appUpdateActive = appUpdate.active,
+        onAppUpdateClick = { showAppUpdateDialog = true },
         onAboutClick = {
             navigateToTab(navController, DemoRoute)
             demoViewModel.showModal(DemoModal.ABOUT)
@@ -372,6 +409,8 @@ private fun AuthenticatedAppShell(
                     userEmail = user.email,
                     isSignedIn = true,
                     authBusy = authLoading,
+                    appUpdateActive = appUpdate.active,
+                    onAppUpdateClick = { showAppUpdateDialog = true },
                     onSelectContact = { demoViewModel.selectContact(it) },
                     onSearchChange = { demoViewModel.updateSearch(it) },
                     onDraftChange = { demoViewModel.updateDraft(it) },
@@ -392,6 +431,8 @@ private fun AuthenticatedAppShell(
                     voicePlaybackState = voicePlaybackState,
                     profileReady = profileReady,
                     quickReaction = quickReaction,
+                    appUpdateActive = appUpdate.active,
+                    onAppUpdateClick = { showAppUpdateDialog = true },
                     onQuickReactionChange = { emoji ->
                         scope.launch { prefsRepo.setQuickReaction(emoji) }
                     },
@@ -430,6 +471,8 @@ private fun AuthenticatedAppShell(
                     isSignedIn = true,
                     authBusy = authLoading,
                     uiState = aiUiState,
+                    appUpdateActive = appUpdate.active,
+                    onAppUpdateClick = { showAppUpdateDialog = true },
                     onSignIn = onSignIn,
                     onOpenOfflineDemo = {
                         demoViewModel.selectContact("saira")
@@ -447,12 +490,19 @@ private fun AuthenticatedAppShell(
             composable<AdminRoute> {
                 AdminScreen(
                     uiState = adminUiState,
+                    appUpdateActive = appUpdate.active,
+                    onAppUpdateClick = { showAppUpdateDialog = true },
                     onCheckAccess = { adminViewModel.checkAdminAccess() },
                     onVerifyGoogleAgain = {
                         adminViewModel.verifyGoogleAccountAgain(context, credentialManager)
                     },
                     onCommandChange = { adminViewModel.updateCommand(it) },
                     onPreviewCommand = { adminViewModel.previewCommand() },
+                    onUpdateVersionChange = { adminViewModel.updateAppVersionDraft(it) },
+                    onUpdateNoteChange = { adminViewModel.updateAppNoteDraft(it) },
+                    onUpdateUrlChange = { adminViewModel.updateAppUrlDraft(it) },
+                    onPreviewPublishUpdate = { adminViewModel.previewPublishAppUpdate() },
+                    onPreviewClearUpdate = { adminViewModel.previewClearAppUpdate() },
                     onApplyProposal = { adminViewModel.applyProposal() },
                     onTargetEmailChange = { adminViewModel.updateTargetEmail(it) },
                     onTargetConfirmedChange = { adminViewModel.setTargetConfirmed(it) },
@@ -466,10 +516,56 @@ private fun AuthenticatedAppShell(
 }
 
 @Composable
+private fun ChatboxLaunchSplash() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(ChatboxLoginCanvasTop, ChatboxLoginCanvasBottom)
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(1.6.dp, ChatboxLavenderLogo.copy(alpha = 0.35f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.chatbox_logo_lavender),
+                    contentDescription = stringResource(id = R.string.cd_chatbox_logo),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(4.dp)
+                        .clip(CircleShape)
+                )
+            }
+            Text(
+                text = "Chatbox",
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                color = ChatboxLavenderLogo,
+                modifier = Modifier.testTag("splash_title")
+            )
+        }
+    }
+}
+
+@Composable
 private fun AdaptiveAppScaffold(
     navController: NavHostController,
     menuPosition: String,
     userDisplayName: String?,
+    appUpdateActive: Boolean,
+    onAppUpdateClick: () -> Unit,
     onAboutClick: () -> Unit,
     content: @Composable () -> Unit
 ) {
@@ -492,14 +588,12 @@ private fun AdaptiveAppScaffold(
                     NavigationRail(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                         header = {
-                            Image(
-                                painter = painterResource(id = R.drawable.chatbox_logo),
-                                contentDescription = stringResource(id = R.string.cd_chatbox_logo),
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .padding(top = 8.dp)
-                                    .size(38.dp)
-                                    .clip(CircleShape)
+                            ChatboxLogoWithUpdateBadge(
+                                appUpdateActive = appUpdateActive,
+                                onUpdateClick = onAppUpdateClick,
+                                logoSize = 38.dp,
+                                badgeTestTag = "rail_app_update_badge",
+                                modifier = Modifier.padding(top = 8.dp).padding(horizontal = 4.dp)
                             )
                         },
                         modifier = Modifier.fillMaxHeight()

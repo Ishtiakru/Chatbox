@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.example.data.repository.ChatboxFirestoreProvider
 import com.example.notifications.NotificationHelper
 import com.example.ui.ChatboxAppRoot
 
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         configureAppCheck(this, intent)
+        ChatboxFirestoreProvider.getInstance(this)
         NotificationHelper.ensureMessageChannel(this)
         pendingConversationId = extractConversationId(intent)
         setContent {

@@ -1,7 +1,6 @@
 package com.example.data.repository
 
 import android.content.Context
-import com.example.R
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.AdminRole
 import com.example.data.model.SparkAppUpdate
@@ -33,9 +32,7 @@ class SparkAdminRepository(
     private val auth: FirebaseAuth = Firebase.auth
 ) {
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        ChatboxFirestoreProvider.getInstance(context)
     )
 
     companion object {

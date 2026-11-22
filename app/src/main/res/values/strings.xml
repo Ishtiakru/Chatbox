@@ -35,4 +35,5 @@
     <string name="cd_brand_mark">Chatbox brand mark</string>
     <string name="cd_app_update_badge">App update available</string>
     <string name="cd_search_languages">Search languages</string>
+    <string name="search_languages_placeholder">Search country or language…</string>
 </resources>

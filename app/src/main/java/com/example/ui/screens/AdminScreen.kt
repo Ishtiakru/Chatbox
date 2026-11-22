@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.AdminRole
 import com.example.data.model.SparkCommandProposal
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.SignInRequiredCard
 import com.example.ui.viewmodel.SparkAdminUiState
@@ -78,6 +79,8 @@ fun AdminSignInGate(
 @Composable
 fun AdminScreen(
     uiState: SparkAdminUiState,
+    appUpdateActive: Boolean = false,
+    onAppUpdateClick: () -> Unit = {},
     onCheckAccess: () -> Unit,
     onVerifyGoogleAgain: () -> Unit,
     onCommandChange: (String) -> Unit,
@@ -107,7 +110,10 @@ fun AdminScreen(
                 .fillMaxWidth()
                 .widthIn(max = 1040.dp)
         ) {
-            AdminHeader()
+            AdminHeader(
+                appUpdateActive = appUpdateActive,
+                onAppUpdateClick = onAppUpdateClick
+            )
             Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Spacer(modifier = Modifier.height(16.dp))
@@ -174,14 +180,28 @@ fun AdminScreen(
 }
 
 @Composable
-private fun AdminHeader() {
+private fun AdminHeader(
+    appUpdateActive: Boolean = false,
+    onAppUpdateClick: () -> Unit = {}
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ChatboxLogoWithUpdateBadge(
+                appUpdateActive = appUpdateActive,
+                onUpdateClick = onAppUpdateClick,
+                logoSize = 34.dp,
+                badgeTestTag = "admin_app_update_badge"
+            )
+            Column {
+                Text(
                 text = "A SPACE FOR THE PEOPLE IN CHARGE",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -207,11 +227,12 @@ private fun AdminHeader() {
                     )
                 }
             }
-            Text(
-                text = "A thoughtful way to manage your space.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                Text(
+                    text = "A thoughtful way to manage your space.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         Box(
             modifier = Modifier
