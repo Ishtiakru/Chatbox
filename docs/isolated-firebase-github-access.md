@@ -17,12 +17,7 @@ assertion.workflow_ref == 'Ishtiakru/Chatbox/.github/workflows/isolated-firebase
 
 Map every claim used by the condition or principal set, as well as the subject: `google.subject=assertion.sub`, `attribute.repository_id=assertion.repository_id`, `attribute.repository_owner_id=assertion.repository_owner_id`, `attribute.ref=assertion.ref`, and `attribute.workflow_ref=assertion.workflow_ref`. Grant `roles/iam.workloadIdentityUser` **on the isolated service account**, only to the principal set for repository ID `1466284145` in this pool. Give that account the minimum read-only project permission needed for `resourcemanager.projects.get` (for example, a reviewed role containing it). Do not grant broad project Owner/Editor roles. Branch and workflow restrictions do not protect against someone who can modify this branch's workflow; restrict who can push and review workflow changes. GitHub repository and workflow access remain security-sensitive.
 
-In GitHub repository Actions variables, the owner must set the two **public identifiers**, not secrets:
-
-- `CHATBOX_TEST_WIF_PROVIDER`: full provider resource name beginning `projects/1012186851732/locations/global/workloadIdentityPools/` and ending `/providers/PROVIDER_ID`.
-- `CHATBOX_TEST_SERVICE_ACCOUNT`: service account email ending `@chatbox-test-2c236731bf.iam.gserviceaccount.com`.
-
-The current GitHub integration was denied access to the Actions secrets API. Whether it can manage variables must be verified separately; the owner may need to configure them. Provider names and service-account emails are identifiers, not private keys.
+The owner created a pool `chatbox-github`, provider `github-actions`, and service account `chatbox-github-reader` in the isolated project. The workflow now fixes those **public resource identifiers** directly; no GitHub variables or service-account key are needed for this connection. The provider's complete saved condition and the service account's IAM roles and impersonation grant still need confirmation. The current GitHub integration was denied access to both the Actions secrets and variables APIs; this does not affect the use of these public identifiers.
 
 The workflow only runs for a push on the current branch with `[isolated-firebase-access]` in the commit message, or a manual dispatch where GitHub permits it. GitHub manual dispatch requires the workflow file to exist on the default branch, so it may not be available while this branch is unmerged. It reads project metadata using a short-lived credential; it does not deploy, enable APIs, change IAM, read chat data, or grant new access. No run has been requested. Configuring trust and running it require separate owner approval.
 
