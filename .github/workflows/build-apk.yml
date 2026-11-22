@@ -1,0 +1,82 @@
+# Lightfall Android APK — PWA থেকে TWA/APK বিল্ড করে GitHub Release-এ তোলা
+name: Build Lightfall APK
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ ".github/workflows/build-apk.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Bubblewrap CLI ইনস্টল
+        run: npm install -g @bubblewrap/cli
+
+      - name: সাইনিং-কী তৈরি
+        run: |
+          mkdir -p apkbuild && cd apkbuild
+          keytool -genkeypair -v -keystore android.keystore -alias android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass lightfall123 -keypass lightfall123 \
+            -dname "CN=Lightfall, O=Ishtiakru, C=BD"
+
+      - name: TWA প্রজেক্ট init (লাইভ PWA থেকে)
+        run: |
+          cd apkbuild
+          printf 'y\nandroid\nlightfall123\nlightfall123\ncom.ishtiakru.lightfall\ncom.ishtiakru.lightfall\n' \
+            | bubblewrap init --manifest="https://ishtiakru.github.io/Chatbox/manifest.webmanifest" --directory=. || true
+          ls -la
+          test -f twa-manifest.json || echo "MISSING_TWA_MANIFEST"
+
+      - name: twa-manifest নিশ্চিত করা
+        run: |
+          cd apkbuild
+          test -f twa-manifest.json
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('twa-manifest.json', 'utf8'));
+            m.packageId = 'com.ishtiakru.lightfall';
+            m.name = 'Lightfall';
+            m.launcherName = 'Lightfall';
+            m.shortName = 'Lightfall';
+            m.appVersionName = '1.0.0';
+            m.appVersionCode = 1;
+            m.display = 'fullscreen';
+            m.signingKey = { path: './android.keystore', alias: 'android' };
+            fs.writeFileSync('twa-manifest.json', JSON.stringify(m, null, 2));
+            console.log('twa-manifest প্রস্তুত:', m.packageId);
+          "
+
+      - name: APK বিল্ড
+        run: |
+          cd apkbuild
+          printf 'lightfall123\nlightfall123\n' | bubblewrap build
+          ls -la
+
+      - name: GitHub Release-এ তোলা
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd apkbuild
+          cp app-release-signed.apk Lightfall-v1.0.apk
+          gh release create lightfall-android-v1.0 Lightfall-v1.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Lightfall — Android APK v1.0" \
+            --notes "ডাউনলোড: Lightfall-v1.0.apk → ফোনে খুলুন → 'অজানা উৎস থেকে ইনস্টল' অনুমতি দিন → ইনস্টল → হোম-স্ক্রিনে Lightfall! (ওয়েব সাইট: https://ishtiakru.github.io/Chatbox/)" \
+            --clobber || gh release upload lightfall-android-v1.0 Lightfall-v1.0.apk --repo "$GITHUB_REPOSITORY" --clobber
