@@ -30,6 +30,7 @@ jobs:
       - name: Unit tests and web build
         run: |
           npm test
+          npm run test:native-ai-ui
           npm run build
       - name: Build browser-only test configuration
         env:

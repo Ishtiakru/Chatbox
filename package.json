@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test",
+    "test:native-ai-ui": "node --experimental-vm-modules --test scripts/native-ai-check.mjs",
     "test:rules": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/firestore-rules.js integration/live-messaging.js integration/spark-admin-rules.js integration/call-rules.js integration/firestore-calls.js\"",
     "generate:knowledge": "node scripts/generate-knowledge.mjs",
     "prebuild": "npm run generate:knowledge",
