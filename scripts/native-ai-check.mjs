@@ -92,3 +92,24 @@ test('admin dashboard denies unsigned users and escapes dynamic content', async 
   assert.match(html,/&lt;script&gt;/); assert.match(html,/&lt;img&gt;/);
   assert.doesNotMatch(html,/<script>|<img>/);
 });
+
+test('private Spark dashboard keeps an empty request field and confirmation controls', async () => {
+  const view = await views();
+  const admin = {status:'authorized',role:'owner',busy:false,command:'',target:'',delegations:[]};
+  const state = {user:{uid:'mock'},authLoading:false,admin};
+  const empty = view.sparkAdminControls(state);
+  assert.match(empty, /<textarea id="admin-command"[^>]*><\/textarea>/);
+  assert.doesNotMatch(empty, /<textarea[^>]*placeholder=/);
+  assert.match(empty, /Limited changes only/);
+  assert.match(empty, /data-admin-security/);
+  assert.match(empty, /data-action="spark-reauth"/);
+  assert.match(empty, /id="admin-confirm"/);
+  assert.match(empty, /id="admin-transfer-form"/);
+  const proposed = view.sparkAdminControls({...state,admin:{...admin,securityOpen:true,proposal:{action:'set_welcome',value:'<unsafe>'}}});
+  assert.match(proposed, /data-admin-security open/);
+  assert.match(proposed, /PREVIEW — NOT YET APPLIED/);
+  assert.match(proposed, /&lt;unsafe&gt;/);
+  assert.match(proposed, /data-action="admin-apply"/);
+  const denied = view.sparkAdminControls({...state,admin:{...admin,status:'forbidden'}});
+  assert.doesNotMatch(denied, /id="admin-command"/);
+});

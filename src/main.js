@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import './style.css';
-import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X } from 'lucide';
-const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X };
+import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot } from 'lucide';
+const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot };
 import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
@@ -61,10 +61,10 @@ const navButton = (id, iconName, text) => `<button class="rail-button ${state.vi
 function sidebar() {
   const list = contacts.filter(c => `${c.name} ${c.role}`.toLowerCase().includes(state.search.toLowerCase()));
   return `<aside class="conversations ${state.mobileChat && state.view === 'chats' ? 'mobile-hidden' : ''}">
-    <div class="conversations-top"><div class="heading-group"><img class="mobile-brand" src="/chatbox-logo.jpg" alt="Chatbox logo"><div><span class="eyebrow">YOUR SPACE</span><h1>Messages <span class="heading-spark">✳</span></h1></div></div><button class="square-button" data-action="new" aria-label="New message">${icon('square-pen')}</button></div>
+    <div class="conversations-top"><div class="heading-group"><img class="mobile-brand" src="/chatbox-logo.jpg" alt=""><div><h1>Chatbox</h1></div></div><div class="top-actions"><button class="square-button" data-action="new" aria-label="New message">${icon('square-pen')}</button><button class="plain-icon" data-action="about" aria-label="About">${icon('ellipsis')}</button></div></div><nav class="chat-tabs" aria-label="Conversation sections"><button class="${state.view === 'chats' ? 'active' : ''}" type="button" data-view="chats">Demo</button><button class="${state.view === 'live' ? 'active' : ''}" type="button" data-view="live">Chats</button><button class="${state.view === 'calls' ? 'active' : ''}" type="button" data-view="calls">Calls</button></nav>
     ${state.publicWelcome ? `<p class="public-welcome">${e(state.publicWelcome)}</p>` : ''}
     <div class="search-wrap">${icon('search')}<input id="search" type="search" placeholder="Search conversations" value="${e(state.search)}" aria-label="Search conversations"><span class="search-shortcut">⌘ K</span></div>
-    <div class="list-heading"><span>YOUR CONVERSATIONS</span><span>${String(list.length).padStart(2,'0')}</span></div>
+    <div class="list-heading"><span>DEMO CONVERSATIONS</span><span>${String(list.length).padStart(2,'0')}</span></div>
     <div class="contact-list">${list.length ? list.map(c => {
       const last = messages(c.id).at(-1);
       return `<button class="contact-row ${state.view === 'chats' && state.active === c.id ? 'selected' : ''}" data-contact="${c.id}"><span class="avatar-wrap">${avatar(c)}${c.online ? '<span class="online-dot"></span>' : ''}</span><span class="contact-copy"><span class="contact-name">${e(c.name)} ${c.id === 'saira' ? '<span class="mini-spark">✦</span>' : ''}</span><span class="contact-preview">${e(last?.text || c.role)}</span></span><span class="contact-meta">${c.id === 'saira' ? '<span class="saira-tag">GUIDE</span>' : '<span>DEMO</span>'}</span></button>`;
@@ -94,7 +94,10 @@ function sourceHandoverView() {
 }
 function admin() {
  const authorized = state.admin.status === 'authorized' && (SPARK_ADMIN_ENABLED || (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY));
- return `<main class="main feature-page admin-page"><div class="feature-top"><div><span class="eyebrow">A SPACE FOR THE PEOPLE IN CHARGE</span><h2>Admin studio <span class="beta-pill">EXPERIMENTAL</span></h2><p>A thoughtful way to manage your space.</p></div><div class="feature-icon">${icon('shield-check')}</div></div><div class="admin-layout"><section class="locked-card"><div class="lock-icon">${icon('lock-keyhole')}</div><span class="eyebrow">SECURITY FIRST</span><h3>${authorized ? 'Administrator controls' : 'This space is locked.'}</h3><p>${authorized ? (SPARK_ADMIN_ENABLED ? 'Only limited changes are supported. Full audit history is not available.' : 'Changes are limited, reviewed and recorded.') : 'Verified sign-in and server-side security rules or admin permissions are required.'}</p>${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}${sourceHandoverView()}<div class="security-note">${icon('shield-check')} An email address alone will never grant admin access.</div></section><section class="studio-preview"><div class="preview-head"><div><span class="eyebrow">WHAT IS SUPPORTED</span><h3>Just say what you need.</h3></div><span class="preview-label">LIMITED</span></div><p>When configured, you can preview and confirm a public welcome message. Supported changes: welcome text, home color, and mobile menu position. Code changes and arbitrary actions are not supported.</p><div class="example-command"><span>✳</span><p>${SPARK_ADMIN_ENABLED ? 'হোম পেজটা ল্যাভেন্ডার কালার করো' : '“Make the welcome message a little warmer...”'}</p></div><div class="preview-footer">${icon('info')} ${SPARK_ADMIN_ENABLED ? 'These limited commands are not AI.' : 'AI requests may be sent to an external provider.'}</div><div class="preview-item">${icon('users')} <div><strong>Admin access</strong><span>${SPARK_ADMIN_ENABLED ? 'One owner with approved delegates' : 'One verified admin at a time'}</span></div>${icon('arrow-up-right')}</div><div class="preview-item">${icon('history')} <div><strong>Activity history</strong><span>${SPARK_ADMIN_ENABLED ? 'Full audit history is not available' : 'Privileged actions are audited'}</span></div>${icon('arrow-up-right')}</div></section></div></main>`;
+ const qr = authorized ? (SOURCE_HANDOVER_ENABLED && !SPARK_ADMIN_ENABLED && APP_CHECK_SITE_KEY
+   ? sourceHandoverView()
+   : `<div class="admin-qr-unavailable" role="status">${icon('lock-keyhole')}<span>Source QR is not configured</span></div>`) : '';
+ return `<main class="main feature-page admin-page"><header class="dashboard-header"><span class="dashboard-menu">${icon('shield-check')}</span><h2>Dashboard</h2><span class="dashboard-private">PRIVATE</span></header><div class="dashboard-content">${authorized ? `<div class="dashboard-qr">${qr}</div>` : ''}<section class="dashboard-panel">${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}</section></div></main>`;
 }
 function modal() {
  if (!state.modal) return '';
@@ -126,7 +129,7 @@ function render(scroll = false) {
    createIcons({ icons });
    return;
  }
- root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live chats')}${navButton('ai','sparkles','Saira AI')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','message-circle','Demo')}${navButton('live','users','Live')}${navButton('ai','sparkles','Saira')}${navButton('calls','phone','Calls')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
+ root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}<div class="app-shell"><nav class="rail"><div class="brand-mark" title="Chatbox"><img src="/chatbox-logo.jpg" alt="Chatbox logo"></div><div class="rail-nav">${navButton('chats','home','Home')}${navButton('live','message-circle','Chats')}${navButton('calls','phone','Calls')}${navButton('ai','bot','AI')}${navButton('admin','shield','Admin')}</div><div class="rail-bottom"><button class="rail-button" data-action="about" aria-label="About Saira" title="About">${icon('circle-help')}<span>About</span></button><div class="rail-profile">Y</div></div></nav>${sidebar()}${state.view === 'chats' ? chat() + infoPanel() : state.view === 'live' ? liveView(state) : state.view === 'ai' ? sairaAiView(state) : state.view === 'calls' ? calls() : admin()}<nav class="mobile-nav">${navButton('chats','home','Home')}${navButton('live','message-circle','Chats')}${navButton('calls','phone','Calls')}${navButton('ai','bot','AI')}${navButton('admin','shield','Admin')}</nav></div>${modal()}`;
  createIcons({ icons });
  const liveMessages = document.querySelector('#live-messages');
  if (liveMessages && liveScrollTop != null) liveMessages.scrollTop = liveScrollTop;
@@ -209,6 +212,9 @@ root.addEventListener('input', event => {
  if (event.target.id === 'admin-confirm') { state.admin.confirm = event.target.checked; render(); }
  if (event.target.id === 'search') { const pos = event.target.selectionStart; state.search = event.target.value; render(); const search = document.querySelector('#search'); search.focus(); try { search.setSelectionRange(pos,pos); } catch {} }
 });
+root.addEventListener('toggle', event => {
+ if (event.target.matches?.('[data-admin-security]')) state.admin.securityOpen = event.target.open;
+}, true);
 root.addEventListener('change', event => {
  if (event.target.id === 'login-language' && ['bn', 'en'].includes(event.target.value)) { state.loginLanguage = event.target.value; render(); }
 });

@@ -4,7 +4,7 @@ name: Isolated test APK (not release)
 on:
   push:
     branches:
-      - arena/f649c1bd-chatbox
+      - arena/66dec666-chatbox
 
 permissions:
   contents: read
