@@ -37,6 +37,9 @@ jobs:
           if [[ ! "$SERVICE_ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@chatbox-test-2c236731bf\.iam\.gserviceaccount\.com$ ]]; then
             echo 'The service account must belong to the isolated test project.'; exit 1
           fi
+      # The auth action requires the workspace to exist before creating its
+      # temporary credentials file. Never upload or commit that file.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Obtain a short-lived Google credential
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
