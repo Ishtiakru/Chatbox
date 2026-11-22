@@ -701,7 +701,10 @@ if (SPARK_ADMIN_ENABLED) {
     watchSparkAppearance(({theme, menu}) => {
       document.documentElement.classList.toggle('spark-theme-lavender', theme === 'lavender');
       document.documentElement.classList.toggle('spark-menu-top', menu === 'top');
-    }, () => {});
+    }, () => {
+      state.admin.appearanceError = 'Appearance settings could not be loaded from the server. They may not be configured or accessible.';
+      if (state.view === 'admin') render();
+    });
   }).catch(() => {});
 } else if (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY) {
   import('./cloud-service.js').then(({watchPublicWelcome}) => watchPublicWelcome(value => { state.publicWelcome = value; render(); }, () => {})).catch(() => {});

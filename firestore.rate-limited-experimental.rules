@@ -114,6 +114,20 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid;
     }
 
+    // Review-only bounded appearance options; no arbitrary CSS or code.
+    match /settings/{appearance} {
+      allow get: if appearance in ['sparkTheme', 'sparkMenu'];
+      allow create, update: if appearance in ['sparkTheme', 'sparkMenu']
+        && isSparkAdmin() && recentlyAuthenticated()
+        && request.resource.data.keys().hasAll(['value', 'updatedAt', 'updatedBy'])
+        && request.resource.data.keys().hasOnly(['value', 'updatedAt', 'updatedBy'])
+        && ((appearance == 'sparkTheme' && request.resource.data.value in ['default', 'lavender'])
+          || (appearance == 'sparkMenu' && request.resource.data.value in ['bottom', 'top']))
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow list, delete: if false;
+    }
+
     // Experimental message throttle. Not a complete anti-abuse solution.
     function throttlePath(uid) { return /databases/$(database)/documents/messageThrottle/$(uid); }
     function messagePath(conversationId, messageId) {

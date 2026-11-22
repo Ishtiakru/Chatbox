@@ -44,7 +44,7 @@ export function createSparkAdminService(db, ops = defaultOps) {
   }
   async function applySparkWelcome(user, command, confirmed, preview) {
     const proposal = parseSparkCommand(command);
-    if (!user?.uid || !proposal || confirmed !== true || preview?.action !== proposal.action || preview?.value !== proposal.value) {
+    if (!user?.uid || proposal?.action !== 'set_welcome' || confirmed !== true || preview?.action !== proposal.action || preview?.value !== proposal.value) {
       throw new Error('A matching preview and confirmation are required.');
     }
     await setDoc(welcome(), { welcome:proposal.value, updatedBy:user.uid, updatedAt:serverTimestamp() });
@@ -61,8 +61,10 @@ export function createSparkAdminService(db, ops = defaultOps) {
   }
   function watchSparkAppearance(next, fail) {
     const values = {theme:'default', menu:'bottom'};
-    const watch = (name, key, allowed) => onSnapshot(doc(db, 'settings', name), snap => {
-      if (snap.metadata?.hasPendingWrites) return;
+    const watch = (name, key, allowed) => onSnapshot(doc(db, 'settings', name), {includeMetadataChanges:true}, snap => {
+      // Local optimistic writes are not confirmation. Metadata changes are
+      // required to receive the later server acknowledgement.
+      if (snap.metadata?.hasPendingWrites || snap.metadata?.fromCache) return;
       const value = snap.data()?.value;
       values[key] = allowed.includes(value) ? value : allowed[0];
       next({...values});
