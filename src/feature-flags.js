@@ -13,6 +13,7 @@ export const EXPERIMENTAL_STUN_ENABLED = EXPERIMENTAL_CALLS_ENABLED && import.me
 export const EXPERIMENTAL_BLOCKING_ENABLED = LIVE_CHAT_ENABLED && import.meta.env.VITE_ENABLE_EXPERIMENTAL_BLOCKING === 'true';
 export const SAIRA_PROVIDER = import.meta.env.VITE_SAIRA_PROVIDER === 'firebase-ai' ? 'firebase-ai' : 'functions';
 export const SAIRA_AI_ENABLED = import.meta.env.VITE_ENABLE_SAIRA_AI === 'true';
+export const ANDROID_AI_LAB_ENABLED = SAIRA_AI_ENABLED && import.meta.env.VITE_CHATBOX_TEST_MODE === 'true' && import.meta.env.VITE_CHATBOX_NATIVE_TEST_MODE === 'true' && import.meta.env.VITE_ENABLE_EXPERIMENTAL_ANDROID_AI === 'true';
 export const SPARK_ADMIN_ENABLED = import.meta.env.VITE_ENABLE_SPARK_ADMIN === 'true';
 export const ADMIN_BACKEND_ENABLED = import.meta.env.VITE_ENABLE_ADMIN_BACKEND === 'true';
 // Review-only. Requires a deployed, authorized backend and a private Drive file.

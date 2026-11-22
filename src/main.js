@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import './style.css';
 import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X } from 'lucide';
 const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X };
@@ -5,7 +6,7 @@ import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
 import { authErrorMessage } from './auth-errors.js';
-import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED } from './feature-flags.js';
+import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED } from './feature-flags.js';
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
@@ -578,7 +579,7 @@ async function cloudCall(name, payload, guard) {
   return guard.run(() => callCloud(name, payload));
 }
 async function submitAi() {
-  if (!SAIRA_AI_ENABLED || !APP_CHECK_SITE_KEY || !state.user || state.ai.busy) return;
+  if (!SAIRA_AI_ENABLED || (!APP_CHECK_SITE_KEY && !(SAIRA_PROVIDER === 'firebase-ai' && ANDROID_AI_LAB_ENABLED && Capacitor.isNativePlatform())) || !state.user || state.ai.busy) return;
   const question = state.ai.draft.trim(); if (!question || question.length > 1000) return;
   const generation = cloudGeneration, guard = accountGuard(state.user, generation); state.ai.busy = true; state.ai.error = ''; render();
   try {

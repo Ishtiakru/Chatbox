@@ -8,6 +8,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(android.os.Bundle savedInstanceState) {
         registerPlugin(NativeFirebaseIdentityPlugin.class);
+        registerPlugin(NativeSairaPlugin.class);
+        NativeSairaPlugin.initializeTestAppCheck(this);
         super.onCreate(savedInstanceState);
         if (getBridge() != null && NativeFirebaseIdentityPlugin.isCallLabEnabled(this)) {
             callLabChromeClient = new CallLabChromeClient(getBridge());

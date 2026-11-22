@@ -1,13 +1,13 @@
 import { escapeHtml as e } from './knowledge.js';
 import { Capacitor } from '@capacitor/core';
-import { SAIRA_AI_ENABLED, SAIRA_PROVIDER, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY } from './feature-flags.js';
+import { SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY } from './feature-flags.js';
 const icon = name => `<i data-lucide="${name}"></i>`;
 
 export function sairaAiView(state) {
   let body;
-  if (!SAIRA_AI_ENABLED || !APP_CHECK_SITE_KEY) {
+  if (!SAIRA_AI_ENABLED || (!APP_CHECK_SITE_KEY && !(SAIRA_PROVIDER === 'firebase-ai' && Capacitor.isNativePlatform() && ANDROID_AI_LAB_ENABLED))) {
     body = `<div class="live-empty"><div class="lock-icon">${icon('sparkles')}</div><h3>Saira AI is being prepared.</h3><p>The full AI service is not connected yet. The offline Saira guide remains available in the demo.</p><button class="primary-button" data-contact="saira">Open offline guide ${icon('arrow-right')}</button></div>`;
-  } else if (SAIRA_PROVIDER === 'firebase-ai' && Capacitor.isNativePlatform()) {
+  } else if (SAIRA_PROVIDER === 'firebase-ai' && Capacitor.isNativePlatform() && !ANDROID_AI_LAB_ENABLED) {
     body = `<div class="live-empty"><h3>Saira AI is not ready on Android.</h3><p>Native App Check has not been configured or verified. Try the website when the feature is enabled.</p></div>`;
   } else if (!state.user) {
     body = `<div class="live-empty"><h3>Sign in to talk to Saira.</h3><p>AI questions require a signed-in account.</p><button class="google-button" data-action="sign-in" ${state.authLoading ? 'disabled' : ''}>Sign in with Google</button></div>`;
