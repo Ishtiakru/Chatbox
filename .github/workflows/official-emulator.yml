@@ -72,6 +72,11 @@ jobs:
           npx --yes firebase-tools@15.37.0 emulators:exec
           --config firebase.emulator.json --project demo-chatbox --only firestore
           'node --test --test-concurrency=1 integration/restricted-call-rules.js'
+      - name: Restricted combined admin, chat and calls candidate
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/restricted-combined-rules.js'
       - name: Combined candidate, simulated accounts
         run: npm run test:combined
       - name: Message cooldown candidate
