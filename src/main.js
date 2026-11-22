@@ -587,7 +587,8 @@ async function previewAdmin() {
   const generation = cloudGeneration, guard = accountGuard(state.user, generation); state.admin.busy = true; state.admin.error = ''; state.admin.notice = ''; state.admin.proposal = null; render();
   try {
     const proposal = SPARK_ADMIN_ENABLED ? (await import('./spark-admin-commands.js')).parseSparkCommand(command) : (await cloudCall('previewAdminUpdate', {command}, guard))?.proposal;
-    if (generation === cloudGeneration) state.admin.proposal = proposal || {action:'unsupported'};
+    // An async preview must not be shown for a changed command.
+    if (generation === cloudGeneration && state.admin.command.trim() === command) state.admin.proposal = proposal || {action:'unsupported'};
   }
   catch (error) { if (generation === cloudGeneration) state.admin.error = cloudMessage(error); }
   finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
@@ -596,7 +597,7 @@ async function applyAdmin() {
   if (state.admin.status !== 'authorized' || state.admin.busy || state.admin.proposal?.action !== 'set_welcome' || !state.user) return;
   const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation); const proposal = state.admin.proposal, command = state.admin.command; state.admin.busy = true; state.admin.error = ''; render();
   try {
-    if (SPARK_ADMIN_ENABLED) { const api = await import('./spark-admin-service.js'); await guard.run(() => api.applySparkWelcome(user, command, true)); }
+    if (SPARK_ADMIN_ENABLED) { const api = await import('./spark-admin-service.js'); await guard.run(() => api.applySparkWelcome(user, command, true, proposal)); }
     else await cloudCall('applyAdminUpdate', {proposal, confirmed:true}, guard);
     if (generation === cloudGeneration) { state.admin.proposal = null; state.admin.notice = 'Welcome message updated.'; }
   }

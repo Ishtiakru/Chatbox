@@ -42,9 +42,11 @@ export function createSparkAdminService(db, ops = defaultOps) {
     }
     return { status:'forbidden', role:'' };
   }
-  async function applySparkWelcome(user, command, confirmed) {
+  async function applySparkWelcome(user, command, confirmed, preview) {
     const proposal = parseSparkCommand(command);
-    if (!user?.uid || !proposal || confirmed !== true) throw new Error('A valid command and confirmation are required.');
+    if (!user?.uid || !proposal || confirmed !== true || preview?.action !== proposal.action || preview?.value !== proposal.value) {
+      throw new Error('A matching preview and confirmation are required.');
+    }
     await setDoc(welcome(), { welcome:proposal.value, updatedBy:user.uid, updatedAt:serverTimestamp() });
   }
   async function listSparkDelegations() {

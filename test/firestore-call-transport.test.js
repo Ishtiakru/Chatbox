@@ -71,6 +71,38 @@ test('server-confirmed missing call is closed without asking for media', () => {
   call.close();
 });
 
+test('synchronous document failure closes the returned listener without creating a candidate listener', () => {
+  let listeners=0, stopped=0, errors=0;
+  const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
+    mediaDevices:{getUserMedia:async()=>{throw new Error('Unexpected media');}},peerFactory:()=>{},
+    subscribe:(ref, options, next, fail)=>{ listeners++; fail(new Error('denied')); return ()=>{stopped++;}; },
+    onError:()=>{errors++;}});
+  call.listen();
+  assert.equal(listeners,1); assert.equal(stopped,1); assert.equal(errors,1);
+  call.close(); assert.equal(stopped,1);
+});
+
+test('synchronous candidate failure closes both listeners exactly once', () => {
+  let listeners=0, stopped=0, errors=0;
+  const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
+    mediaDevices:{getUserMedia:async()=>{throw new Error('Unexpected media');}},peerFactory:()=>{},
+    subscribe:(ref,...args)=>{ listeners++; if (listeners===2) args[1](new Error('denied')); return ()=>{stopped++;}; },
+    onError:()=>{errors++;}});
+  call.listen();
+  assert.equal(listeners,2); assert.equal(stopped,2); assert.equal(errors,1);
+  call.close(); assert.equal(stopped,2);
+});
+
+test('synchronous candidate subscription exception closes the existing document listener', () => {
+  let listeners=0, stopped=0, errors=0;
+  const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
+    mediaDevices:{getUserMedia:async()=>{throw new Error('Unexpected media');}},peerFactory:()=>{},
+    subscribe:()=>{if (++listeners===2) throw new Error('failed'); return ()=>{stopped++;};},
+    onError:()=>{errors++;}});
+  assert.throws(()=>call.listen(),/failed/);
+  assert.equal(stopped,1); assert.equal(errors,1); call.close();
+});
+
 test('cache fallback after acceptance releases active local media', async () => {
   const fake=fakeSubscribe(), errors=[];
   const track={stopped:false,stop(){this.stopped=true;}};

@@ -46,7 +46,8 @@ export function createFirestoreCall({ db, conversationId, uid, peerUid, role, ca
   const listen = () => {
     if (listening) throw new Error('Already listening for this call.');
     listening = true;
-    stopDoc = subscribe(ref, {includeMetadataChanges:true}, snapshot => {
+    let docListener;
+    try { docListener = subscribe(ref, {includeMetadataChanges:true}, snapshot => {
       if (closed) return;
       // Never prompt for a cached offer or process a cached answer. Once a
       // server snapshot was seen, cache fallback ends the local call rather
@@ -71,15 +72,22 @@ export function createFirestoreCall({ db, conversationId, uid, peerUid, role, ca
       if (role === 'caller' && value.status === 'accepted' && !answerReceived) {
         answerReceived = true; handleSignal({type:'answer',description:value.answer});
       }
-    }, fail);
-    stopCandidates = subscribe(collection(ref, otherCandidates), snapshot => {
+    }, fail); } catch (error) { fail(error); throw error; }
+    // A synchronous listener callback can close the call before subscribe
+    // returns. Do not leak the returned listener or attach another one.
+    if (closed) { docListener(); return; }
+    stopDoc = docListener;
+    let candidateListener;
+    try { candidateListener = subscribe(collection(ref, otherCandidates), snapshot => {
       if (closed) return;
       for (const change of snapshot.docChanges()) {
         if (change.type !== 'added' || change.doc.metadata.hasPendingWrites) continue;
         const data = change.doc.data();
         handleSignal({type:'candidate',candidate:{candidate:data.candidate,sdpMid:data.sdpMid,sdpMLineIndex:data.sdpMLineIndex}});
       }
-    }, fail);
+    }, fail); } catch (error) { fail(error); throw error; }
+    if (closed) { candidateListener(); return; }
+    stopCandidates = candidateListener;
   };
   return {
     id: ref.id,

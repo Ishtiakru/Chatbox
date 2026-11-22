@@ -49,6 +49,17 @@ test('a pending invitation transaction cannot stage a write after a session chan
   f.switchUser();lookup.resolve({exists:()=>false});
   await assert.rejects(pending,/account changed/);assert.deepEqual(f.calls,[]);
 });
+test('welcome writes require confirmation of the exact preview',async()=>{
+  const f=fixture(); f.ops.setDoc=async(ref,data)=>f.calls.push({ref,data});
+  const api=createSparkAdminService({},f.ops), preview={action:'set_welcome',value:'Hello'};
+  await assert.rejects(api.applySparkWelcome(f.user,'welcome: Changed',true,preview),/matching preview/);
+  await assert.rejects(api.applySparkWelcome(f.user,'welcome: Hello',true,null),/matching preview/);
+  await assert.rejects(api.applySparkWelcome(f.user,'welcome: Hello',false,preview),/matching preview/);
+  assert.deepEqual(f.calls,[]);
+  await api.applySparkWelcome(f.user,'welcome: Hello',true,preview);
+  assert.equal(f.calls.length,1); assert.equal(f.calls[0].data.welcome,'Hello');
+});
+
 test('a transaction callback retried after an account switch does not start another read',async()=>{
   const f=fixture(); let reads=0;
   const tx={get:async()=>{reads++;return {exists:()=>false}},set:()=>f.calls.push('set')};
