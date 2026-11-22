@@ -1,0 +1,109 @@
+apply plugin: 'com.android.application'
+
+// A separate, debug-only package for a future isolated Firebase test APK.
+// Standard builds keep their original application ID and release behavior.
+def isolatedTestBuild = project.findProperty('chatboxIsolatedTest') == 'true'
+// Only a distinct debug test APK may request camera/microphone permissions.
+def callLabBuild = project.findProperty('chatboxCallLab') == 'true'
+if (callLabBuild && !isolatedTestBuild) throw new GradleException('Call lab requires an isolated test build.')
+def releaseStore = System.getenv('CHATBOX_RELEASE_KEYSTORE')
+def releaseAlias = System.getenv('CHATBOX_RELEASE_KEY_ALIAS')
+def releaseStorePassword = System.getenv('CHATBOX_RELEASE_STORE_PASSWORD')
+def releaseKeyPassword = System.getenv('CHATBOX_RELEASE_KEY_PASSWORD')
+def signingValuesPresent = [releaseStore, releaseAlias, releaseStorePassword, releaseKeyPassword].every { it != null && !it.trim().isEmpty() }
+def releaseStoreFile = signingValuesPresent ? file(releaseStore).canonicalFile : null
+def repositoryRoot = rootProject.projectDir.parentFile.canonicalFile
+def releaseSigningReady = signingValuesPresent && releaseStoreFile.isFile()
+    && !releaseStoreFile.toPath().startsWith(repositoryRoot.toPath())
+    && !releaseAlias.equalsIgnoreCase('androiddebugkey')
+    && !releaseStoreFile.name.equalsIgnoreCase('debug.keystore')
+
+android {
+    namespace = "com.chatbox.apk"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId isolatedTestBuild ? "com.chatbox.test" : "com.chatbox.apk"
+        manifestPlaceholders = [chatboxLabel: isolatedTestBuild ? "Chatbox Test" : "Chatbox"]
+        resValue "bool", "chatbox_call_lab", callLabBuild ? "true" : "false"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    if (callLabBuild) {
+        sourceSets.debug.manifest.srcFile 'src/callLab/AndroidManifest.xml'
+    }
+    signingConfigs {
+        if (releaseSigningReady && !isolatedTestBuild) {
+            release {
+                storeFile releaseStoreFile
+                storePassword releaseStorePassword
+                keyAlias releaseAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (releaseSigningReady && !isolatedTestBuild) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        if (isolatedTestBuild) variant.enable = false
+    }
+}
+
+// Never silently produce an unsigned release or accept the usual Android debug
+// key. This validates presence and location, not the key's provenance, strength,
+// Google OAuth registration or suitability for a production release.
+gradle.taskGraph.whenReady { graph ->
+    if (!isolatedTestBuild && graph.allTasks.any { it.project == project && it.name.toLowerCase(java.util.Locale.ROOT).contains('release') }
+            && !releaseSigningReady) {
+        throw new GradleException('Release signing requires an external non-debug keystore and all four CHATBOX_RELEASE_* environment variables. Do not use a debug key.')
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    // Isolated AI prototype; App Check must be configured in the test project.
+    implementation platform('com.google.firebase:firebase-bom:35.2.0')
+    implementation 'com.google.firebase:firebase-ai'
+    implementation 'com.google.firebase:firebase-appcheck-playintegrity'
+    implementation 'com.google.guava:guava:31.0.1-android'
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

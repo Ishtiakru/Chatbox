@@ -1,0 +1,273 @@
+name: Isolated Firebase connection (read only)
+
+# Deliberate opt-in only. No deployment, secret keys or production project access.
+# The Google Cloud workload identity provider is the actual trust boundary and
+# must independently restrict repository ID, owner ID, branch and workflow.
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect-test-project:
+    if: >-
+      github.ref == 'refs/heads/arena/f649c1bd-chatbox' &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[isolated-firebase-access]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: chatbox-isolated-firestore-rules
+      cancel-in-progress: false
+    env:
+      PROJECT_ID: chatbox-test-2c236731bf
+      # Public resource identifiers, not keys or credentials. These are fixed
+      # to the isolated project and the resources the owner created in Console.
+      WIF_PROVIDER: projects/1012186851732/locations/global/workloadIdentityPools/chatbox-github/providers/github-actions
+      SERVICE_ACCOUNT: chatbox-github-reader@chatbox-test-2c236731bf.iam.gserviceaccount.com
+    steps:
+      - name: Check public connection identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$WIF_PROVIDER" =~ ^projects/1012186851732/locations/global/workloadIdentityPools/[a-z0-9_-]+/providers/[a-z0-9_-]+$ ]]; then
+            echo 'The provider must belong to the isolated test project.'; exit 1
+          fi
+          if [[ ! "$SERVICE_ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@chatbox-test-2c236731bf\.iam\.gserviceaccount\.com$ ]]; then
+            echo 'The service account must belong to the isolated test project.'; exit 1
+          fi
+      # The auth action requires the workspace to exist before creating its
+      # temporary credentials file. Never upload or commit that file.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Obtain a short-lived Google credential
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+          project_id: chatbox-test-2c236731bf
+          create_credentials_file: true
+          cleanup_credentials: true
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Confirm service account impersonation without exposing tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          if ! gcloud auth print-access-token >/dev/null 2>"$error_file"; then
+            if grep -Eqi 'API.*(disabled|not been used)|SERVICE_DISABLED|has not been used.*before' "$error_file"; then
+              echo '::error::A required Google API appears disabled. Check IAM Service Account Credentials and Security Token Service APIs in the test project.'
+            else
+              echo '::error::Could not obtain a service account access token. Check the impersonation grant, required APIs, and provider configuration.'
+            fi
+            exit 1
+          fi
+          echo 'Service account impersonation completed; no token was printed.'
+      - name: Read isolated project metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          if ! gcloud projects describe "$PROJECT_ID" --format='value(projectId)' 2>"$error_file"; then
+            if grep -Eqi 'permission|PERMISSION_DENIED|403' "$error_file"; then
+              echo '::error::Project metadata access was denied. Check that the test service account has the Browser role on this project.'
+            elif grep -Eqi 'API.*(disabled|not been used)|SERVICE_DISABLED|has not been used.*before' "$error_file"; then
+              echo '::error::A required Google API appears disabled. Check the Cloud Resource Manager API in the test project.'
+            else
+              echo '::error::Project metadata could not be read. Check the project, network and Google Cloud settings.'
+            fi
+            exit 1
+          fi
+          echo 'Read-only connection completed. No Firebase rules or resources were changed.'
+      - name: Check isolated Firebase Rules permissions without making changes
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') && !contains(github.event.head_commit.message, '[appcheck-iam]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, urllib.error, urllib.request
+
+          permissions = [
+              'firebaserules.releases.get', 'firebaserules.releases.list',
+              'firebaserules.releases.create', 'firebaserules.releases.update',
+              'firebaserules.rulesets.get', 'firebaserules.rulesets.list',
+              'firebaserules.rulesets.create', 'firebaserules.rulesets.test',
+          ]
+          token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          request = urllib.request.Request(
+              'https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',
+              data=json.dumps({'permissions': permissions}).encode(),
+              headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+              method='POST',
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  granted = set(json.load(response).get('permissions', []))
+          except urllib.error.HTTPError as error:
+              print(f'::error::Permission lookup failed with HTTP {error.code}; no credentials or response details were printed.')
+              raise SystemExit(1)
+          finally:
+              del token
+          for permission in permissions:
+              print(f'{permission}: {"granted" if permission in granted else "not reported"}')
+          if not set(permissions).issubset(granted):
+              print('::error::One or more requested rules permissions were not reported for this project.')
+              raise SystemExit(1)
+          print('Permission lookup only; no Firebase rules or resources were changed.')
+          PY
+      - name: Compare the published isolated Firestore rules without printing them
+        if: ${{ contains(github.event.head_commit.message, '[historical-baseline-compare]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, re, subprocess, urllib.error, urllib.request
+
+          project = 'chatbox-test-2c236731bf'
+          expected = '64a2d3e822ae44354853250dea8f9cb43c430c06c0e365d4f9788d17a79ab44d'
+          expected_normalized = '1a4816b39567cf82d68be71b035faecd28e57ac10248dc7fc8a7f106dccdb64f'
+          expected_tokens = '9d00fd8a52a4f9922f90842d123ac0b37009a30c4d5000b78c610e7ac9f12a24'
+          token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          def get(path):
+              request = urllib.request.Request('https://firebaserules.googleapis.com/v1/' + path, headers={'Authorization': 'Bearer ' + token})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  print(f'::error::Rules lookup failed with HTTP {error.code}; no credentials or response details were printed.')
+                  raise SystemExit(1)
+          release = get(f'projects/{project}/releases/cloud.firestore')
+          ruleset_name = release.get('rulesetName', '')
+          if not re.fullmatch(r'projects/' + re.escape(project) + r'/rulesets/[A-Za-z0-9-]+', ruleset_name):
+              raise SystemExit('Unexpected ruleset resource; refusing lookup.')
+          ruleset = get(ruleset_name)
+          del token
+          sources = ruleset.get('source', {}).get('files', [])
+          if len(sources) != 1 or not isinstance(sources[0].get('content'), str):
+              raise SystemExit('Unexpected rules source; no source was printed.')
+          content = sources[0]['content']
+          digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+          normalized = hashlib.sha256(content.replace('\r\n', '\n').strip().encode('utf-8')).hexdigest()
+          pattern = r'''(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s])'''
+          tokens = [item for item in re.findall(pattern, content) if not item.startswith('//') and not item.startswith('/*')]
+          token_digest = hashlib.sha256(json.dumps(tokens, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+          if digest == expected:
+              print('Published Firestore rules match the prepared two-account rules byte for byte.')
+          elif normalized == expected_normalized:
+              print('Published Firestore rules match the prepared two-account rules after normalizing line endings and outer whitespace.')
+          elif token_digest == expected_tokens:
+              print('Published rules match the prepared two-account rules by tokens, ignoring whitespace and comments. This is not a security review.')
+          else:
+              print('::warning::Published rules differ from the prepared two-account rules even after ignoring whitespace and comments. The differences require review before relying on the rules.')
+          print('Read-only comparison only; no rules or resources were changed.')
+          PY
+      - name: Read isolated Android App Check configuration (no changes)
+        if: ${{ contains(github.event.head_commit.message, '[appcheck-inspect]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, subprocess, urllib.error, urllib.request
+          token = subprocess.run(['gcloud','auth','print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          root = 'https://firebaseappcheck.googleapis.com/v1/projects/1012186851732/'
+          checks = [
+              ('Play Integrity', 'apps/1:1012186851732:android:060ca550459fca7177c781/playIntegrityConfig'),
+              ('Firebase AI App Check', 'services/firebaseml.googleapis.com'),
+          ]
+          for label, path in checks:
+              req = urllib.request.Request(root + path, headers={'Authorization':'Bearer '+token})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      data = json.load(response)
+                  if label == 'Play Integrity':
+                      print('::notice::Play Integrity config: accessible')
+                      ttl = data.get('tokenTtl')
+                      if isinstance(ttl, str): print('::notice::Token TTL: ' + ttl)
+                  else:
+                      print('::notice::Firebase AI App Check enforcement: ' + str(data.get('enforcementMode','not reported')))
+              except urllib.error.HTTPError as error:
+                  print('::notice::' + label + ': unavailable (HTTP ' + str(error.code) + '); no response details printed')
+              except (urllib.error.URLError, ValueError):
+                  print('::notice::' + label + ': unavailable; no response details printed')
+          del token
+          print('Read-only inspection; no tokens, debug tokens or configuration details printed and no settings changed.')
+          PYCODE
+      - name: Inspect only test-project Rules access
+        if: ${{ contains(github.event.head_commit.message, '[rules-access-inspect]') }}
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json, subprocess, urllib.error, urllib.request
+          token=subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          permissions=['firebaserules.releases.get','firebaserules.releases.update','firebaserules.rulesets.get','firebaserules.rulesets.create']
+          req=urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':permissions}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=30) as response: granted=set(json.load(response).get('permissions',[]))
+              for permission in permissions: print('::notice::'+permission+': '+('granted' if permission in granted else 'not reported'))
+          except urllib.error.HTTPError as error: print('::warning::IAM permissions lookup HTTP '+str(error.code))
+          url='https://firebaserules.googleapis.com/v1/projects/chatbox-test-2c236731bf/releases/cloud.firestore'
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token})
+          try:
+              with urllib.request.urlopen(req,timeout=30) as response: json.load(response)
+              print('::notice::Current test Firestore release: readable')
+          except urllib.error.HTTPError as error:
+              status='unknown'
+              try:
+                  status=json.load(error).get('error',{}).get('status','unknown')
+                  if status not in ['PERMISSION_DENIED','NOT_FOUND','UNAUTHENTICATED','FAILED_PRECONDITION']: status='other'
+              except (ValueError,AttributeError): pass
+              print('::warning::Current test Firestore release: HTTP '+str(error.code)+' ('+status+')')
+          del token
+          PYCODE
+      - name: Read Android test attestation and registered certificates
+        if: ${{ contains(github.event.head_commit.message, '[appcheck-details]') }}
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json,subprocess,urllib.error,urllib.request
+          token=subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          app='1:1012186851732:android:060ca550459fca7177c781'
+          def get(url,label):
+              try:
+                  req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token})
+                  with urllib.request.urlopen(req,timeout=30) as response: return json.load(response)
+              except urllib.error.HTTPError as error:
+                  print('::warning::'+label+' unavailable (HTTP '+str(error.code)+')'); return None
+          config=get('https://firebaseappcheck.googleapis.com/v1/projects/1012186851732/apps/'+app+'/playIntegrityConfig','Play Integrity configuration')
+          if config is not None:
+              integrity=config.get('appIntegrity',{})
+              accounts=config.get('accountDetails',{})
+              if not isinstance(integrity,dict) or not isinstance(accounts,dict):
+                  print('::warning::Play Integrity requirements could not be interpreted')
+              else:
+                  print('::notice::Play Integrity allows unrecognized versions: '+str(integrity.get('allowUnrecognizedVersion',False)))
+                  print('::notice::Play Integrity requires Play license: '+str(accounts.get('requireLicensed',False)))
+          certs=get('https://firebase.googleapis.com/v1beta1/projects/chatbox-test-2c236731bf/androidApps/'+app+'/sha','Android certificate list')
+          if certs is not None:
+              found={str(x.get('shaHash','')).replace(':','').upper() for x in certs.get('certificates',[])}
+              print('::notice::Existing APK SHA-1 registered: '+str('26D9B99EF0D08D27EE524B49BE031EE6AF60C366' in found))
+              print('::notice::Existing APK SHA-256 registered: '+str('FA607FC61AE362D1D66BB365CC0C9A5DA2083A64D513B5B66728865918B6E935' in found))
+          del token
+          PYCODE
+      - name: Inspect isolated App Check write permission
+        if: ${{ contains(github.event.head_commit.message, '[appcheck-iam]') }}
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json,subprocess,urllib.error,urllib.request
+          token=subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          names=['firebaseappcheck.playIntegrityConfig.get','firebaseappcheck.playIntegrityConfig.update','firebase.clients.get','clientauthconfig.clients.create']
+          req=urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':names}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=30) as r: granted=set(json.load(r).get('permissions',[]))
+              for p in names: print('::notice::'+p+': '+('granted' if p in granted else 'not reported'))
+          except urllib.error.HTTPError as e:
+              print('::error::Permission lookup failed HTTP '+str(e.code)); raise SystemExit(1)
+          del token
+          PYCODE

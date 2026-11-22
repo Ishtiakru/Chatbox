@@ -1,0 +1,93 @@
+name: Official local Firestore emulator tests
+
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+
+permissions:
+  contents: read
+
+jobs:
+  official-emulator:
+    # A dedicated, explicitly requested read-only connection run is not a test run.
+    if: ${{ !contains(github.event.head_commit.message, '[isolated-firebase-access]') && !contains(github.event.head_commit.message, '[isolated-apk]') && !contains(github.event.head_commit.message, '[retrieve-test-apk]') }}
+    name: Experimental rules (demo project only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Unit tests and web build
+        run: |
+          npm test
+          npm run test:native-ai-ui
+          npm run build
+      - name: Build browser-only test configuration
+        env:
+          VITE_CHATBOX_TEST_MODE: 'true'
+          VITE_CHATBOX_TEST_FIREBASE_CONFIG: '{"projectId":"chatbox-test-123","apiKey":"public-key","authDomain":"chatbox-test-123.firebaseapp.com","messagingSenderId":"123456","appId":"1:123456:web:abc123"}'
+          VITE_ENABLE_FIRESTORE_CHAT: 'true'
+        run: npm run build
+      - name: Standalone base, admin and calls candidates
+        run: npm run test:rules
+      - name: Same-browser fake-media call over local Auth and Firestore emulators
+        id: browser_call
+        continue-on-error: true
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          set +e
+          npx --yes firebase-tools@15.37.0 emulators:exec \
+            --config firebase.browser-emulator.json --project demo-chatbox --only auth,firestore \
+            'node scripts/run-browser-call-check.mjs' > /tmp/browser-call-final.log 2>&1
+          status=$?
+          cat /tmp/browser-call-final.log
+          if [ "$status" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          from pathlib import Path
+          lines = Path('/tmp/browser-call-final.log').read_text(errors='replace').splitlines()
+          for line in lines[-30:]:
+              line = line.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print('::warning::' + line[:1000])
+          PYCODE
+          fi
+          exit "$status"
+      - name: Two-account isolated test rules
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/restricted-test-rules.js'
+      - name: Two-account isolated call candidate
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/restricted-call-rules.js'
+      - name: Restricted combined admin, chat and calls candidate
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/restricted-combined-rules.js'
+      - name: Combined candidate, simulated accounts
+        run: npm run test:combined
+      - name: Message cooldown candidate
+        run: npm run test:rate
+      - name: Request cooldown candidate
+        run: npm run test:request-rate
+      - name: Calls and admin against the request candidate
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'CHATBOX_TEST_RULES_FILE=firestore.request-limited-experimental.rules node --test --test-concurrency=1 integration/call-rules.js integration/firestore-calls.js integration/spark-admin-rules.js'
+      - name: Fail if browser call test failed
+        if: ${{ always() && steps.browser_call.outcome == 'failure' }}
+        run: exit 1

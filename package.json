@@ -1,0 +1,45 @@
+{
+  "name": "saira-chatbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test",
+    "test:native-ai-ui": "node --experimental-vm-modules --test scripts/native-ai-check.mjs",
+    "test:rules": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/firestore-rules.js integration/live-messaging.js integration/spark-admin-rules.js integration/call-rules.js integration/firestore-calls.js\"",
+    "generate:knowledge": "node scripts/generate-knowledge.mjs",
+    "prebuild": "npm run generate:knowledge",
+    "android:sync": "node scripts/check-android-firebase.mjs && npm run build && cap sync android",
+    "test:rules:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"node --test --test-concurrency=1 integration/firestore-rules.js integration/live-messaging.js integration/spark-admin-rules.js integration/call-rules.js integration/firestore-calls.js\"",
+    "generate:combined-rules": "node scripts/combine-spark-call-rules.mjs",
+    "test:combined:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"CHATBOX_TEST_RULES_FILE=firestore.combined-experimental.rules node --test --test-concurrency=1 integration/firestore-rules.js integration/live-messaging.js integration/spark-admin-rules.js integration/call-rules.js integration/firestore-calls.js integration/combined-rules.js\"",
+    "test:combined": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"CHATBOX_TEST_RULES_FILE=firestore.combined-experimental.rules node --test --test-concurrency=1 integration/firestore-rules.js integration/live-messaging.js integration/spark-admin-rules.js integration/call-rules.js integration/firestore-calls.js integration/combined-rules.js\"",
+    "generate:rate-rules": "node scripts/generate-rate-rules.mjs",
+    "test:rate:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"node --test --test-concurrency=1 integration/message-throttle-rules.js\"",
+    "test:rate": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/message-throttle-rules.js\"",
+    "generate:request-rate-rules": "node scripts/generate-request-rate-rules.mjs",
+    "test:request-rate:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"node --test --test-concurrency=1 integration/request-throttle-rules.js\"",
+    "test:request-rate": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/request-throttle-rules.js\""
+  },
+  "dependencies": {
+    "@capacitor-firebase/authentication": "8.6.0",
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "firebase": "12.19.0",
+    "lucide": "^0.468.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "@firebase/rules-unit-testing": "5.0.0",
+    "firenook": "0.2.6",
+    "puppeteer-core": "24.32.1",
+    "vite": "^6.1.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.7"
+  }
+}

@@ -1,0 +1,69 @@
+name: Isolated test APK (not release)
+
+# Deliberately runs only for an explicit one-off commit, not every push.
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: contains(github.event.head_commit.message, '[isolated-apk]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Prepare public test Firebase client configuration
+        run: |
+          # Firebase client configuration and OAuth client IDs are public identifiers,
+          # not service-account credentials. Never put signing keys in this workflow.
+          curl --fail --silent --show-error 'https://chatbox-test-2c236731bf.web.app/__/firebase/init.json' > /tmp/test-web.json
+          node --input-type=module <<'NODE'
+          import {readFileSync, writeFileSync, appendFileSync} from 'node:fs';
+          import {resolveFirebaseConfig} from './src/firebase-config.js';
+          const raw=JSON.parse(readFileSync('/tmp/test-web.json','utf8'));
+          const {config:web}=resolveFirebaseConfig({VITE_CHATBOX_TEST_MODE:'true',VITE_CHATBOX_TEST_FIREBASE_CONFIG:JSON.stringify(raw)});
+          if (web.projectId !== 'chatbox-test-2c236731bf' || web.messagingSenderId !== '1012186851732' || web.appId !== '1:1012186851732:web:61c3e049e082f7a377c781') throw new Error('Unexpected test web application.');
+          const android={
+            project_info:{project_number:web.messagingSenderId,project_id:web.projectId,storage_bucket:'chatbox-test-2c236731bf.firebasestorage.app'},
+            client:[{
+              client_info:{mobilesdk_app_id:'1:1012186851732:android:060ca550459fca7177c781',android_client_info:{package_name:'com.chatbox.test'}},
+              oauth_client:[{client_type:3,client_id:'1012186851732-sf2lrf2cp4uuobub0vaku9hrk7vug8f3.apps.googleusercontent.com'}],
+              api_key:[{current_key:'AIzaSyDUadQd0tcl5YIH0YIhBiifw-r5rgsWdAY'}]
+            }], configuration_version:'1'
+          };
+          writeFileSync('android/app/google-services.json',JSON.stringify(android));
+          appendFileSync(process.env.GITHUB_ENV,`VITE_CHATBOX_TEST_MODE=true\nVITE_CHATBOX_NATIVE_TEST_MODE=true\nVITE_ENABLE_FIRESTORE_CHAT=true\nVITE_ENABLE_SPARK_ADMIN=true\nVITE_ENABLE_SAIRA_AI=true\nVITE_ENABLE_EXPERIMENTAL_ANDROID_AI=true\nVITE_SAIRA_PROVIDER=firebase-ai\nVITE_ENABLE_EXPERIMENTAL_CALLS=true\nVITE_ENABLE_EXPERIMENTAL_ANDROID_CALLS=true\nVITE_ENABLE_EXPERIMENTAL_STUN=true\nVITE_CHATBOX_TEST_FIREBASE_CONFIG=${JSON.stringify(web)}\n`);
+          NODE
+      - name: Install and build isolated debug app
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npx cap sync android
+          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug -PchatboxIsolatedTest=true -PchatboxCallLab=true)
+      - name: Verify and package diagnostic APK
+        run: |
+          mkdir -p /tmp/chatbox-test-output
+          cp android/app/build/outputs/apk/debug/app-debug.apk /tmp/chatbox-test-output/Chatbox-Test-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging /tmp/chatbox-test-output/Chatbox-Test-debug.apk | grep "package: name='com.chatbox.test'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs /tmp/chatbox-test-output/Chatbox-Test-debug.apk > /tmp/chatbox-test-output/certificate.txt
+          (cd /tmp/chatbox-test-output && sha256sum Chatbox-Test-debug.apk > SHA256SUMS.txt)
+          cat /tmp/chatbox-test-output/certificate.txt
+          cat /tmp/chatbox-test-output/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatbox-isolated-test-debug-apk
+          path: /tmp/chatbox-test-output/
+          retention-days: 1
+          if-no-files-found: error
