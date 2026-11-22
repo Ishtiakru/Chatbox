@@ -9,6 +9,8 @@ if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080' || process.env.FIRE
   throw new Error('This test requires the local demo Auth and Firestore emulators.');
 }
 if (!process.env.CHROME_PATH) throw new Error('Set CHROME_PATH to a local Chromium executable.');
+const iterations=Number(process.env.CALL_TEST_ITERATIONS || 5);
+if (!Number.isInteger(iterations) || iterations<1 || iterations>20) throw new Error('Invalid synthetic call iteration count.');
 let server, browser;
 try {
   server = await createServer({configFile:false,server:{host:'127.0.0.1',port:4175,strictPort:true},logLevel:'error'});
@@ -16,7 +18,7 @@ try {
   browser = await puppeteer.launch({executablePath:process.env.CHROME_PATH, headless:true, args:['--no-sandbox','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
   // Fresh browser page and synthetic conversation each time; repeating catches
   // timing-dependent failures without retries concealing the first failure.
-  for (let iteration = 1; iteration <= 5; iteration++) {
+  for (let iteration = 1; iteration <= iterations; iteration++) {
     const page = await browser.newPage();
     const errors=[];
     page.on('pageerror',error=>errors.push(error.message));
@@ -32,7 +34,7 @@ try {
       assert.equal(result.tracksStopped,true);
       assert.deepEqual(result.errors,[]);
       assert.deepEqual(errors,[]);
-      console.log(`Synthetic call iteration ${iteration}/5 passed.`);
+      console.log(`Synthetic call iteration ${iteration}/${iterations} passed.`);
     } catch (error) {
       // Test-only, explicitly allowlisted error categories and state names;
       // never output SDP, ICE, identifiers, account data, or arbitrary errors.

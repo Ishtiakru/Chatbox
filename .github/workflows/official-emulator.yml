@@ -51,6 +51,7 @@ jobs:
         continue-on-error: true
         env:
           CHROME_PATH: /usr/bin/google-chrome
+          CALL_TEST_ITERATIONS: '20'
         run: |
           set +e
           npx --yes firebase-tools@15.37.0 emulators:exec \
@@ -62,7 +63,8 @@ jobs:
             python3 - <<'PYCODE'
           from pathlib import Path
           lines = Path('/tmp/browser-call-final.log').read_text(errors='replace').splitlines()
-          for line in lines[-30:]:
+          diagnostics = [line for line in lines if 'Synthetic call iteration ' in line and ' Diagnostics: ' in line]
+          for line in diagnostics + lines[-30:]:
               line = line.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
               print('::warning::' + line[:1000])
           PYCODE
