@@ -83,13 +83,14 @@ export function createCallController({ watchIncoming, createSession, onChange = 
   function begin(role, media, callId) {
     if (disposed || !context || active || discoveryFailed || !['audio','video'].includes(media)) throw new Error('Cannot start this call.');
     const current = ++generation, selected = context;
+    let terminal = false;
     const callbacks = {
       onState: value => {
-        if (disposed || current !== generation || selected !== context) return;
-        // The transport can report an error immediately after its closed
-        // notification. Keep the generation until another operation starts so
-        // that error is not accidentally hidden.
-        if (value === 'closed') { clearDeadline(); clearTrackWatch(); active = null; update(clearActive()); }
+        if (disposed || current !== generation || selected !== context || terminal) return;
+        // A queued connection event must not revive a call after it has closed.
+        // Keep the generation for a following transport error; onError remains
+        // allowed to report the reason for that closure.
+        if (value === 'closed') { terminal = true; clearDeadline(); clearTrackWatch(); active = null; update(clearActive()); }
         else {
           if (value === 'connected') clearDeadline();
           else if (value === 'disconnected' && active && timerKind !== 'disconnect') deadline('disconnect', CALL_DISCONNECT_TIMEOUT_MS, current, active);

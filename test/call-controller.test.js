@@ -301,3 +301,19 @@ test('device permission and availability errors show safe guidance', async () =>
     controller.dispose();
   }
 });
+
+test('closed call cannot be revived by a late transport state, but its error is still reported', async () => {
+  const {controller,sessions}=fixture();
+  controller.setConversation(conversation);
+  await controller.start('audio');
+  const session=sessions[0];
+  session.onState('closed');
+  assert.equal(controller.getState().status,'idle');
+  session.onState('connected');
+  assert.equal(controller.getState().status,'idle');
+  session.onState('disconnected');
+  assert.equal(controller.getState().status,'idle');
+  session.onError(new Error('private server details'));
+  assert.equal(controller.getState().error,'Call could not be completed.');
+  controller.dispose();
+});
