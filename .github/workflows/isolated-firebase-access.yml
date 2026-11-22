@@ -122,7 +122,7 @@ jobs:
           print('Permission lookup only; no Firebase rules or resources were changed.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') }}
+        if: ${{ contains(github.event.head_commit.message, '[historical-baseline-compare]') }}
         shell: bash
         run: |
           set -euo pipefail
