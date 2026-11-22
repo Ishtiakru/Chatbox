@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithCredential, reauthenticateWithPopup, reauthenticateWithCredential, signOut } from 'firebase/auth';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createGoogleReauth } from './google-reauth.js';
+import { getNativeGoogleCredential, signInNative } from './native-sign-in.js';
 import { createNativeAuthGate, watchAfterNativeGate } from './native-auth-gate.js';
 
 import { resolveFirebaseConfig } from './firebase-config.js';
@@ -25,17 +26,20 @@ export const watchAuth = (callback, onError) => native
   ? watchAfterNativeGate(nativeReady, (cb, err) => onAuthStateChanged(auth, cb, err), callback, onError)
   : onAuthStateChanged(auth, callback, onError);
 export const isCurrentAuthUser = user => !!user && auth.currentUser === user;
-async function nativeGoogleCredential() {
-  await nativeReady();
-  const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
-  const result = await FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true });
-  const idToken = result.credential?.idToken;
-  if (!idToken) throw new Error('Native Google sign-in did not return an ID token.');
-  return GoogleAuthProvider.credential(idToken, result.credential?.accessToken);
+async function nativeGoogleCredential(legacy = false) {
+  return getNativeGoogleCredential({
+    ready: nativeReady,
+    getToken: async options => {
+      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+      return FirebaseAuthentication.signInWithGoogle(options);
+    },
+    makeCredential: (idToken, accessToken) => GoogleAuthProvider.credential(idToken, accessToken),
+    legacy,
+  });
 }
-export async function googleSignIn() {
+export async function googleSignIn({legacy = false} = {}) {
   if (!Capacitor.isNativePlatform()) return signInWithPopup(auth, provider);
-  return signInWithCredential(auth, await nativeGoogleCredential());
+  return signInNative({getCredential: () => nativeGoogleCredential(legacy), signIn: credential => signInWithCredential(auth, credential)});
 }
 // An explicit user gesture starts reauthentication; it does not grant a role.
 // Firebase's reauthenticate methods reject credentials for another account.

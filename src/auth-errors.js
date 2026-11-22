@@ -1,5 +1,21 @@
 export function authErrorMessage(code) {
   switch (code) {
+    case 'native/identity-stage':
+      return 'পরীক্ষামূলক APK-এর Firebase পরিচয় যাচাই করা যায়নি। (পর্যায়: ডিভাইস কনফিগারেশন)';
+    case 'native/google-stage':
+      return 'Google থেকে sign-in সম্পূর্ণ হয়নি। (পর্যায়: Google account) বিকল্প পদ্ধতি চেষ্টা করা যায়।';
+    case 'native/token-stage':
+      return 'Google থেকে প্রয়োজনীয় sign-in তথ্য পাওয়া যায়নি। (পর্যায়: Google তথ্য)';
+    case 'native/firebase-stage':
+      return 'Google-এর পরে Firebase sign-in সম্পূর্ণ হয়নি। (পর্যায়: Firebase)';
+    case 'auth/invalid-credential':
+      return 'Firebase Google sign-in তথ্য গ্রহণ করেনি। (পর্যায়: Firebase credential)';
+    case 'auth/invalid-api-key':
+      return 'Firebase অ্যাপ configuration গ্রহণ করেনি। (পর্যায়: Firebase configuration)';
+    case 'auth/too-many-requests':
+      return 'অনেকবার চেষ্টা হয়েছে। কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।';
+    case 'auth/user-disabled':
+      return 'এই Firebase ব্যবহারকারী নিষ্ক্রিয়।';
     case 'auth/unauthorized-domain':
       return 'এই ওয়েব ঠিকানাটি Firebase Authentication-এর Authorized domains-এ যোগ করতে হবে। প্রিভিউ বা প্রকাশিত সাইটের ঠিকানা যোগ করে আবার চেষ্টা করুন।';
     case 'auth/operation-not-allowed':

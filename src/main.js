@@ -113,7 +113,7 @@ function modal() {
    about: ['A little note about this space', `Saira is a local prototype (v${APP_VERSION}). The people shown are samples; your messages stay in this browser. Google sign-in is being set up; real messaging, calls, and AI are not connected yet.`],
  }[state.modal];
  if (!data) return '';
- return `<div class="modal-overlay" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('x')}</button><div class="modal-symbol">✳</div><span class="eyebrow">SAIRA / A LITTLE NOTE</span><h2 id="modal-title">${e(data[0])}</h2><p>${e(data[1])}</p><button class="primary-button" data-action="close-modal">Got it ${icon('arrow-right')}</button></section></div>`;
+ return `<div class="modal-overlay" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('x')}</button><div class="modal-symbol">✳</div><span class="eyebrow">SAIRA / A LITTLE NOTE</span><h2 id="modal-title">${e(data[0])}</h2><p>${e(data[1])}</p>${state.modal === 'authError' && state.authAltAvailable && testProject.isTestProject && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' ? `<button class="account-button" type="button" data-action="sign-in-legacy" ${state.authLoading ? 'disabled' : ''}>বিকল্প Google sign-in চেষ্টা করুন</button>` : ''}<button class="primary-button" data-action="close-modal">Got it ${icon('arrow-right')}</button></section></div>`;
 }
 // Adapted from the lavender-auth design. Authentication still uses the existing
 // Firebase bridge; this screen does not grant access or expose the source QR.
@@ -184,6 +184,7 @@ root.addEventListener('click', event => {
  else if (action === 'block-add' || action === 'block-remove') { changeBlock(action === 'block-add'); }
  else if (action === 'login-guest') { state.loginGuest = true; state.view = 'chats'; render(); }
  else if (action === 'sign-in') { beginSignIn(); }
+ else if (action === 'sign-in-legacy') { beginSignIn(true); }
  else if (action === 'sign-out') { beginSignOut(); }
  else if (action === 'admin-check') { checkAdmin(); }
  else if (action === 'dashboard-top') { document.querySelector('.dashboard-content')?.scrollTo({top:0,behavior:'smooth'}); }
@@ -313,13 +314,15 @@ watchAuth(user => {
   render();
 });
 
-async function beginSignIn() {
+async function beginSignIn(legacy = false) {
   if (state.authLoading || !state.authReady) return;
   state.authLoading = true;
   render();
   try {
-    await googleSignIn();
+    await googleSignIn({legacy});
+    state.authAltAvailable = false; state.modal = null;
   } catch (error) {
+    state.authAltAvailable = testProject.isTestProject && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
     state.authError = authErrorMessage(error?.code);
     state.modal = 'authError';
   } finally {
