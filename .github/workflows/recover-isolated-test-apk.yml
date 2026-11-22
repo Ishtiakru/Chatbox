@@ -1,0 +1,41 @@
+name: Retrieve isolated test APK (one-off)
+
+on:
+  push:
+    branches:
+      - arena/f649c1bd-chatbox
+
+permissions:
+  actions: read
+  contents: write
+  statuses: write
+
+jobs:
+  transfer:
+    if: contains(github.event.head_commit.message, '[retrieve-test-apk]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the existing test-only build
+        uses: actions/download-artifact@v4
+        with:
+          name: chatbox-isolated-test-debug-apk
+          run-id: 44995632473
+          github-token: ${{ github.token }}
+          path: /tmp/chatbox-test-output
+      - name: Publish temporary transfer blob reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd /tmp/chatbox-test-output && sha256sum -c SHA256SUMS.txt && zip -q /tmp/chatbox-test-transfer.zip Chatbox-Test-debug.apk SHA256SUMS.txt certificate.txt)
+          python3 - <<'PY'
+          import base64, json
+          with open('/tmp/chatbox-test-transfer.zip','rb') as file:
+              content = base64.b64encode(file.read()).decode('ascii')
+          with open('/tmp/chatbox-blob-input.json','w') as file:
+              json.dump({'content':content, 'encoding':'base64'}, file)
+          PY
+          blob=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input /tmp/chatbox-blob-input.json --jq .sha)
+          [[ "$blob" =~ ^[0-9a-f]{40}$ ]]
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=success -f context=isolated-test-apk-transfer -f description="$blob" > /dev/null
+          echo 'Test APK transfer reference posted as a commit status. No branch was changed.'
