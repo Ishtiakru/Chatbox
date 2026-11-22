@@ -173,6 +173,7 @@ root.addEventListener('input', event => {
    liveDrafts.setText(state.live.selected, event.target.value);
  }
  if (event.target.id === 'live-peer-input') state.live.peerDraft = event.target.value;
+ if (event.target.id === 'live-search') { state.live.search = event.target.value; render(); }
  if (event.target.id === 'ai-input') state.ai.draft = event.target.value;
  if (event.target.id === 'admin-command') { state.admin.command = event.target.value; state.admin.proposal = null; }
  if (event.target.id === 'admin-target') state.admin.target = event.target.value;

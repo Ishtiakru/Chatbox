@@ -41,6 +41,7 @@
 .messenger-icon{flex:none;display:grid;place-items:center;width:42px;height:42px;border:0;background:transparent;color:#16181d;border-radius:50%}
 .messenger-icon:hover{background:#f1f2f4}.messenger-icon svg{width:23px;height:23px;stroke-width:2}
 .messenger-intro{font-size:13px;color:#70727c;margin:10px 0 14px}
+.messenger-search{display:flex;align-items:center;gap:10px;background:#f2f1f6;border-radius:22px;padding:0 14px;margin:0 0 14px;min-height:42px;color:#75737f}.messenger-search svg{width:17px;height:17px;flex:none}.messenger-search input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:#25232d;font:inherit;font-size:14px}.messenger-search:focus-within{outline:2px solid #a99ad8;outline-offset:2px}
 .messenger-privacy{font-size:12px;line-height:1.5;background:#f5f5f8;border-radius:12px;padding:10px 12px;color:#646671}
 .messenger-privacy summary{cursor:pointer;font-weight:700;color:#343640}.messenger-privacy p{margin-top:8px}
 .messenger-new{padding:14px 0;border-bottom:1px solid #eee}.messenger-new .live-id{background:#f4f2f8}.messenger-new form{margin-top:14px}
