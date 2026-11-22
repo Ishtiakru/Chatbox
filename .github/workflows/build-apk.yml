@@ -1,4 +1,4 @@
-# Lightfall Android APK — twa-manifest সরাসরি + pseudo-TTY দিয়ে বিল্ড
+# Lightfall Android APK — checksum + env-passwords = সম্পূর্ণ প্রম্পটহীন বিল্ড
 name: Build Lightfall APK
 
 on:
@@ -28,7 +28,7 @@ jobs:
       - name: Bubblewrap CLI ইনস্টল
         run: npm install -g @bubblewrap/cli
 
-      - name: সাইনিং-কী + twa-manifest তৈরি
+      - name: সাইনিং-কী + twa-manifest + checksum
         run: |
           mkdir -p apkbuild && cd apkbuild
           keytool -genkeypair -v -keystore android.keystore -alias android \
@@ -64,16 +64,24 @@ jobs:
             "webManifestUrl": "https://ishtiakru.github.io/Chatbox/manifest.webmanifest",
             "fallbackType": "webview",
             "features": {},
-            "alphaDeprecationWarning": false,
             "minSdkVersion": 21
           }
           JSON
-          echo "twa-manifest প্রস্তুত"
+          node -e "
+            const fs = require('fs'), crypto = require('crypto');
+            const data = fs.readFileSync('twa-manifest.json');
+            fs.writeFileSync('manifest-checksum.txt',
+              crypto.createHash('sha1').update(data).digest('hex'));
+            console.log('checksum:', fs.readFileSync('manifest-checksum.txt', 'utf8').trim());
+          "
 
-      - name: APK বিল্ড (pseudo-TTY)
+      - name: APK বিল্ড (env-পাসওয়ার্ডে প্রম্পটহীন)
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: lightfall123
+          BUBBLEWRAP_KEY_PASSWORD: lightfall123
         run: |
           cd apkbuild
-          printf 'lightfall123\nlightfall123\n' | script -qec "bubblewrap build" /dev/null
+          bubblewrap build
           ls -la
 
       - name: GitHub Release-এ তোলা
