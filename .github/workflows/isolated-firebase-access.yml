@@ -1,6 +1,6 @@
 name: Isolated Firebase connection (read only)
 
-# Explicit one-off test-project deployment only when the dedicated commit marker is present. No production access or service account keys.
+# Deliberate opt-in only. No deployment, secret keys or production project access.
 # The Google Cloud workload identity provider is the actual trust boundary and
 # must independently restrict repository ID, owner ID, branch and workflow.
 on:
@@ -86,7 +86,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +122,7 @@ jobs:
           print('Permission lookup only; no Firebase rules or resources were changed.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -198,10 +198,6 @@ jobs:
           del token
           print('Read-only inspection; no tokens, debug tokens or configuration details printed and no settings changed.')
           PYCODE
-      - name: Deploy approved restricted combined test rules once
-        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy-two-account]') }}
-        shell: bash
-        run: python3 scripts/deploy-isolated-combined-once.py
       - name: Inspect only test-project Rules access
         if: ${{ contains(github.event.head_commit.message, '[rules-access-inspect]') }}
         shell: bash
