@@ -98,7 +98,14 @@ export function createSparkAdminService(db, ops = defaultOps) {
     await updateDoc(delegation(user.email.toLowerCase()),{uid:user.uid,status:'active',updatedAt:serverTimestamp()});
   }
   function watchSparkWelcome(next, fail) {
-    return onSnapshot(welcome(), snap => { const text = snap.data()?.welcome; next(typeof text === 'string' && text.length <= 160 ? text : ''); }, fail);
+    // Do not display optimistic or stale cache data as a confirmed public change.
+    // Metadata events deliver the subsequent server acknowledgement even when
+    // the document content itself has not changed.
+    return onSnapshot(welcome(), {includeMetadataChanges:true}, snap => {
+      if (snap.metadata?.hasPendingWrites || snap.metadata?.fromCache) return;
+      const text = snap.data()?.welcome;
+      next(typeof text === 'string' && text.length <= 160 ? text : '');
+    }, fail);
   }
 
   return {getSparkAdminStatus,applySparkWelcome,applySparkAppearance,watchSparkAppearance,listSparkDelegations,inviteSparkDelegate,revokeSparkDelegate,acceptSparkDelegation,watchSparkWelcome};
