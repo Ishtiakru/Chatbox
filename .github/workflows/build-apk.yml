@@ -1,4 +1,4 @@
-# Lightfall Android APK — config.json প্রি-সেট (প্রম্পট-ফ্রি) + skipSigning + apksigner
+# Lightfall Android APK — config প্রি-সেট + sdk/bin প্যাচ + skipSigning + apksigner
 name: Build Lightfall APK
 
 on:
@@ -30,7 +30,7 @@ jobs:
 
       - name: Bubblewrap config প্রি-সেট (প্রম্পট বাইপাস)
         run: |
-          mkdir -p ~/.bubblewrap
+          mkdir -p ~/.bubblewrap "$ANDROID_HOME/bin"
           printf '{"jdkPath": "%s", "androidSdkPath": "%s"}' "$JAVA_HOME" "$ANDROID_HOME" \
             > ~/.bubblewrap/config.json
           cat ~/.bubblewrap/config.json
