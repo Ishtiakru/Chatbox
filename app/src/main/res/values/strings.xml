@@ -13,4 +13,6 @@
     <string name="cd_new_conversation">New conversation</string>
     <string name="cd_copy_chatbox_id">Copy Chatbox ID</string>
     <string name="cd_conversation_details">Conversation details</string>
+    <string name="cd_clear_search">Clear search</string>
+    <string name="search_conversations_placeholder">Search by name or message…</string>
 </resources>

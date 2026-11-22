@@ -325,6 +325,7 @@ private fun AuthenticatedAppShell(
     val conversationsState by liveViewModel.conversationsState.collectAsStateWithLifecycle()
     val blockedIds by liveViewModel.blockedIdsState.collectAsStateWithLifecycle()
     val peerProfiles by liveViewModel.peerProfiles.collectAsStateWithLifecycle()
+    val conversationMessages by liveViewModel.searchableMessagesByConversation.collectAsStateWithLifecycle()
     val threadState by liveViewModel.threadState.collectAsStateWithLifecycle()
     val profileReady by liveViewModel.profileReady.collectAsStateWithLifecycle()
     val adminUiState by adminViewModel.uiState.collectAsStateWithLifecycle()
@@ -391,6 +392,7 @@ private fun AuthenticatedAppShell(
                     conversationsState = conversationsState,
                     blockedIds = blockedIds,
                     peerProfiles = peerProfiles,
+                    conversationMessages = conversationMessages,
                     threadState = threadState,
                     profileReady = profileReady,
                     onSelectConversation = { liveViewModel.selectConversation(it) },

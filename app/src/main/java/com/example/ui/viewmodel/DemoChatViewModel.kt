@@ -37,8 +37,10 @@ data class DemoUiState(
         get() {
             val q = searchQuery.trim().lowercase()
             if (q.isEmpty()) return DemoCatalog.contacts
-            return DemoCatalog.contacts.filter {
-                "${it.name} ${it.role}".lowercase().contains(q)
+            return DemoCatalog.contacts.filter { contact ->
+                val matchesContact = "${contact.name} ${contact.role}".lowercase().contains(q)
+                val matchesMessage = messagesFor(contact.id).any { it.text.lowercase().contains(q) }
+                matchesContact || matchesMessage
             }
         }
 
@@ -46,6 +48,25 @@ data class DemoUiState(
         val seeds = DemoCatalog.seeds[contactId].orEmpty()
         val extra = savedMessages[contactId].orEmpty()
         return seeds + extra
+    }
+
+    fun previewFor(contact: DemoContact): String {
+        val q = searchQuery.trim().lowercase()
+        val allMessages = messagesFor(contact.id)
+        if (q.isNotEmpty()) {
+            val matched = allMessages.lastOrNull { it.text.lowercase().contains(q) }
+            if (matched != null) {
+                val prefix = if (matched.from == "me") "You: " else ""
+                return "$prefix${matched.text}"
+            }
+        }
+        val last = allMessages.lastOrNull()
+        return if (last != null) {
+            val prefix = if (last.from == "me") "You: " else ""
+            "$prefix${last.text}"
+        } else {
+            contact.role
+        }
     }
 }
 

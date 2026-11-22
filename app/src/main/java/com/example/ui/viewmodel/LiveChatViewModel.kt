@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -62,6 +63,7 @@ class LiveChatViewModel(
         const val TAG = "LiveChatVM"
         const val STOP_TIMEOUT_MILLIS = 5000L
         const val MAX_PROFILE_OBSERVERS = 30
+        const val LIST_MESSAGE_PREVIEW_LIMIT = 50L
         const val SLOW_WRITE_NOTICE_MS = 8000L
         const val PAGE_SIZE = 100L
     }
@@ -69,11 +71,34 @@ class LiveChatViewModel(
     private val draftsByConversation = mutableMapOf<String, String>()
     private val errorsByConversation = mutableMapOf<String, String>()
     private val profileJobs = mutableMapOf<String, Job>()
+    private val listMessageJobs = mutableMapOf<String, Job>()
     private var messageObserverJob: Job? = null
     private var oldestCursor: DocumentSnapshot? = null
 
     private val _peerProfiles = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
     val peerProfiles: StateFlow<Map<String, UserProfile>> = _peerProfiles.asStateFlow()
+
+    private val _recentMessagesByConversation = MutableStateFlow<Map<String, List<LiveMessage>>>(emptyMap())
+    private val _olderMessagesByConversation = MutableStateFlow<Map<String, List<LiveMessage>>>(emptyMap())
+
+    val searchableMessagesByConversation: StateFlow<Map<String, List<LiveMessage>>> =
+        combine(_recentMessagesByConversation, _olderMessagesByConversation) { recentMap, olderMap ->
+            val keys = recentMap.keys + olderMap.keys
+            keys.associateWith { convId ->
+                val recent = recentMap[convId].orEmpty()
+                val older = olderMap[convId].orEmpty()
+                if (older.isEmpty()) {
+                    recent
+                } else {
+                    val recentIds = recent.mapTo(HashSet()) { it.id }
+                    older.filter { it.id !in recentIds } + recent
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyMap()
+        )
 
     private val _threadState = MutableStateFlow(LiveThreadState())
     val threadState: StateFlow<LiveThreadState> = _threadState.asStateFlow()
@@ -85,6 +110,7 @@ class LiveChatViewModel(
         repository.observeConversations(currentUserId)
             .map<List<Conversation>, UiState<List<Conversation>>> { list ->
                 syncPeerProfileObservers(list)
+                syncConversationMessageObservers(list)
                 UiState.Success(list)
             }
             .catch { error ->
@@ -163,21 +189,60 @@ class LiveChatViewModel(
         }
     }
 
+    private fun syncConversationMessageObservers(conversations: List<Conversation>) {
+        val observedIds = conversations
+            .map { it.id }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(MAX_PROFILE_OBSERVERS)
+            .toSet()
+
+        val stale = listMessageJobs.keys.filter { it !in observedIds }
+        if (stale.isNotEmpty()) {
+            stale.forEach { convId ->
+                listMessageJobs.remove(convId)?.cancel()
+            }
+            _recentMessagesByConversation.value = _recentMessagesByConversation.value - stale.toSet()
+            _olderMessagesByConversation.value = _olderMessagesByConversation.value - stale.toSet()
+        }
+
+        observedIds.forEach { convId ->
+            if (!listMessageJobs.containsKey(convId)) {
+                listMessageJobs[convId] = viewModelScope.launch {
+                    repository.observeRecentMessages(convId, LIST_MESSAGE_PREVIEW_LIMIT)
+                        .catch { error ->
+                            val firestoreError = generateSequence(error) { it.cause }
+                                .filterIsInstance<FirebaseFirestoreException>()
+                                .firstOrNull()
+                            if (firestoreError == null && error is CancellationException) throw error
+                            Log.w(TAG, "List message listener failed for $convId", error)
+                        }
+                        .collect { snap ->
+                            _recentMessagesByConversation.value =
+                                _recentMessagesByConversation.value + (convId to snap.messages)
+                        }
+                }
+            }
+        }
+    }
+
     fun selectConversation(conversationId: String) {
         messageObserverJob?.cancel()
         oldestCursor = null
         val savedDraft = draftsByConversation[conversationId].orEmpty()
         val savedError = errorsByConversation[conversationId].orEmpty()
+        val cachedMessages = _recentMessagesByConversation.value[conversationId].orEmpty()
+        val cachedOlder = _olderMessagesByConversation.value[conversationId].orEmpty()
         _threadState.value = _threadState.value.copy(
             selectedId = conversationId,
             screen = LiveScreenMode.THREAD,
             newConversationOpen = false,
             messageDraft = savedDraft,
-            messages = emptyList(),
-            olderMessages = emptyList(),
-            hasOlder = false,
+            messages = cachedMessages,
+            olderMessages = cachedOlder,
+            hasOlder = cachedOlder.isNotEmpty() || cachedMessages.size >= PAGE_SIZE.toInt(),
             loadingOlder = false,
-            messagesFromCache = true,
+            messagesFromCache = cachedMessages.isEmpty(),
             error = savedError
         )
         messageObserverJob = viewModelScope.launch {
@@ -199,6 +264,8 @@ class LiveChatViewModel(
                     if (oldestCursor == null) {
                         oldestCursor = snap.oldestCursor
                     }
+                    _recentMessagesByConversation.value =
+                        _recentMessagesByConversation.value + (conversationId to snap.messages)
                     _threadState.value = _threadState.value.copy(
                         messages = snap.messages,
                         messagesFromCache = snap.fromCache,
@@ -219,6 +286,8 @@ class LiveChatViewModel(
             result.onSuccess { (older, nextCursor) ->
                 oldestCursor = nextCursor
                 val merged = (older + _threadState.value.olderMessages).distinctBy { it.id }
+                _olderMessagesByConversation.value =
+                    _olderMessagesByConversation.value + (conversationId to merged)
                 _threadState.value = _threadState.value.copy(
                     olderMessages = merged,
                     hasOlder = older.size >= PAGE_SIZE.toInt() && nextCursor != null,

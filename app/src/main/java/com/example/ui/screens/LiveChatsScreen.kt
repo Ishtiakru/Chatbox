@@ -38,14 +38,13 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,12 +67,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.Conversation
+import com.example.data.model.LiveMessage
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
 import com.example.notifications.NotificationHelper
 import com.example.ui.components.ChatboxNoticeBanner
+import com.example.ui.components.ConversationSearchBar
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.SignInRequiredCard
+import com.example.ui.components.highlightSearchMatch
 import com.example.ui.viewmodel.LiveScreenMode
 import com.example.ui.viewmodel.LiveThreadState
 
@@ -139,6 +141,7 @@ fun LiveChatsScreen(
     conversationsState: UiState<List<Conversation>>,
     blockedIds: List<String>,
     peerProfiles: Map<String, UserProfile>,
+    conversationMessages: Map<String, List<LiveMessage>>,
     threadState: LiveThreadState,
     profileReady: Boolean,
     onSelectConversation: (String) -> Unit,
@@ -177,6 +180,7 @@ fun LiveChatsScreen(
                     currentUserId = currentUserId,
                     conversationsState = conversationsState,
                     peerProfiles = peerProfiles,
+                    conversationMessages = conversationMessages,
                     threadState = threadState,
                     profileReady = profileReady,
                     onToggleNewConversation = onToggleNewConversation,
@@ -292,6 +296,7 @@ fun LiveChatsScreen(
                         currentUserId = currentUserId,
                         conversationsState = conversationsState,
                         peerProfiles = peerProfiles,
+                        conversationMessages = conversationMessages,
                         threadState = threadState,
                         profileReady = profileReady,
                         onToggleNewConversation = onToggleNewConversation,
@@ -313,6 +318,7 @@ private fun LiveListPane(
     currentUserId: String,
     conversationsState: UiState<List<Conversation>>,
     peerProfiles: Map<String, UserProfile>,
+    conversationMessages: Map<String, List<LiveMessage>>,
     threadState: LiveThreadState,
     profileReady: Boolean,
     onToggleNewConversation: () -> Unit,
@@ -338,14 +344,20 @@ private fun LiveListPane(
     }
 
     val conversations = (conversationsState as? UiState.Success)?.data.orEmpty()
-    val query = threadState.searchQuery.trim().lowercase()
+    val trimmedQuery = threadState.searchQuery.trim()
+    val query = trimmedQuery.lowercase()
     val filtered = if (query.isEmpty()) {
         conversations
     } else {
         conversations.filter { conv ->
             val peerUid = conv.peerUid(currentUserId)
-            val peerName = peerProfiles[peerUid]?.displayName.orEmpty()
-            peerUid.lowercase().contains(query) || peerName.lowercase().contains(query)
+            val peerName = resolvePeerDisplayName(peerUid, peerProfiles[peerUid])
+            val matchesNameOrId = peerUid.lowercase().contains(query) ||
+                peerName.lowercase().contains(query)
+            val matchesMessage = conversationMessages[conv.id].orEmpty().any { msg ->
+                msg.body.lowercase().contains(query)
+            }
+            matchesNameOrId || matchesMessage
         }
     }
     val incomingRequests = filtered.filter { it.status == "pending" && it.createdBy != currentUserId }
@@ -394,6 +406,14 @@ private fun LiveListPane(
             text = "Your space for real conversations · Names are unverified",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        ConversationSearchBar(
+            query = threadState.searchQuery,
+            onQueryChange = onSearchChange,
+            testTag = "live_search_input"
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -477,32 +497,6 @@ private fun LiveListPane(
             ChatboxNoticeBanner(text = activeError, isError = true)
             Spacer(modifier = Modifier.height(8.dp))
         }
-
-        OutlinedTextField(
-            value = threadState.searchQuery,
-            onValueChange = onSearchChange,
-            singleLine = true,
-            placeholder = { Text("Search conversations") },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Rounded.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("live_search_input")
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -654,33 +648,81 @@ private fun LiveListPane(
                         conversation = conv,
                         currentUserId = currentUserId,
                         peerProfile = peerProfiles[conv.peerUid(currentUserId)],
+                        messages = conversationMessages[conv.id].orEmpty(),
+                        searchQuery = trimmedQuery,
                         selected = conv.id == threadState.selectedId,
                         onClick = { onSelectConversation(conv.id) }
                     )
                 }
             }
 
-            item(key = "chats_header") {
-                Text(
-                    text = "CHATS",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-                )
+            if (chats.isNotEmpty() || incomingRequests.isEmpty()) {
+                item(key = "chats_header") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (query.isNotEmpty()) "MATCHING CHATS" else "CHATS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (chats.isNotEmpty()) {
+                            Text(
+                                text = chats.size.toString().padStart(2, '0'),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
-            if (chats.isEmpty() && conversationsState is UiState.Success) {
+            if (chats.isEmpty() && incomingRequests.isEmpty() && conversationsState is UiState.Success) {
                 item(key = "no_chats") {
-                    Text(
-                        text = if (query.isNotEmpty()) {
-                            "No conversations match your search."
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (query.isNotEmpty()) {
+                            Icon(
+                                imageVector = Icons.Rounded.SearchOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Text(
+                                text = "No chats match \"$trimmedQuery\"",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Try searching another name or message keyword.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            TextButton(
+                                onClick = { onSearchChange("") },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("live_clear_search_empty_button")
+                            ) {
+                                Text("Clear search")
+                            }
                         } else {
-                            "No conversations yet. Tap the new message button to connect."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
+                            Text(
+                                text = "No conversations yet. Tap the new message button to connect.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             } else {
                 items(chats, key = { it.id }) { conv ->
@@ -688,6 +730,8 @@ private fun LiveListPane(
                         conversation = conv,
                         currentUserId = currentUserId,
                         peerProfile = peerProfiles[conv.peerUid(currentUserId)],
+                        messages = conversationMessages[conv.id].orEmpty(),
+                        searchQuery = trimmedQuery,
                         selected = conv.id == threadState.selectedId,
                         onClick = { onSelectConversation(conv.id) }
                     )
@@ -702,17 +746,40 @@ private fun LiveConversationRow(
     conversation: Conversation,
     currentUserId: String,
     peerProfile: UserProfile?,
+    messages: List<LiveMessage>,
+    searchQuery: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
     val peerUid = conversation.peerUid(currentUserId)
     val peerName = resolvePeerDisplayName(peerUid, peerProfile)
-    val statusText = when {
-        conversation.status == "pending" && conversation.createdBy == currentUserId -> "Request sent · waiting"
-        conversation.status == "pending" -> "Message request · tap to review"
+    val trimmedQuery = searchQuery.trim()
+    val queryLower = trimmedQuery.lowercase()
+    val matchedMessage = if (queryLower.isNotEmpty()) {
+        messages.lastOrNull { it.body.lowercase().contains(queryLower) }
+    } else {
+        null
+    }
+    val latestMessage = messages.lastOrNull()
+    val previewText = when {
+        matchedMessage != null -> {
+            val prefix = if (matchedMessage.senderId == currentUserId) "You: " else ""
+            "$prefix${matchedMessage.body}"
+        }
+        conversation.status == "pending" && conversation.createdBy == currentUserId ->
+            "Request sent · waiting"
+        conversation.status == "pending" ->
+            "Message request · tap to review"
+        latestMessage != null -> {
+            val prefix = if (latestMessage.senderId == currentUserId) "You: " else ""
+            "$prefix${latestMessage.body}"
+        }
         conversation.status == "active" -> "Conversation"
         else -> "Closed conversation"
     }
+
+    val highlightColor = MaterialTheme.colorScheme.primary
+    val highlightBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
 
     Surface(
         onClick = onClick,
@@ -731,7 +798,12 @@ private fun LiveConversationRow(
             MessengerAvatar(label = peerName, size = 44.dp)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = peerName,
+                    text = highlightSearchMatch(
+                        text = peerName,
+                        query = trimmedQuery,
+                        highlightColor = highlightColor,
+                        highlightBackground = highlightBg
+                    ),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -739,9 +811,18 @@ private fun LiveConversationRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = statusText,
+                    text = highlightSearchMatch(
+                        text = previewText,
+                        query = trimmedQuery,
+                        highlightColor = highlightColor,
+                        highlightBackground = highlightBg
+                    ),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (matchedMessage != null) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

@@ -40,7 +40,7 @@ import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.SentimentSatisfied
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,9 +77,11 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.DemoContact
 import com.example.data.model.DemoMessage
+import com.example.ui.components.ConversationSearchBar
 import com.example.ui.components.DemoAvatar
 import com.example.ui.components.DemoInfoModalDialog
 import com.example.ui.components.MessengerAvatar
+import com.example.ui.components.highlightSearchMatch
 import com.example.ui.theme.ChatboxIncomingBubble
 import com.example.ui.theme.ChatboxIncomingText
 import com.example.ui.theme.ChatboxOnlineDot
@@ -302,6 +304,13 @@ private fun DemoConversationListPane(
             }
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+        ConversationSearchBar(
+            query = uiState.searchQuery,
+            onQueryChange = onSearchChange,
+            testTag = "demo_search_input"
+        )
+
         if (publicWelcomeBanner.isNotBlank()) {
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
@@ -318,38 +327,13 @@ private fun DemoConversationListPane(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedTextField(
-            value = uiState.searchQuery,
-            onValueChange = onSearchChange,
-            singleLine = true,
-            placeholder = { Text("Search conversations") },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Rounded.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("demo_search_input")
-        )
-
         Spacer(modifier = Modifier.height(14.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "YOUR CONVERSATIONS",
+                text = if (uiState.searchQuery.trim().isNotEmpty()) "MATCHING CHATS" else "YOUR CONVERSATIONS",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -367,19 +351,52 @@ private fun DemoConversationListPane(
         ) {
             if (contacts.isEmpty()) {
                 item {
-                    Text(
-                        text = "No conversations found.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
+                    val trimmedQuery = uiState.searchQuery.trim()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SearchOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Text(
+                            text = if (trimmedQuery.isNotEmpty()) {
+                                "No chats match \"$trimmedQuery\""
+                            } else {
+                                "No conversations found."
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (trimmedQuery.isNotEmpty()) {
+                            Text(
+                                text = "Try searching another name or message keyword.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            TextButton(
+                                onClick = { onSearchChange("") },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("demo_clear_search_empty_button")
+                            ) {
+                                Text("Clear search")
+                            }
+                        }
+                    }
                 }
             } else {
                 items(contacts, key = { it.id }) { contact ->
-                    val lastMessage = uiState.messagesFor(contact.id).lastOrNull()
                     DemoContactRow(
                         contact = contact,
-                        preview = lastMessage?.text ?: contact.role,
+                        preview = uiState.previewFor(contact),
+                        searchQuery = uiState.searchQuery,
                         selected = contact.id == uiState.activeContactId,
                         onClick = { onSelectContact(contact.id) }
                     )
@@ -436,9 +453,14 @@ private fun DemoConversationListPane(
 private fun DemoContactRow(
     contact: DemoContact,
     preview: String,
+    searchQuery: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val highlightColor = MaterialTheme.colorScheme.primary
+    val highlightBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+    val displayName = if (contact.id == "saira") "${contact.name} ✦" else contact.name
+
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
@@ -456,14 +478,24 @@ private fun DemoContactRow(
             DemoAvatar(contact = contact, size = 44.dp, showOnlineDot = true)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (contact.id == "saira") "${contact.name} ✦" else contact.name,
+                    text = highlightSearchMatch(
+                        text = displayName,
+                        query = searchQuery,
+                        highlightColor = highlightColor,
+                        highlightBackground = highlightBg
+                    ),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = preview,
+                    text = highlightSearchMatch(
+                        text = preview,
+                        query = searchQuery,
+                        highlightColor = highlightColor,
+                        highlightBackground = highlightBg
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
