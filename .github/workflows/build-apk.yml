@@ -1,4 +1,4 @@
-# Lightfall Android APK — JDK-প্রম্পটে 'n' (সিস্টেম JDK) + skipSigning + apksigner
+# Lightfall Android APK — config.json প্রি-সেট (প্রম্পট-ফ্রি) + skipSigning + apksigner
 name: Build Lightfall APK
 
 on:
@@ -27,6 +27,13 @@ jobs:
 
       - name: Bubblewrap CLI ইনস্টল
         run: npm install -g @bubblewrap/cli
+
+      - name: Bubblewrap config প্রি-সেট (প্রম্পট বাইপাস)
+        run: |
+          mkdir -p ~/.bubblewrap
+          printf '{"jdkPath": "%s", "androidSdkPath": "%s"}' "$JAVA_HOME" "$ANDROID_HOME" \
+            > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json
 
       - name: সাইনিং-কী + twa-manifest + checksum
         run: |
@@ -74,11 +81,11 @@ jobs:
               crypto.createHash('sha1').update(data).digest('hex'));
           "
 
-      - name: APK বিল্ড (JDK-প্রম্পটে n + skipSigning)
+      - name: APK বিল্ড (skipSigning)
         run: |
           cd apkbuild
           set -o pipefail
-          printf 'n\n' | bubblewrap build --skipSigning 2>&1 | tee build.log
+          bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
 
       - name: ত্রুটি-টেইল অ্যানোটেশনে
