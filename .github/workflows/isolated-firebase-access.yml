@@ -127,6 +127,7 @@ jobs:
           project = 'chatbox-test-2c236731bf'
           expected = '64a2d3e822ae44354853250dea8f9cb43c430c06c0e365d4f9788d17a79ab44d'
           expected_normalized = '1a4816b39567cf82d68be71b035faecd28e57ac10248dc7fc8a7f106dccdb64f'
+          expected_tokens = '9d00fd8a52a4f9922f90842d123ac0b37009a30c4d5000b78c610e7ac9f12a24'
           token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
           def get(path):
               request = urllib.request.Request('https://firebaserules.googleapis.com/v1/' + path, headers={'Authorization': 'Bearer ' + token})
@@ -148,11 +149,16 @@ jobs:
           content = sources[0]['content']
           digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
           normalized = hashlib.sha256(content.replace('\r\n', '\n').strip().encode('utf-8')).hexdigest()
+          pattern = r'''(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s])'''
+          tokens = [item for item in re.findall(pattern, content) if not item.startswith('//') and not item.startswith('/*')]
+          token_digest = hashlib.sha256(json.dumps(tokens, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
           if digest == expected:
               print('Published Firestore rules match the prepared two-account rules byte for byte.')
           elif normalized == expected_normalized:
               print('Published Firestore rules match the prepared two-account rules after normalizing line endings and outer whitespace.')
+          elif token_digest == expected_tokens:
+              print('Published rules match the prepared two-account rules by tokens, ignoring whitespace and comments. This is not a security review.')
           else:
-              print('::warning::Published rules do not match the prepared two-account rules after normalizing line endings and outer whitespace. This alone does not establish whether the differences are material.')
+              print('::warning::Published rules differ from the prepared two-account rules even after ignoring whitespace and comments. The differences require review before relying on the rules.')
           print('Read-only comparison only; no rules or resources were changed.')
           PY
