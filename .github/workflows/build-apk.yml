@@ -1,4 +1,4 @@
-# Lightfall Android APK — checksum + env-passwords = সম্পূর্ণ প্রম্পটহীন বিল্ড
+# Lightfall Android APK — --skipSigning + নিজস্ব apksigner = প্রম্পট শূন্য
 name: Build Lightfall APK
 
 on:
@@ -72,17 +72,34 @@ jobs:
             const data = fs.readFileSync('twa-manifest.json');
             fs.writeFileSync('manifest-checksum.txt',
               crypto.createHash('sha1').update(data).digest('hex'));
-            console.log('checksum:', fs.readFileSync('manifest-checksum.txt', 'utf8').trim());
           "
+          echo "প্রস্তুত"
 
-      - name: APK বিল্ড (env-পাসওয়ার্ডে প্রম্পটহীন)
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: lightfall123
-          BUBBLEWRAP_KEY_PASSWORD: lightfall123
+      - name: APK বিল্ড (skipSigning + লগ)
         run: |
           cd apkbuild
-          bubblewrap build
+          set -o pipefail
+          bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
+
+      - name: বিল্ড-লগ সংরক্ষণ
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: apkbuild/build.log
+          if-no-files-found: ignore
+
+      - name: নিজে সাইন করা (apksigner)
+        run: |
+          cd apkbuild
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
+          echo "build-tools: $BT"
+          "$BT/zipalign" -f 4 app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks android.keystore --ks-key-alias android \
+            --ks-pass pass:lightfall123 --key-pass pass:lightfall123 \
+            --out app-release-signed.apk aligned.apk
+          "$BT/apksigner" verify app-release-signed.apk && echo "সাইন-যাচাই ✓"
 
       - name: GitHub Release-এ তোলা
         env:
