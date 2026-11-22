@@ -28,13 +28,20 @@ export function createNativeAuthGate({isNative, isTestProject, nativeTestOptIn, 
 // later. The listener is never created after unsubscribe or a failed check.
 export function watchAfterNativeGate(ready, subscribe, callback, onError) {
   let cancelled = false, unsubscribe;
+  const next = (...args) => { if (!cancelled) callback(...args); };
+  const fail = error => { if (!cancelled && onError) onError(error); };
   Promise.resolve().then(ready).then(() => {
-    if (!cancelled) unsubscribe = subscribe(callback, onError);
-  }).catch(error => {
-    if (!cancelled && onError) onError(error);
-  });
+    if (cancelled) return;
+    const stop = subscribe(next, fail);
+    // A subscription may synchronously call back and trigger cancellation
+    // before it returns its cleanup function. Close that listener immediately.
+    if (cancelled) stop?.();
+    else unsubscribe = stop;
+  }).catch(fail);
   return () => {
+    if (cancelled) return;
     cancelled = true;
-    if (unsubscribe) unsubscribe();
+    const stop = unsubscribe; unsubscribe = undefined;
+    stop?.();
   };
 }

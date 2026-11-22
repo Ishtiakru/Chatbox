@@ -39,6 +39,34 @@ test('auth listener waits for native identity and handles cancellation and failu
   await tick(); assert.match(failure.message, /native mismatch/); assert.equal(calls, 1);
 });
 
+test('synchronous cancellation during subscription closes the returned listener exactly once', async () => {
+  let stopped = 0, stop;
+  stop = watchAfterNativeGate(() => Promise.resolve(), next => {
+    next('signed-in');
+    return () => { stopped++; };
+  }, () => stop(), () => assert.fail('cancelled listener must not report an error'));
+  await tick();
+  assert.equal(stopped, 1);
+  stop();
+  assert.equal(stopped, 1);
+});
+
+test('callbacks queued after cancellation do not reach the old session', async () => {
+  let next, fail, stopped = 0;
+  const values = [], errors = [];
+  const stop = watchAfterNativeGate(() => Promise.resolve(), (onNext, onFail) => {
+    next = onNext; fail = onFail;
+    return () => { stopped++; };
+  }, value => values.push(value), error => errors.push(error));
+  await tick();
+  next('current');
+  stop(); stop();
+  next('late'); fail(new Error('late'));
+  assert.deepEqual(values, ['current']);
+  assert.deepEqual(errors, []);
+  assert.equal(stopped, 1);
+});
+
 test('browser gate never accesses the native bridge', async () => {
   await make({isNative:false,getIdentity:() => {throw new Error('must not be called');}})();
 });

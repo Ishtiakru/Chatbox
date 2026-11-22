@@ -1,8 +1,8 @@
 import {resolveFirebaseConfig} from './firebase-config.js';
 
-// Preparation for a future isolated native test build. This validator is not
-// currently wired into app startup and does not enable test builds. A runtime
-// check is not an authorization boundary or a substitute for signing checks.
+// The native auth gate calls this validator before starting auth in isolated
+// test builds. It is not an authorization boundary or a substitute for
+// signing checks, device validation, or reviewed Firebase Security Rules.
 export function verifyNativeTestIdentity(web, nativeIdentity) {
   const {config} = resolveFirebaseConfig({
     VITE_CHATBOX_TEST_MODE: 'true',
