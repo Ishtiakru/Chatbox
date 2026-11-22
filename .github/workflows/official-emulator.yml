@@ -38,6 +38,10 @@ jobs:
           VITE_CHATBOX_TEST_FIREBASE_CONFIG: '{"projectId":"chatbox-test-123","apiKey":"public-key","authDomain":"chatbox-test-123.firebaseapp.com","messagingSenderId":"123456","appId":"1:123456:web:abc123"}'
           VITE_ENABLE_FIRESTORE_CHAT: 'true'
         run: npm run build
+      - name: Generated image preparation in Chromium (no Firebase)
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node scripts/run-browser-photo-check.mjs
       - name: Standalone base, admin and calls candidates
         run: npm run test:rules
       - name: Private source handover candidate
