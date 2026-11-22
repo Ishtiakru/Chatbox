@@ -1,4 +1,4 @@
-# Lightfall Android APK — config প্রি-সেট + sdk/bin প্যাচ + skipSigning + apksigner + gradle ডায়াগ
+# Lightfall Android APK — checksum-নেই পাথে প্রজেক্ট জেনারেট (y+1.0.0 পাইপ) + skipSigning + apksigner
 name: Build Lightfall APK
 
 on:
@@ -35,7 +35,7 @@ jobs:
             > ~/.bubblewrap/config.json
           cat ~/.bubblewrap/config.json
 
-      - name: সাইনিং-কী + twa-manifest + checksum
+      - name: সাইনিং-কী + twa-manifest
         run: |
           mkdir -p apkbuild && cd apkbuild
           keytool -genkeypair -v -keystore android.keystore -alias android \
@@ -74,35 +74,25 @@ jobs:
             "minSdkVersion": 21
           }
           JSON
-          node -e "
-            const fs = require('fs'), crypto = require('crypto');
-            const data = fs.readFileSync('twa-manifest.json');
-            fs.writeFileSync('manifest-checksum.txt',
-              crypto.createHash('sha1').update(data).digest('hex'));
-          "
 
-      - name: APK বিল্ড (skipSigning)
+      - name: APK বিল্ড (checksum-নেই → y+1.0.0 পাইপ, skipSigning)
         run: |
           cd apkbuild
           set -o pipefail
-          bubblewrap build --skipSigning 2>&1 | tee build.log
+          printf 'y\n1.0.0\n' | bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
 
-      - name: ত্রুটি-ডায়াগ (gradle সরাসরি + লগ-টেইল)
+      - name: ত্রুটি-ডায়াগ
         if: failure()
         run: |
           cd apkbuild
-          echo "=== build.log টেইল:"
-          tail -n 8 build.log | cut -c1-160
-          echo "=== ডিরেক্টরি:"
-          ls
-          echo "=== gradle সরাসরি:"
+          tail -n 12 build.log | cut -c1-160 | while IFS= read -r line; do
+            echo "::error::${line//%/Ø}"
+          done
           if [ -f gradlew ]; then
-            ./gradlew --no-daemon assembleRelease 2>&1 | tail -n 20 | cut -c1-160 | while IFS= read -r line; do
+            ./gradlew --no-daemon assembleRelease 2>&1 | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
               echo "::error::${line//%/Ø}"
             done
-          else
-            echo "::error::gradlew নেই — TwaGenerator পর্যন্ত পাওয়ায়নি"
           fi
 
       - name: নিজে সাইন করা (apksigner)
