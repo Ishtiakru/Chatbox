@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Chatbox</string>
+    <string name="cd_chatbox_logo">Chatbox logo</string>
+    <string name="cd_back">Back</string>
+    <string name="cd_send">Send</string>
+    <string name="cd_about">About Chatbox</string>
+    <string name="cd_login_backdrop">Lavender backdrop</string>
+    <string name="cd_conversation_info">Conversation information</string>
+    <string name="cd_voice_call">Voice call</string>
+    <string name="cd_video_call">Video call</string>
+    <string name="cd_attach_file">Attach a file</string>
+    <string name="cd_add_emoji">Add a smile</string>
+    <string name="cd_new_conversation">New conversation</string>
+    <string name="cd_copy_chatbox_id">Copy Chatbox ID</string>
+    <string name="cd_conversation_details">Conversation details</string>
 </resources>

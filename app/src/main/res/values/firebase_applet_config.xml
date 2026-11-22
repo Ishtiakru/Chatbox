@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-chatbox-7583d195-abf0-4fcf-ae49-c9aade2d7705</string>
+    <string name="recaptcha_site_key" translatable="false">6LeFLi0uAAAAAD7zwRmzM1mo-2y-W6eureYCE2jt</string>
+</resources>

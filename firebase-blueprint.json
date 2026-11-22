@@ -1,0 +1,226 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public Chatbox user lookup profile containing UID and display name (no PII/email).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Unverified user display name (1..80 chars)."
+        }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "UserBlock": {
+      "title": "UserBlock",
+      "description": "Owner-private block entry blocking a peer UID from initiating or continuing interactions.",
+      "type": "object",
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct two-participant conversation with consent status lifecycle (pending -> active/closed).",
+      "type": "object",
+      "properties": {
+        "participants": {
+          "type": "array",
+          "description": "Exactly two distinct participant UIDs."
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID of the user who initiated the conversation request."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "active", "closed"],
+          "description": "Lifecycle status of the conversation."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["participants", "createdBy", "status", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Immutable direct message inside a conversation.",
+      "type": "object",
+      "properties": {
+        "senderId": {
+          "type": "string",
+          "description": "UID of the message author."
+        },
+        "body": {
+          "type": "string",
+          "description": "Message text content (1..2000 chars)."
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["senderId", "body", "sentAt"]
+    },
+    "SparkAdmin": {
+      "title": "SparkAdmin",
+      "description": "Single owner registration record for Spark Admin Studio.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified owner Google email."
+        },
+        "pendingEmail": {
+          "type": "string",
+          "description": "Reserved empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["uid", "email", "pendingEmail", "createdAt", "updatedAt"]
+    },
+    "SparkDelegation": {
+      "title": "SparkDelegation",
+      "description": "Delegated Spark Admin invitation/status keyed by verified Gmail address.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Target Gmail address."
+        },
+        "uid": {
+          "type": "string",
+          "description": "Delegate UID once accepted, or empty string when invited."
+        },
+        "invitedBy": {
+          "type": "string",
+          "description": "Owner UID who issued the invitation."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["invited", "active", "revoked"],
+          "description": "Delegation lifecycle status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["email", "uid", "invitedBy", "status", "createdAt", "updatedAt"]
+    },
+    "SparkPublicWelcome": {
+      "title": "SparkPublicWelcome",
+      "description": "Public welcome message configured by Spark Admin.",
+      "type": "object",
+      "properties": {
+        "welcome": {
+          "type": "string",
+          "description": "Welcome banner text (1..160 chars)."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin/delegate who updated the welcome text."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["welcome", "updatedBy", "updatedAt"]
+    },
+    "SparkAppearanceSetting": {
+      "title": "SparkAppearanceSetting",
+      "description": "Bounded public appearance setting (sparkTheme or sparkMenu).",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "Allowlisted value ('default'/'lavender' or 'bottom'/'top')."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin/delegate who updated the setting."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["value", "updatedBy", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/profiles/{uid}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Direct UID lookup profile for starting live conversations."
+    },
+    "/userBlocks/{ownerId}/blocked/{blockedId}": {
+      "schema": { "$ref": "#/entities/UserBlock" },
+      "description": "Owner-private blocked peer records."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Direct 1:1 conversations between two participants."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Messages belonging to a direct conversation."
+    },
+    "/sparkAdmin/current": {
+      "schema": { "$ref": "#/entities/SparkAdmin" },
+      "description": "Single Spark Admin owner record."
+    },
+    "/sparkDelegations/{email}": {
+      "schema": { "$ref": "#/entities/SparkDelegation" },
+      "description": "Owner-managed Spark Admin delegate invitations."
+    },
+    "/settings/sparkPublic": {
+      "schema": { "$ref": "#/entities/SparkPublicWelcome" },
+      "description": "Public welcome message managed by Spark Admin."
+    },
+    "/settings/{appearance}": {
+      "schema": { "$ref": "#/entities/SparkAppearanceSetting" },
+      "description": "Bounded appearance settings (sparkTheme and sparkMenu)."
+    }
+  }
+}
