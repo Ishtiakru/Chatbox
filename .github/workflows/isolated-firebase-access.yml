@@ -126,6 +126,7 @@ jobs:
 
           project = 'chatbox-test-2c236731bf'
           expected = '64a2d3e822ae44354853250dea8f9cb43c430c06c0e365d4f9788d17a79ab44d'
+          expected_normalized = '1a4816b39567cf82d68be71b035faecd28e57ac10248dc7fc8a7f106dccdb64f'
           token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
           def get(path):
               request = urllib.request.Request('https://firebaserules.googleapis.com/v1/' + path, headers={'Authorization': 'Bearer ' + token})
@@ -144,10 +145,14 @@ jobs:
           sources = ruleset.get('source', {}).get('files', [])
           if len(sources) != 1 or not isinstance(sources[0].get('content'), str):
               raise SystemExit('Unexpected rules source; no source was printed.')
-          digest = hashlib.sha256(sources[0]['content'].encode('utf-8')).hexdigest()
-          if digest != expected:
-              print('::warning::Published rules are not a byte-for-byte match for the prepared two-account rules. This alone does not establish whether the differences are material.')
-          else:
+          content = sources[0]['content']
+          digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+          normalized = hashlib.sha256(content.replace('\r\n', '\n').strip().encode('utf-8')).hexdigest()
+          if digest == expected:
               print('Published Firestore rules match the prepared two-account rules byte for byte.')
+          elif normalized == expected_normalized:
+              print('Published Firestore rules match the prepared two-account rules after normalizing line endings and outer whitespace.')
+          else:
+              print('::warning::Published rules do not match the prepared two-account rules after normalizing line endings and outer whitespace. This alone does not establish whether the differences are material.')
           print('Read-only comparison only; no rules or resources were changed.')
           PY
