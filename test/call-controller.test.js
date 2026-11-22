@@ -281,3 +281,23 @@ test('late ended events and late streams cannot affect a different call', async 
   assert.equal(controller.getState().localMedia.audio.available,false);
   controller.dispose(); assert.equal(b.listeners,0);
 });
+
+test('device permission and availability errors show safe guidance', async () => {
+  for (const [name, expected] of [
+    ['NotAllowedError', /permission was denied/],
+    ['NotFoundError', /was not found/],
+    ['NotReadableError', /unavailable/],
+    ['OtherError', /Call could not be completed/],
+  ]) {
+    const error = Object.assign(new Error('private device details'), {name});
+    const controller = createCallController({
+      watchIncoming: () => () => {},
+      createSession: () => ({id:'call', start:async () => { throw error; }, hangUp:async () => {}, close:() => {}}),
+    });
+    controller.setConversation(conversation);
+    await controller.start('video');
+    assert.match(controller.getState().error, expected);
+    assert.doesNotMatch(controller.getState().error, /private device details/);
+    controller.dispose();
+  }
+});

@@ -7,6 +7,23 @@ import { readLocalMedia, setLocalMediaEnabled } from './call-media.js';
 export const CALL_SETUP_TIMEOUT_MS = 60_000;
 export const CALL_DISCONNECT_TIMEOUT_MS = 20_000;
 
+// Explain common device errors without exposing raw browser or backend details.
+function callErrorMessage(error) {
+  switch (error?.name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return 'Camera or microphone permission was denied. Check your device and app permissions, then try again.';
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return 'A required camera or microphone was not found. Check your device and try again.';
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return 'The camera or microphone is unavailable. Close other apps using it and try again.';
+    default:
+      return 'Call could not be completed.';
+  }
+}
+
 export function createCallController({ watchIncoming, createSession, onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }) {
   if (typeof watchIncoming !== 'function' || typeof createSession !== 'function' || typeof onChange !== 'function' || typeof setTimer !== 'function' || typeof clearTimer !== 'function') throw new Error('Call dependencies are required.');
   let context = null, stopWatching = null, active = null, generation = 0, disposed = false, discoveryFailed = false;
@@ -92,10 +109,10 @@ export function createCallController({ watchIncoming, createSession, onChange = 
         update({localStream:stream, localMedia:readLocalMedia(stream)});
       },
       onRemoteStream: stream => { if (!disposed && active && current === generation && context === selected) update({remoteStream:stream}); },
-      onError: () => {
+      onError: error => {
         if (disposed || current !== generation || context !== selected) return;
         clearDeadline(); clearTrackWatch(); active = null; generation++;
-        update({...clearActive(),error:'Call could not be completed.'});
+        update({...clearActive(),error:callErrorMessage(error)});
       },
     };
     const session = createSession({...selected, role, media, callId, ...callbacks});
@@ -110,9 +127,9 @@ export function createCallController({ watchIncoming, createSession, onChange = 
   async function start(media) {
     const {session, current} = begin('caller', media);
     try { await session.start(); }
-    catch {
+    catch (error) {
       if (!disposed && current === generation) {
-        endActive(); update({...clearActive(),error:'Call could not be completed.'});
+        endActive(); update({...clearActive(),error:callErrorMessage(error)});
       }
     }
   }
@@ -129,9 +146,9 @@ export function createCallController({ watchIncoming, createSession, onChange = 
     // Set busy before awaiting: double taps must not open media twice.
     update({status:'preparing'});
     try { await session.accept(); }
-    catch {
+    catch (error) {
       if (!disposed && current === generation) {
-        endActive(); update({...clearActive(),error:'Call could not be completed.'});
+        endActive(); update({...clearActive(),error:callErrorMessage(error)});
       }
     }
   }

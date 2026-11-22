@@ -20,7 +20,7 @@ jobs:
   publish:
     # Disabled unless an administrator has deliberately configured the variable.
     # Do not enable without reviewing the script, destination, history and access.
-    if: ${{ vars.CHATBOX_SOURCE_PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/arena/f649c1bd-chatbox' }}
+    if: ${{ vars.CHATBOX_SOURCE_PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/arena/f649c1bd-chatbox' && !contains(github.event.head_commit.message, '[isolated-apk]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
