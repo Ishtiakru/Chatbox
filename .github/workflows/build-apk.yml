@@ -1,4 +1,4 @@
-# Lightfall Android APK — --skipSigning + নিজস্ব apksigner = প্রম্পট শূন্য
+# Lightfall Android APK — skipSigning + apksigner + ত্রুটি অ্যানোটেশনে
 name: Build Lightfall APK
 
 on:
@@ -73,7 +73,6 @@ jobs:
             fs.writeFileSync('manifest-checksum.txt',
               crypto.createHash('sha1').update(data).digest('hex'));
           "
-          echo "প্রস্তুত"
 
       - name: APK বিল্ড (skipSigning + লগ)
         run: |
@@ -82,19 +81,18 @@ jobs:
           bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
 
-      - name: বিল্ড-লগ সংরক্ষণ
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: apkbuild/build.log
-          if-no-files-found: ignore
+      - name: ত্রুটি-টেইল অ্যানোটেশনে
+        if: failure()
+        run: |
+          cd apkbuild
+          tail -n 25 build.log | cut -c1-180 | while IFS= read -r line; do
+            echo "::error::${line//%/Ø}"
+          done
 
       - name: নিজে সাইন করা (apksigner)
         run: |
           cd apkbuild
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
-          echo "build-tools: $BT"
           "$BT/zipalign" -f 4 app-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks android.keystore --ks-key-alias android \
             --ks-pass pass:lightfall123 --key-pass pass:lightfall123 \
