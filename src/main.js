@@ -18,7 +18,7 @@ import { createSlowOperationNotice } from './slow-operation-notice.js';
 import { createLiveDrafts } from './live-drafts.js';
 import { createAccountOperationGuard } from './account-operation-guard.js';
 import { changeAdminTarget } from './admin-target-confirmation.js';
-import { canUseCallPage } from './call-page-lifecycle.js';
+import { canUseCallPage, createNativeCallLifecycle } from './call-page-lifecycle.js';
 
 const contacts = [
   { id: 'saira', name: 'Saira', role: 'Your app companion', avatar: '✳', color: 'saira', label: 'AI GUIDE', online: true },
@@ -220,11 +220,15 @@ let conversationProfiles = null;
 let callInitGeneration = 0;
 let cloudGeneration = 0;
 let pageActive = true;
+const nativeCallLifecycle = createNativeCallLifecycle({
+  onStop: () => stopCallsForPage(),
+  onStart: () => { resumeCallsForPage(); if (state.view === 'live') render(); },
+});
 // This lab has no background-call or notification implementation. Invalidate
 // pending imports and dispose discovery as well as active media while hidden.
 // Browser suspension can still delay or prevent lifecycle events.
 function callPageAvailable() {
-  return state.live.screen === 'thread' && canUseCallPage({enabled:EXPERIMENTAL_CALLS_ENABLED, pageActive, hidden:document.hidden, view:state.view, authenticated:isCurrentAuthUser(state.user)});
+  return state.live.screen === 'thread' && canUseCallPage({enabled:EXPERIMENTAL_CALLS_ENABLED, pageActive, nativeActive:nativeCallLifecycle.isActive(), hidden:document.hidden, view:state.view, authenticated:isCurrentAuthUser(state.user)});
 }
 function stopCallsForPage() {
   callInitGeneration++;
@@ -240,6 +244,9 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { pageActive = false; stopCallsForPage(); });
 window.addEventListener('pageshow', () => { pageActive = true; resumeCallsForPage(); });
+// Dispatched only by the isolated Android call lab; a false stop is harmless.
+window.addEventListener('chatbox-call-lab-stop', () => nativeCallLifecycle.stop());
+window.addEventListener('chatbox-call-lab-start', () => nativeCallLifecycle.start());
 
 watchAuth(user => {
   resetLive();
