@@ -23,26 +23,41 @@ export function randomContactCode(cryptoImpl = globalThis.crypto) {
 // The Firestore transaction and matching security rules must be used together.
 // The caller provides fresh verified identity and a session guard. The rules,
 // not this check or the random generator, enforce the atomic cross-reference.
-export async function claimContactCode({uid, verified, guard, transact, profileRef, codeRef, newCode = randomContactCode, attempts = 8}) {
-  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/') || verified !== true || typeof guard?.run !== 'function' || typeof transact !== 'function' || typeof profileRef !== 'function' || typeof codeRef !== 'function' || !Number.isInteger(attempts) || attempts < 1 || attempts > 20) throw new Error('Invalid identity request.');
+class ExistingProfile extends Error { constructor(code) { super('Identity already exists.'); this.code = code; } }
+class CodeTaken extends Error {}
+
+export async function claimContactCode({uid, verified, guard, transact, getServer, profileRef, codeRef, newCode = randomContactCode, attempts = 8}) {
+  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/') || verified !== true || typeof guard?.run !== 'function' || typeof transact !== 'function' || typeof getServer !== 'function' || typeof profileRef !== 'function' || typeof codeRef !== 'function' || !Number.isInteger(attempts) || attempts < 1 || attempts > 20) throw new Error('Invalid identity request.');
   for (let i=0;i<attempts;i++) {
     const candidate = newCode();
     if (!validContactCode(candidate)) throw new Error('Invalid generated contact code.');
-    const result = await guard.run(() => transact(async tx => {
-      const profile = await guard.run(() => tx.get(profileRef(uid)));
-      if (profile.exists()) {
-        const value = profile.data();
-        if (value?.uid !== uid || !validContactCode(value?.code)) throw new Error('Invalid stored identity.');
-        return value.code;
-      }
-      const existing = await guard.run(() => tx.get(codeRef(candidate)));
-      if (existing.exists()) return null;
-      return guard.run(() => {
-        tx.set(profileRef(uid), {uid,code:candidate});
-        tx.set(codeRef(candidate), {uid,code:candidate});
-        return candidate;
-      });
-    }));
+    let result;
+    try {
+      result = await guard.run(() => transact(async tx => {
+        const profile = await guard.run(() => tx.get(profileRef(uid)));
+        if (profile.exists()) {
+          const value = profile.data();
+          if (value?.uid !== uid || !validContactCode(value?.code)) throw new Error('Invalid stored identity.');
+          throw new ExistingProfile(value.code);
+        }
+        const existing = await guard.run(() => tx.get(codeRef(candidate)));
+        if (existing.exists()) throw new CodeTaken();
+        return guard.run(() => {
+          tx.set(profileRef(uid), {uid,code:candidate});
+          tx.set(codeRef(candidate), {uid,code:candidate});
+          return candidate;
+        });
+      }));
+    } catch (error) {
+      if (error instanceof ExistingProfile) return error.code;
+      if (error instanceof CodeTaken) continue;
+      // A race may produce a rules denial instead of a transaction conflict.
+      // Only retry after a fresh server read confirms that this code is taken.
+      if (error?.code !== 'permission-denied') throw error;
+      const collision = await guard.run(() => getServer(codeRef(candidate)));
+      if (!collision.exists()) throw error;
+      continue;
+    }
     if (result) return result;
   }
   throw new Error('Could not reserve an available contact code.');

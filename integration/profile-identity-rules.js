@@ -1,8 +1,9 @@
 // Local emulator only: synthetic identities, no deployed services.
+import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {before, after, beforeEach, test} from 'node:test';
 import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
-import {doc,collection,getDoc,getDocs,setDoc,writeBatch,runTransaction} from 'firebase/firestore';
+import {doc,collection,getDoc,getDocFromServer,getDocs,setDoc,writeBatch,runTransaction} from 'firebase/firestore';
 import {profileIdentityRules} from '../scripts/generate-profile-identity-rules.mjs';
 import {claimContactCode} from '../src/profile-identity.js';
 let env;
@@ -14,7 +15,7 @@ before(async()=>{
 beforeEach(async()=>env.clearFirestore());
 after(async()=>{if(env)await env.cleanup();});
 const refs=(db,uid,code)=>({profile:doc(db,'identityProfiles',uid),code:doc(db,'identityCodes',code)});
-const claim=(db,uid,code)=>claimContactCode({uid,verified:true,guard:{run:f=>f()},transact:f=>runTransaction(db,f),profileRef:id=>doc(db,'identityProfiles',id),codeRef:id=>doc(db,'identityCodes',id),newCode:()=>code,attempts:1});
+const claim=(db,uid,code)=>claimContactCode({uid,verified:true,guard:{run:f=>f()},transact:f=>runTransaction(db,f),getServer:getDocFromServer,profileRef:id=>doc(db,'identityProfiles',id),codeRef:id=>doc(db,'identityCodes',id),newCode:()=>code,attempts:1});
 test('only verified users can atomically claim one unique six-digit contact code',async()=>{
   const a=as('alice'),b=as('bob'),anon=env.unauthenticatedContext().firestore(),unverified=as('eve',false);
   await assertSucceeds(claim(a,'alice','000123'));
@@ -32,4 +33,21 @@ test('only verified users can atomically claim one unique six-digit contact code
   const mismatched=writeBatch(b); mismatched.set(refs(b,'bob','222222').profile,{uid:'bob',code:'222222'}); mismatched.set(refs(b,'bob','333333').code,{uid:'bob',code:'333333'}); await assertFails(mismatched.commit());
   await assertFails(setDoc(refs(b,'bob','222222').profile,{uid:'bob',code:'222222'}));
   await assertSucceeds(claim(b,'bob','222222'));
+});
+
+test('simultaneous reservations resolve a collision without sharing a code', async () => {
+  const a=as('alice'), b=as('bob');
+  const reserve=(db, uid, alternative) => {
+    let index=0;
+    return claimContactCode({uid,verified:true,guard:{run:fn=>fn()},transact:fn=>runTransaction(db,fn),getServer:getDocFromServer,
+      profileRef:id=>doc(db,'identityProfiles',id),codeRef:id=>doc(db,'identityCodes',id),
+      newCode:()=>index++ === 0 ? '444444' : alternative,attempts:3});
+  };
+  const [aliceCode,bobCode]=await Promise.all([reserve(a,'alice','111111'),reserve(b,'bob','222222')]);
+  assert.notEqual(aliceCode,bobCode);
+  assert.ok([aliceCode,bobCode].includes('444444'));
+  assert.equal((await getDoc(refs(a,'alice',aliceCode).profile)).data().code,aliceCode);
+  assert.equal((await getDoc(refs(b,'bob',bobCode).profile)).data().code,bobCode);
+  assert.equal((await getDoc(refs(a,'alice',aliceCode).code)).data().uid,'alice');
+  assert.equal((await getDoc(refs(b,'bob',bobCode).code)).data().uid,'bob');
 });

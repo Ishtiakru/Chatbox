@@ -20,7 +20,7 @@ test('reservation retries collisions, returns existing code and never writes aft
   const docs=new Map([['code/123456',{uid:'other',code:'123456'}]]), guard={run:fn=>fn()};
   const transact=async fn=>fn({get:async ref=>({exists:()=>docs.has(ref),data:()=>docs.get(ref)}),set:(ref,value)=>docs.set(ref,value)});
   const seq=['123456','000042'];
-  const options={uid:'alice',verified:true,guard,transact,profileRef:uid=>'profile/'+uid,codeRef:code=>'code/'+code,newCode:()=>seq.shift()};
+  const options={uid:'alice',verified:true,guard,transact,getServer:async ref=>({exists:()=>docs.has(ref)}),profileRef:uid=>'profile/'+uid,codeRef:code=>'code/'+code,newCode:()=>seq.shift()};
   assert.equal(await claimContactCode(options),'000042');
   assert.deepEqual(docs.get('profile/alice'),{uid:'alice',code:'000042'});
   assert.deepEqual(docs.get('code/000042'),{uid:'alice',code:'000042'});
@@ -34,4 +34,20 @@ test('candidate generation is pinned and never modifies the base rules', () => {
   assert.match(candidate,/match \/identityCodes\/\{code\}/);
   assert.doesNotMatch(base,/match \/identityCodes/);
   assert.throws(()=>profileIdentityRules(base+'\n'));
+});
+
+test('a permission denial retries only after a server confirms the code is occupied', async () => {
+  const denied=Object.assign(new Error('denied'),{code:'permission-denied'});
+  let calls=0, next=0;
+  const docs=new Map();
+  const transact=async fn=>{
+    if (++calls===1) throw denied;
+    return fn({get:async ref=>({exists:()=>docs.has(ref),data:()=>docs.get(ref)}),set:(ref,data)=>docs.set(ref,data)});
+  };
+  const opts={uid:'alice',verified:true,guard:{run:fn=>fn()},transact,profileRef:id=>'profile/'+id,codeRef:id=>'code/'+id,newCode:()=>['111111','222222'][next++],getServer:async ref=>({exists:()=>ref==='code/111111'})};
+  assert.equal(await claimContactCode(opts),'222222');
+  calls=0; next=0;
+  await assert.rejects(claimContactCode({...opts,getServer:async()=>({exists:()=>false})}),error=>error===denied);
+  calls=0; next=0;
+  await assert.rejects(claimContactCode({...opts,getServer:async()=>{throw new Error('read denied');}}),/read denied/);
 });
