@@ -89,6 +89,11 @@ jobs:
           npx --yes firebase-tools@15.37.0 emulators:exec
           --config firebase.browser-emulator.json --project demo-chatbox --only auth,firestore
           'node --test --test-concurrency=1 integration/email-verification-emulator.js'
+      - name: Restricted per-conversation photo candidate (local emulator only)
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/isolated-photo-rules.js'
       - name: Profile contact ID candidate (local emulator only)
         run: >-
           npx --yes firebase-tools@15.37.0 emulators:exec
