@@ -129,8 +129,8 @@ jobs:
           python3 - <<'PY'
           import json, subprocess, urllib.error, urllib.request
           names = [
-              'firebasehosting.sites.get', 'firebasehosting.versions.create',
-              'firebasehosting.versions.update', 'firebasehosting.releases.create',
+              'firebasehosting.sites.get', 'firebasehosting.sites.list',
+              'firebasehosting.sites.update',
               'datastore.entities.get', 'datastore.entities.create', 'datastore.entities.update',
               'clientauthconfig.clients.create', 'firebase.clients.get'
           ]
