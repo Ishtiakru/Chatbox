@@ -50,6 +50,7 @@ jobs:
           (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleRelease)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose android/app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk | grep "package: name='com.chatbox.apk'"
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions android/app/build/outputs/apk/release/app-release.apk | grep -Eq "android.permission.(CAMERA|RECORD_AUDIO)"; then echo 'Release unexpectedly requests media capture'; exit 1; fi
           rm -f "$RUNNER_TEMP/chatbox-ci-fixture.jks" android/app/build/outputs/apk/release/app-release.apk
       - name: Build isolated debug variant with synthetic test configuration
         env:
@@ -67,3 +68,22 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.chatbox.test'"
           (cd android && ./gradlew --no-daemon :app:tasks --all -PchatboxIsolatedTest=true) > /tmp/chatbox-test-tasks.txt
           if grep -Eq '^assembleRelease([[:space:]]|$)' /tmp/chatbox-test-tasks.txt; then echo 'Test release variant unexpectedly enabled'; exit 1; fi
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions android/app/build/outputs/apk/debug/app-debug.apk | grep -Eq "android.permission.(CAMERA|RECORD_AUDIO)"; then echo 'Ordinary test APK unexpectedly requests media capture'; exit 1; fi
+      - name: Compile isolated Android call lab and verify permission isolation
+        env:
+          VITE_CHATBOX_TEST_MODE: 'true'
+          VITE_CHATBOX_NATIVE_TEST_MODE: 'true'
+          VITE_CHATBOX_TEST_FIREBASE_CONFIG: '{"projectId":"chatbox-test-123","apiKey":"synthetic-web-key","authDomain":"chatbox-test-123.firebaseapp.com","messagingSenderId":"123456","appId":"1:123456:web:abc123"}'
+          VITE_ENABLE_FIRESTORE_CHAT: 'true'
+          VITE_ENABLE_EXPERIMENTAL_CALLS: 'true'
+          VITE_ENABLE_EXPERIMENTAL_ANDROID_CALLS: 'true'
+        run: |
+          npm run build
+          npx cap sync android
+          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug :app:testDebugUnitTest -PchatboxIsolatedTest=true -PchatboxCallLab=true)
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.chatbox.test'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions android/app/build/outputs/apk/debug/app-debug.apk > /tmp/call-lab-permissions.txt
+          grep -q 'android.permission.CAMERA' /tmp/call-lab-permissions.txt
+          grep -q 'android.permission.RECORD_AUDIO' /tmp/call-lab-permissions.txt
+          if (cd android && ./gradlew --no-daemon :app:tasks -PchatboxCallLab=true > /tmp/call-lab-production.log 2>&1); then echo 'Call lab unexpectedly allowed without isolated test build'; exit 1; fi
+          grep -q 'Call lab requires an isolated test build' /tmp/call-lab-production.log

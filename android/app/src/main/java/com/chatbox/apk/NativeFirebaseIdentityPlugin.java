@@ -1,5 +1,6 @@
 package com.chatbox.apk;
 
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.Resources;
 import com.getcapacitor.JSObject;
@@ -13,6 +14,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  */
 @CapacitorPlugin(name = "NativeFirebaseIdentity")
 public class NativeFirebaseIdentityPlugin extends Plugin {
+    static boolean isCallLabEnabled(Context context) {
+        return "com.chatbox.test".equals(context.getPackageName())
+            && (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            && context.getResources().getBoolean(R.bool.chatbox_call_lab);
+    }
+
     private String requiredString(String name) {
         Resources resources = getContext().getResources();
         int id = resources.getIdentifier(name, "string", getContext().getPackageName());
@@ -31,6 +38,7 @@ public class NativeFirebaseIdentityPlugin extends Plugin {
             result.put("androidAppId", requiredString("google_app_id"));
             result.put("packageName", getContext().getPackageName());
             result.put("debuggable", (getContext().getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+            result.put("callLabEnabled", isCallLabEnabled(getContext()));
             call.resolve(result);
         } catch (Exception error) {
             // Never return resource contents or other error details to the web layer.

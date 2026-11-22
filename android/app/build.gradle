@@ -3,6 +3,9 @@ apply plugin: 'com.android.application'
 // A separate, debug-only package for a future isolated Firebase test APK.
 // Standard builds keep their original application ID and release behavior.
 def isolatedTestBuild = project.findProperty('chatboxIsolatedTest') == 'true'
+// Only a distinct debug test APK may request camera/microphone permissions.
+def callLabBuild = project.findProperty('chatboxCallLab') == 'true'
+if (callLabBuild && !isolatedTestBuild) throw new GradleException('Call lab requires an isolated test build.')
 def releaseStore = System.getenv('CHATBOX_RELEASE_KEYSTORE')
 def releaseAlias = System.getenv('CHATBOX_RELEASE_KEY_ALIAS')
 def releaseStorePassword = System.getenv('CHATBOX_RELEASE_STORE_PASSWORD')
@@ -21,6 +24,7 @@ android {
     defaultConfig {
         applicationId isolatedTestBuild ? "com.chatbox.test" : "com.chatbox.apk"
         manifestPlaceholders = [chatboxLabel: isolatedTestBuild ? "Chatbox Test" : "Chatbox"]
+        resValue "bool", "chatbox_call_lab", callLabBuild ? "true" : "false"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -31,6 +35,9 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+    }
+    if (callLabBuild) {
+        sourceSets.debug.manifest.srcFile 'src/callLab/AndroidManifest.xml'
     }
     signingConfigs {
         if (releaseSigningReady && !isolatedTestBuild) {

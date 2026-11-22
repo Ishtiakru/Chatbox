@@ -442,11 +442,16 @@ async function initializeCalls(id, generation, threadGeneration) {
   try {
     const { createBrowserCallController } = await import('./call-feature.js');
     if (!callPageAvailable() || initGeneration !== callInitGeneration || generation !== liveGeneration || threadGeneration !== liveThreadGeneration || !selectedInteractionAllowed()) return;
-    callController = createBrowserCallController(call => {
+    const controller = await createBrowserCallController(call => {
       if (!callPageAvailable() || initGeneration !== callInitGeneration || generation !== liveGeneration || threadGeneration !== liveThreadGeneration) return;
       state.live.call = call;
       if (state.view === 'live') render();
-    }, () => callPageAvailable() && initGeneration === callInitGeneration && generation === liveGeneration && threadGeneration === liveThreadGeneration);
+    }, () => callPageAvailable() && initGeneration === callInitGeneration && generation === liveGeneration && threadGeneration === liveThreadGeneration && selectedInteractionAllowed());
+    if (!callPageAvailable() || initGeneration !== callInitGeneration || generation !== liveGeneration || threadGeneration !== liveThreadGeneration || !selectedInteractionAllowed() || callController) {
+      controller.dispose();
+      return;
+    }
+    callController = controller;
     callController.setConversation({id,uid,peerUid});
   } catch {
     if (!callPageAvailable() || initGeneration !== callInitGeneration || generation !== liveGeneration || threadGeneration !== liveThreadGeneration) return;
