@@ -49,6 +49,28 @@ export function createSparkAdminService(db, ops = defaultOps) {
     }
     await setDoc(welcome(), { welcome:proposal.value, updatedBy:user.uid, updatedAt:serverTimestamp() });
   }
+  // Each appearance setting is a separate, strictly bounded public document.
+  // Rules enforce authorization; client-side checks are not a security boundary.
+  async function applySparkAppearance(user, command, confirmed, preview) {
+    const proposal = parseSparkCommand(command);
+    const paths = {set_theme:'sparkTheme', set_menu:'sparkMenu'};
+    if (!user?.uid || !proposal || !paths[proposal.action] || confirmed !== true || preview?.action !== proposal.action || preview?.value !== proposal.value) {
+      throw new Error('A matching preview and confirmation are required.');
+    }
+    await setDoc(doc(db, 'settings', paths[proposal.action]), {value:proposal.value, updatedBy:user.uid, updatedAt:serverTimestamp()});
+  }
+  function watchSparkAppearance(next, fail) {
+    const values = {theme:'default', menu:'bottom'};
+    const watch = (name, key, allowed) => onSnapshot(doc(db, 'settings', name), snap => {
+      if (snap.metadata?.hasPendingWrites) return;
+      const value = snap.data()?.value;
+      values[key] = allowed.includes(value) ? value : allowed[0];
+      next({...values});
+    }, fail);
+    const stopTheme = watch('sparkTheme', 'theme', ['default','lavender']);
+    const stopMenu = watch('sparkMenu', 'menu', ['bottom','top']);
+    return () => { stopTheme(); stopMenu(); };
+  }
   async function listSparkDelegations() {
     const snap = await getDocsFromServer(query(collection(db,'sparkDelegations'),limit(100)));
     return snap.docs.map(item => ({email:item.id,status:item.data().status}));
@@ -77,5 +99,5 @@ export function createSparkAdminService(db, ops = defaultOps) {
     return onSnapshot(welcome(), snap => { const text = snap.data()?.welcome; next(typeof text === 'string' && text.length <= 160 ? text : ''); }, fail);
   }
 
-  return {getSparkAdminStatus,applySparkWelcome,listSparkDelegations,inviteSparkDelegate,revokeSparkDelegate,acceptSparkDelegation,watchSparkWelcome};
+  return {getSparkAdminStatus,applySparkWelcome,applySparkAppearance,watchSparkAppearance,listSparkDelegations,inviteSparkDelegate,revokeSparkDelegate,acceptSparkDelegation,watchSparkWelcome};
 }

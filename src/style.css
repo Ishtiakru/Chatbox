@@ -59,3 +59,12 @@
 /* Source handover preview is enabled only with a configured admin backend. */
 .source-handover{margin-top:22px;padding:16px;border:1px solid #e6dff1;border-radius:14px;background:#faf8ff;overflow-wrap:anywhere}
 .source-handover h3{font-size:15px;margin:0 0 8px}.source-handover p{font-size:12px;line-height:1.5;color:#615b70;margin:8px 0}.source-handover-qr{display:block;width:min(100%,280px);height:auto;margin-top:14px;background:#fff}
+
+/* Review-only, allowlisted public appearance presets. */
+.spark-theme-lavender .conversations,.spark-theme-lavender .chat-body,.spark-theme-lavender .messenger-page,.spark-theme-lavender .messenger-page .live-list,.spark-theme-lavender .messenger-page .live-thread{background:#f0e8fa}
+@media(max-width:700px){
+ .spark-menu-top .mobile-nav{top:0;bottom:auto;padding-top:env(safe-area-inset-top);padding-bottom:0;border-top:0;border-bottom:1px solid #edeaf3}
+ .spark-menu-top .conversations{padding-top:67px;padding-bottom:0}
+ .spark-menu-top .feature-page{top:67px;bottom:0}
+ .spark-menu-top .messenger-page.messenger-screen-thread,.spark-menu-top .messenger-page.messenger-screen-details{top:0}
+}

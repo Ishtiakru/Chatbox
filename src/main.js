@@ -93,7 +93,7 @@ function sourceHandoverView() {
 }
 function admin() {
  const authorized = state.admin.status === 'authorized' && (SPARK_ADMIN_ENABLED || (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY));
- return `<main class="main feature-page admin-page"><div class="feature-top"><div><span class="eyebrow">A SPACE FOR THE PEOPLE IN CHARGE</span><h2>Admin studio <span class="beta-pill">EXPERIMENTAL</span></h2><p>A thoughtful way to manage your space.</p></div><div class="feature-icon">${icon('shield-check')}</div></div><div class="admin-layout"><section class="locked-card"><div class="lock-icon">${icon('lock-keyhole')}</div><span class="eyebrow">SECURITY FIRST</span><h3>${authorized ? 'Administrator controls' : 'This space is locked.'}</h3><p>${authorized ? (SPARK_ADMIN_ENABLED ? 'Only limited changes are supported. Full audit history is not available.' : 'Changes are limited, reviewed and recorded.') : 'Verified sign-in and server-side security rules or admin permissions are required.'}</p>${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}${sourceHandoverView()}<div class="security-note">${icon('shield-check')} An email address alone will never grant admin access.</div></section><section class="studio-preview"><div class="preview-head"><div><span class="eyebrow">WHAT IS SUPPORTED</span><h3>Just say what you need.</h3></div><span class="preview-label">LIMITED</span></div><p>When configured, you can preview and confirm a public welcome message. Code changes and arbitrary actions are not supported.</p><div class="example-command"><span>✳</span><p>“Make the welcome message a little warmer...”</p></div><div class="preview-footer">${icon('info')} AI requests may be sent to an external provider.</div><div class="preview-item">${icon('users')} <div><strong>Admin access</strong><span>One verified admin at a time</span></div>${icon('arrow-up-right')}</div><div class="preview-item">${icon('history')} <div><strong>Activity history</strong><span>${SPARK_ADMIN_ENABLED ? 'Full audit history is not available' : 'Privileged actions are audited'}</span></div>${icon('arrow-up-right')}</div></section></div></main>`;
+ return `<main class="main feature-page admin-page"><div class="feature-top"><div><span class="eyebrow">A SPACE FOR THE PEOPLE IN CHARGE</span><h2>Admin studio <span class="beta-pill">EXPERIMENTAL</span></h2><p>A thoughtful way to manage your space.</p></div><div class="feature-icon">${icon('shield-check')}</div></div><div class="admin-layout"><section class="locked-card"><div class="lock-icon">${icon('lock-keyhole')}</div><span class="eyebrow">SECURITY FIRST</span><h3>${authorized ? 'Administrator controls' : 'This space is locked.'}</h3><p>${authorized ? (SPARK_ADMIN_ENABLED ? 'Only limited changes are supported. Full audit history is not available.' : 'Changes are limited, reviewed and recorded.') : 'Verified sign-in and server-side security rules or admin permissions are required.'}</p>${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}${sourceHandoverView()}<div class="security-note">${icon('shield-check')} An email address alone will never grant admin access.</div></section><section class="studio-preview"><div class="preview-head"><div><span class="eyebrow">WHAT IS SUPPORTED</span><h3>Just say what you need.</h3></div><span class="preview-label">LIMITED</span></div><p>When configured, you can preview and confirm a public welcome message. Supported changes: welcome text, home color, and mobile menu position. Code changes and arbitrary actions are not supported.</p><div class="example-command"><span>✳</span><p>“Make the welcome message a little warmer...”</p></div><div class="preview-footer">${icon('info')} AI requests may be sent to an external provider.</div><div class="preview-item">${icon('users')} <div><strong>Admin access</strong><span>One verified admin at a time</span></div>${icon('arrow-up-right')}</div><div class="preview-item">${icon('history')} <div><strong>Activity history</strong><span>${SPARK_ADMIN_ENABLED ? 'Full audit history is not available' : 'Privileged actions are audited'}</span></div>${icon('arrow-up-right')}</div></section></div></main>`;
 }
 function modal() {
  if (!state.modal) return '';
@@ -642,12 +642,12 @@ async function previewAdmin() {
   finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
 }
 async function applyAdmin() {
-  if (state.admin.status !== 'authorized' || state.admin.busy || state.admin.proposal?.action !== 'set_welcome' || !state.user) return;
+  if (state.admin.status !== 'authorized' || state.admin.busy || (!['set_welcome','set_theme','set_menu'].includes(state.admin.proposal?.action) || (!SPARK_ADMIN_ENABLED && state.admin.proposal?.action !== 'set_welcome')) || !state.user) return;
   const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation); const proposal = state.admin.proposal, command = state.admin.command; state.admin.busy = true; state.admin.error = ''; render();
   try {
-    if (SPARK_ADMIN_ENABLED) { const api = await import('./spark-admin-service.js'); await guard.run(() => api.applySparkWelcome(user, command, true, proposal)); }
+    if (SPARK_ADMIN_ENABLED) { const api = await import('./spark-admin-service.js'); await guard.run(() => proposal.action === 'set_welcome' ? api.applySparkWelcome(user, command, true, proposal) : api.applySparkAppearance(user, command, true, proposal)); }
     else await cloudCall('applyAdminUpdate', {proposal, confirmed:true}, guard);
-    if (generation === cloudGeneration) { state.admin.proposal = null; state.admin.notice = 'Welcome message updated.'; }
+    if (generation === cloudGeneration) { state.admin.proposal = null; state.admin.notice = 'Change saved.'; }
   }
   catch (error) { if (generation === cloudGeneration) state.admin.error = SPARK_ADMIN_ENABLED ? sparkAdminError(error) : cloudMessage(error); }
   finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
@@ -696,7 +696,13 @@ async function revokeSparkAdmin(email) {
   finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
 }
 if (SPARK_ADMIN_ENABLED) {
-  import('./spark-admin-service.js').then(({watchSparkWelcome}) => watchSparkWelcome(value => { state.publicWelcome = value; render(); }, () => {})).catch(() => {});
+  import('./spark-admin-service.js').then(({watchSparkWelcome, watchSparkAppearance}) => {
+    watchSparkWelcome(value => { state.publicWelcome = value; render(); }, () => {});
+    watchSparkAppearance(({theme, menu}) => {
+      document.documentElement.classList.toggle('spark-theme-lavender', theme === 'lavender');
+      document.documentElement.classList.toggle('spark-menu-top', menu === 'top');
+    }, () => {});
+  }).catch(() => {});
 } else if (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY) {
   import('./cloud-service.js').then(({watchPublicWelcome}) => watchPublicWelcome(value => { state.publicWelcome = value; render(); }, () => {})).catch(() => {});
 }
