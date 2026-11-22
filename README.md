@@ -7,9 +7,14 @@ A native Android rewrite of **Chatbox** (`Saira / Chatbox`) built with Kotlin, J
 - **Lavender Login & Bilingual Greeting**: `বাংলা (BD)` / `English (US)` toggle, Google Sign-In via Jetpack Credential Manager, and Guest Demo mode.
 - **Demo Conversations**: Local sample chats (`Saira` offline Bengali/English guide, `Maya Rahman`, `Arif Hasan`, `Nora Ahmed`, `The good people`) persisted in DataStore, with search, emoji insertion, and adaptive 1/2/3-pane layouts.
 - **Live Chats (Firestore)**: Real-time 1:1 conversations (`profiles`, `conversations`, `messages`, `userBlocks`) with Chatbox ID sharing, consent-based message requests (`pending` / `active` / `closed`), server pagination (`Load earlier messages`), per-conversation in-memory drafts, and peer blocking.
+- **Push Notifications (FCM)**: Android client registers device FCM tokens in owner-private `userFcmTokens/{ownerId}/devices/{deviceId}`, requests `POST_NOTIFICATIONS` on Android 13+, suppresses foreground banners for the active open thread, and deep-links tapped notifications into the conversation.
 - **Saira AI (Firebase AI Logic)**: Streaming Q&A grounded in curated Chatbox app knowledge using `gemini-3.8-flash` and Firebase App Check.
 - **Calls (Planned)**: Orbital calling preview screen linking back to active conversations.
 - **Spark Admin Studio**: Owner/delegate controls secured by Firestore security rules and recent Google re-authentication (`welcome:`, `theme: lavender/default`, `menu: top/bottom`, and Gmail delegation).
+
+## Backend Push Dispatch Setup (Firebase Console)
+
+Because Cloud Functions / FCM server triggers cannot be provisioned automatically from this environment, deploy a Cloud Function (using Firebase Admin SDK) in your Firebase project triggered on new documents in `conversations/{conversationId}/messages/{messageId}` (on the named Firestore database) to look up recipient device tokens in `userFcmTokens/{recipientUid}/devices` and send FCM messages containing `conversationId`, `senderId`, `senderName`, and `body`.
 
 ## Security Rules & Testing
 

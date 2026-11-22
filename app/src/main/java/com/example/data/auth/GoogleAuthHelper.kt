@@ -165,10 +165,16 @@ suspend fun reauthenticateCurrentGoogleUser(
 fun signOutUser(
     credentialManager: CredentialManager,
     scope: CoroutineScope,
+    onBeforeSignOut: suspend () -> Unit = {},
     onSignOutComplete: () -> Unit = {}
 ) {
     scope.launch {
         withContext(NonCancellable) {
+            try {
+                onBeforeSignOut()
+            } catch (e: Exception) {
+                Log.w(TAG, "Pre-signout cleanup failed: ${e.message}")
+            }
             try {
                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {

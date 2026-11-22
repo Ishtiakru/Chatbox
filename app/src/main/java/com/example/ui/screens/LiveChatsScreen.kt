@@ -1,8 +1,12 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +48,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -64,6 +70,7 @@ import com.example.R
 import com.example.data.model.Conversation
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
+import com.example.notifications.NotificationHelper
 import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.SignInRequiredCard
@@ -318,6 +325,17 @@ private fun LiveListPane(
 ) {
     val context = LocalContext.current
     var privacyExpanded by rememberSaveable { mutableStateOf(false) }
+    var notificationsGranted by rememberSaveable {
+        mutableStateOf(NotificationHelper.hasNotificationPermission(context))
+    }
+    var notificationBannerDismissed by rememberSaveable { mutableStateOf(false) }
+    var notificationDeniedNotice by rememberSaveable { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationsGranted = granted
+        notificationDeniedNotice = !granted
+    }
 
     val conversations = (conversationsState as? UiState.Success)?.data.orEmpty()
     val query = threadState.searchQuery.trim().lowercase()
@@ -379,6 +397,72 @@ private fun LiveListPane(
         )
 
         Spacer(modifier = Modifier.height(10.dp))
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !notificationsGranted &&
+            !notificationBannerDismissed
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.NotificationsActive,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (notificationDeniedNotice) {
+                                "Notifications are blocked. Enable them in Android Settings to get new message alerts."
+                            } else {
+                                "Turn on push notifications to be alerted when a new message arrives."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { notificationBannerDismissed = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("live_dismiss_notifications_button")
+                        ) {
+                            Text("Not now")
+                        }
+                        if (!notificationDeniedNotice) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Button(
+                                onClick = {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("live_enable_notifications_button")
+                            ) {
+                                Text("Enable")
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         if (threadState.pendingNotice) {
             ChatboxNoticeBanner(

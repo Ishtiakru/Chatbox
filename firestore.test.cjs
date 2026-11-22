@@ -301,3 +301,62 @@ test("Spark Admin enforces verified Google owner, blocks spoofed email, and supp
     updatedAt: new Date(Date.now() - 50),
   }));
 });
+
+test("FCM device tokens are private to the owner and validate token payload", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const deviceId = "device_sha256_abc123";
+  const validPayload = {
+    token: "fcm_sample_token_value_123456",
+    platform: "android",
+    updatedAt: new Date(Date.now() - 1000),
+  };
+
+  // Unauthenticated denied
+  await assertFails(unauthDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).get());
+  await assertFails(unauthDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set(validPayload));
+
+  // Owner create, update, get, list succeed
+  await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set(validPayload));
+  await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set({
+    token: "fcm_rotated_token_value_7890",
+    platform: "android",
+    updatedAt: new Date(Date.now() - 500),
+  }));
+  await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).get());
+  await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").get());
+
+  // Cross-user read, list, write, and delete denied
+  await assertFails(bobDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).get());
+  await assertFails(bobDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").get());
+  await assertFails(bobDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set(validPayload));
+  await assertFails(bobDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).delete());
+
+  // Invalid payloads rejected (empty token, wrong platform, future timestamp, extra field)
+  await assertFails(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set({
+    token: "",
+    platform: "android",
+    updatedAt: new Date(Date.now() - 1000),
+  }));
+  await assertFails(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set({
+    token: "valid_token",
+    platform: "ios",
+    updatedAt: new Date(Date.now() - 1000),
+  }));
+  await assertFails(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set({
+    token: "valid_token",
+    platform: "android",
+    updatedAt: new Date(Date.now() + 60000),
+  }));
+  await assertFails(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).set({
+    token: "valid_token",
+    platform: "android",
+    updatedAt: new Date(Date.now() - 1000),
+    extra: true,
+  }));
+
+  // Owner delete succeeds
+  await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).delete());
+});
+

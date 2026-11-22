@@ -187,6 +187,28 @@
         }
       },
       "required": ["value", "updatedBy", "updatedAt"]
+    },
+    "UserFcmDevice": {
+      "title": "UserFcmDevice",
+      "description": "Owner-private Firebase Cloud Messaging registration token for push notifications on an Android device.",
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "FCM registration token (1..512 chars)."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["android"],
+          "description": "Client platform identifier."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["token", "platform", "updatedAt"]
     }
   },
   "firestore": {
@@ -221,6 +243,10 @@
     "/settings/{appearance}": {
       "schema": { "$ref": "#/entities/SparkAppearanceSetting" },
       "description": "Bounded appearance settings (sparkTheme and sparkMenu)."
+    },
+    "/userFcmTokens/{ownerId}/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/UserFcmDevice" },
+      "description": "Owner-private FCM device tokens used by backend push dispatchers."
     }
   }
 }

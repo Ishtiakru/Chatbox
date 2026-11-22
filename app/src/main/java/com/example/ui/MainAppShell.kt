@@ -33,6 +33,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -73,6 +74,8 @@ import com.example.data.model.SparkAppearance
 import com.example.data.repository.DemoPreferencesRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.SparkAdminRepository
+import com.example.notifications.ActiveConversationTracker
+import com.example.notifications.FcmTokenRepository
 import com.example.ui.components.AuthErrorDialog
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.screens.AdminScreen
@@ -87,6 +90,7 @@ import com.example.ui.theme.ChatboxTheme
 import com.example.ui.viewmodel.DemoChatViewModel
 import com.example.ui.viewmodel.DemoModal
 import com.example.ui.viewmodel.LiveChatViewModel
+import com.example.ui.viewmodel.LiveScreenMode
 import com.example.ui.viewmodel.SairaAiViewModel
 import com.example.ui.viewmodel.SparkAdminViewModel
 import com.google.firebase.Firebase
@@ -126,7 +130,10 @@ private val appNavTabs = listOf(
 )
 
 @Composable
-fun ChatboxAppRoot() {
+fun ChatboxAppRoot(
+    pendingConversationId: String? = null,
+    onConsumePendingConversation: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
@@ -195,6 +202,9 @@ fun ChatboxAppRoot() {
             signOutUser(
                 credentialManager = credentialManager,
                 scope = scope,
+                onBeforeSignOut = {
+                    FcmTokenRepository(context.applicationContext).unregisterCurrentToken()
+                },
                 onSignOutComplete = {
                     authLoading = false
                 }
@@ -254,12 +264,18 @@ fun ChatboxAppRoot() {
             val appearance by adminViewModel.appearance.collectAsStateWithLifecycle()
             val welcomeBanner by adminViewModel.welcomeBanner.collectAsStateWithLifecycle()
 
+            LaunchedEffect(signedInUser.uid) {
+                FcmTokenRepository(context.applicationContext).syncCurrentToken()
+            }
+
             ChatboxTheme(lavenderAppearance = appearance.theme == "lavender") {
                 AuthenticatedAppShell(
                     user = signedInUser,
                     appearance = appearance,
                     welcomeBanner = welcomeBanner,
                     authLoading = authLoading,
+                    pendingConversationId = pendingConversationId,
+                    onConsumePendingConversation = onConsumePendingConversation,
                     demoViewModel = demoViewModel,
                     sairaAiViewModel = sairaAiViewModel,
                     liveViewModel = liveViewModel,
@@ -288,6 +304,8 @@ private fun AuthenticatedAppShell(
     appearance: SparkAppearance,
     welcomeBanner: String,
     authLoading: Boolean,
+    pendingConversationId: String?,
+    onConsumePendingConversation: () -> Unit,
     demoViewModel: DemoChatViewModel,
     sairaAiViewModel: SairaAiViewModel,
     liveViewModel: LiveChatViewModel,
@@ -300,6 +318,7 @@ private fun AuthenticatedAppShell(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val isAdminTab = backStackEntry?.destination?.hasRoute<AdminRoute>() == true
+    val isLiveTab = backStackEntry?.destination?.hasRoute<LiveRoute>() == true
 
     val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
     val aiUiState by sairaAiViewModel.uiState.collectAsStateWithLifecycle()
@@ -309,6 +328,25 @@ private fun AuthenticatedAppShell(
     val threadState by liveViewModel.threadState.collectAsStateWithLifecycle()
     val profileReady by liveViewModel.profileReady.collectAsStateWithLifecycle()
     val adminUiState by adminViewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(pendingConversationId) {
+        if (!pendingConversationId.isNullOrBlank()) {
+            navigateToTab(navController, LiveRoute)
+            liveViewModel.selectConversation(pendingConversationId)
+            onConsumePendingConversation()
+        }
+    }
+
+    DisposableEffect(isLiveTab, threadState.selectedId, threadState.screen) {
+        ActiveConversationTracker.isLiveChatsVisible =
+            isLiveTab && threadState.screen == LiveScreenMode.THREAD
+        ActiveConversationTracker.activeConversationId =
+            if (ActiveConversationTracker.isLiveChatsVisible) threadState.selectedId else null
+        onDispose {
+            ActiveConversationTracker.isLiveChatsVisible = false
+            ActiveConversationTracker.activeConversationId = null
+        }
+    }
 
     LaunchedEffect(user.uid, isAdminTab, adminUiState.status) {
         if (isAdminTab && adminUiState.status == AdminAuthStatus.IDLE) {

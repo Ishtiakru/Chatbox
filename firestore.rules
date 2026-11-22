@@ -47,6 +47,17 @@ service cloud.firestore {
         && data.createdAt <= request.time;
     }
 
+    function isValidFcmDevice(data) {
+      return data.keys().hasAll(['token', 'platform', 'updatedAt'])
+        && data.keys().hasOnly(['token', 'platform', 'updatedAt'])
+        && data.token is string
+        && data.token.size() > 0
+        && data.token.size() <= 512
+        && data.platform == 'android'
+        && data.updatedAt is timestamp
+        && data.updatedAt <= request.time;
+    }
+
     function isValidProfile(data, uid) {
       return data.keys().hasAll(['uid', 'displayName'])
         && data.keys().hasOnly(['uid', 'displayName'])
@@ -180,6 +191,25 @@ service cloud.firestore {
         && isValidUserBlock(incoming());
       allow delete: if isSignedIn() && isValidId(ownerId) && isValidId(blockedId) && request.auth.uid == ownerId;
       allow update: if false;
+    }
+
+    match /userFcmTokens/{ownerId}/devices/{deviceId} {
+      allow get: if isSignedIn()
+        && isValidId(ownerId)
+        && isValidId(deviceId)
+        && request.auth.uid == ownerId;
+      allow list: if isSignedIn()
+        && isValidId(ownerId)
+        && request.auth.uid == ownerId;
+      allow create, update: if isSignedIn()
+        && isValidId(ownerId)
+        && isValidId(deviceId)
+        && request.auth.uid == ownerId
+        && isValidFcmDevice(incoming());
+      allow delete: if isSignedIn()
+        && isValidId(ownerId)
+        && isValidId(deviceId)
+        && request.auth.uid == ownerId;
     }
 
     match /conversations/{conversationId} {
