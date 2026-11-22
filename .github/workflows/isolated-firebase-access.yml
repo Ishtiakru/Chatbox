@@ -83,6 +83,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -118,6 +119,7 @@ jobs:
           print('Permission lookup only; no Firebase rules or resources were changed.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -162,3 +164,34 @@ jobs:
               print('::warning::Published rules differ from the prepared two-account rules even after ignoring whitespace and comments. The differences require review before relying on the rules.')
           print('Read-only comparison only; no rules or resources were changed.')
           PY
+      - name: Read isolated Android App Check configuration (no changes)
+        if: ${{ contains(github.event.head_commit.message, '[appcheck-inspect]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, subprocess, urllib.error, urllib.request
+          token = subprocess.run(['gcloud','auth','print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          root = 'https://firebaseappcheck.googleapis.com/v1/projects/1012186851732/'
+          checks = [
+              ('Play Integrity', 'apps/1:1012186851732:android:060ca550459fca7177c781/playIntegrityConfig'),
+              ('Firebase AI App Check', 'services/firebaseml.googleapis.com'),
+          ]
+          for label, path in checks:
+              req = urllib.request.Request(root + path, headers={'Authorization':'Bearer '+token})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      data = json.load(response)
+                  if label == 'Play Integrity':
+                      print('Play Integrity config: accessible')
+                      ttl = data.get('tokenTtl')
+                      if isinstance(ttl, str): print('Token TTL:', ttl)
+                  else:
+                      print('Firebase AI App Check enforcement:', data.get('enforcementMode','not reported'))
+              except urllib.error.HTTPError as error:
+                  print(label + ': unavailable (HTTP ' + str(error.code) + '); no response details printed')
+              except (urllib.error.URLError, ValueError):
+                  print(label + ': unavailable; no response details printed')
+          del token
+          print('Read-only inspection; no tokens, debug tokens or configuration details printed and no settings changed.')
+          PYCODE
