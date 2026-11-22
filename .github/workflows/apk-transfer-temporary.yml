@@ -1,0 +1,33 @@
+name: Temporary transfer of test APK
+on:
+  push:
+    branches: [arena/66dec666-chatbox]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  transfer:
+    if: contains(github.event.head_commit.message, '[transfer-signin-apk]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chatbox-isolated-test-debug-apk
+          run-id: 45020772668
+          github-token: ${{ github.token }}
+          path: output
+      - name: Transfer APK chunks via temporary Git blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          (cd output && sha256sum -c SHA256SUMS.txt)
+          mkdir chunks
+          split -b 3500000 -d -a 3 output/Chatbox-Test-debug.apk chunks/part-
+          cp output/certificate.txt chunks/certificate.txt
+          cp output/SHA256SUMS.txt chunks/SHA256SUMS.txt
+          for file in chunks/*; do
+            python3 -c 'import base64,json,sys; print(json.dumps({"content":base64.b64encode(open(sys.argv[1],"rb").read()).decode(),"encoding":"base64"}))' "$file" > payload.json
+            sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input payload.json --jq .sha)
+            echo "::notice title=APK transfer::$(basename "$file") $sha"
+          done
