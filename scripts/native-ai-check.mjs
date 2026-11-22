@@ -19,12 +19,12 @@ async function load(file, dependencies) {
   await module.evaluate();
   return module.namespace;
 }
-function mocks({enabled=true, platform='android', ask} = {}) {
+function mocks({enabled=true, platform='android', ask, propose} = {}) {
   const calls=[];
-  const plugin={ask:ask || (async payload => { calls.push(payload); return {answer:'hello'}; })};
+  const plugin={ask:ask || (async payload => { calls.push(payload); return {answer:'hello'}; }), proposeAdminChange:propose || (async payload => { calls.push(payload); return {answer:'{\"action\":\"set_menu\",\"value\":\"top\"}'}; })};
   const dependencies={
     '@capacitor/core': {Capacitor:{isNativePlatform:()=>platform !== 'web',getPlatform:()=>platform},registerPlugin:()=>plugin},
-    './feature-flags.js': {ANDROID_AI_LAB_ENABLED:enabled},
+    './feature-flags.js': {ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:enabled},
     'firebase/ai': {getAI:()=>{},getGenerativeModel:()=>{},GoogleAIBackend:class {}},
     './firebase.js': {app:{}}, './app-check.js': {ensureAppCheck:()=>{}},
     './saira-ai-adapter.js': {askSairaWithModel:()=>{}},
@@ -66,11 +66,11 @@ test('native AI rejects empty responses, limits length and propagates failure', 
   await assert.rejects(blocked.askFirebaseSaira('hi'), /App Check is unavailable/);
 });
 
-async function views({enabled=true,native=true}={}) {
+async function views({enabled=true,native=true,adminAI=false}={}) {
   return load('../src/cloud-views.js',{
     './knowledge.js': {escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')},
-    '@capacitor/core': {Capacitor:{isNativePlatform:()=>native}},
-    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
+    '@capacitor/core': {Capacitor:{isNativePlatform:()=>native,getPlatform:()=>native ? 'android' : 'web'}},
+    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:adminAI,ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
   });
 }
 
@@ -112,4 +112,44 @@ test('private Spark dashboard keeps an empty request field and confirmation cont
   assert.match(proposed, /data-action="admin-apply"/);
   const denied = view.sparkAdminControls({...state,admin:{...admin,status:'forbidden'}});
   assert.doesNotMatch(denied, /id="admin-command"/);
+});
+
+test('dashboard shows honest analytics and retains security section state', async () => {
+  const view = await views();
+  const state = {user:{uid:'mock'},authLoading:false,admin:{status:'authorized',role:'owner',command:'',target:'',delegations:[],analyticsOpen:true,securityOpen:true}};
+  const html = view.sparkAdminControls(state);
+  assert.match(html, /class="dashboard-prompt"/);
+  assert.match(html, /data-admin-analytics open/);
+  assert.match(html, /Analytics is not connected in this build/);
+  assert.match(html, /data-admin-security open/);
+  assert.match(html, /data-action="admin-apply"|id="admin-command-form"/);
+  assert.doesNotMatch(view.sparkAdminControls({...state,admin:{...state.admin,status:'forbidden'}}),/data-admin-analytics|id="admin-command-form"/);
+});
+
+
+test('multilingual admin bridge sends only the request on enabled Android', async () => {
+  const {dependencies,calls}=mocks();
+  const service=await load('../src/firebase-ai-service.js',dependencies);
+  assert.equal(await service.proposeNativeAdminChange('  উপরে মেনু  '), '{"action":"set_menu","value":"top"}');
+  assert.equal(calls.length,1); assert.deepEqual(Object.keys(calls[0]),['request']);
+  assert.equal(calls[0].request,'উপরে মেনু');
+  for (const value of ['',null,'x'.repeat(1001)]) await assert.rejects(service.proposeNativeAdminChange(value), /Invalid/);
+  assert.equal(calls.length,1);
+  for (const options of [{enabled:false},{platform:'ios'},{platform:'web'}]) {
+    const disabled=mocks(options); const other=await load('../src/firebase-ai-service.js',disabled.dependencies);
+    await assert.rejects(other.proposeNativeAdminChange('test'), /not configured/);
+    assert.equal(disabled.calls.length,0);
+  }
+  const oversized=await load('../src/firebase-ai-service.js',mocks({propose:async()=>({answer:'x'.repeat(2049)})}).dependencies);
+  await assert.rejects(oversized.proposeNativeAdminChange('test'),/unavailable/);
+});
+
+
+test('experimental multilingual admin discloses the provider and requests review', async () => {
+  const view = await views({adminAI:true});
+  const html = view.sparkAdminControls({user:{uid:'mock'},admin:{status:'authorized',role:'delegate',command:'',target:'',delegations:[]}});
+  assert.match(html,/Google Gemini/); assert.match(html,/Do not include sensitive information/);
+  assert.match(html,/confirmation required/);
+  const web = await views({adminAI:true,native:false});
+  assert.doesNotMatch(web.sparkAdminControls({user:{uid:'mock'},admin:{status:'authorized',role:'delegate',command:'',target:'',delegations:[]}}),/Unrecognized requests go to Google Gemini/);
 });

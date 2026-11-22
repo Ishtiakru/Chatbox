@@ -19,3 +19,11 @@ export const ADMIN_BACKEND_ENABLED = import.meta.env.VITE_ENABLE_ADMIN_BACKEND =
 // Review-only. Requires a deployed, authorized backend and a private Drive file.
 export const SOURCE_HANDOVER_ENABLED = ADMIN_BACKEND_ENABLED && import.meta.env.VITE_ENABLE_SOURCE_HANDOVER === 'true';
 export const APP_CHECK_SITE_KEY = import.meta.env.VITE_APP_CHECK_SITE_KEY || '';
+
+// Isolated test only; requires the separately reviewed Spark handover rules and
+// trusted provisioning. A feature flag is not an authorization boundary.
+export const SPARK_SOURCE_HANDOVER_ENABLED = SPARK_ADMIN_ENABLED && import.meta.env.VITE_CHATBOX_TEST_MODE === 'true' && import.meta.env.VITE_ENABLE_SPARK_SOURCE_HANDOVER === 'true';
+
+// Multilingual interpretation is an opt-in, isolated Android-only experiment.
+// AI suggestions are restricted to existing settings and need confirmation.
+export const MULTILINGUAL_ADMIN_LAB_ENABLED = SPARK_ADMIN_ENABLED && ANDROID_AI_LAB_ENABLED && SAIRA_PROVIDER === 'firebase-ai' && import.meta.env.VITE_ENABLE_EXPERIMENTAL_MULTILINGUAL_ADMIN === 'true';

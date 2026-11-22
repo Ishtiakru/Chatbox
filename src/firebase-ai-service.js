@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { ANDROID_AI_LAB_ENABLED } from './feature-flags.js';
+import { ANDROID_AI_LAB_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED } from './feature-flags.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'firebase/ai';
 import { app } from './firebase.js';
 import { ensureAppCheck } from './app-check.js';
@@ -31,4 +31,16 @@ export async function askFirebaseSaira(question) {
     });
   }
   return askSairaWithModel(question, model);
+}
+
+// Experimental Android-only interpretation. It returns untrusted text; callers
+// must validate the proposal and ask for confirmation before any write.
+export async function proposeNativeAdminChange(request) {
+  if (!MULTILINGUAL_ADMIN_LAB_ENABLED || !Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') throw new Error('Admin AI is not configured.');
+  const text = typeof request === 'string' ? request.trim() : '';
+  if (!text || text.length > 1000) throw new Error('Invalid request.');
+  const native = registerPlugin('NativeSaira');
+  const result = await native.proposeAdminChange({request:text});
+  if (typeof result?.answer !== 'string' || !result.answer.trim() || result.answer.length > 2048) throw new Error('AI service is unavailable.');
+  return result.answer;
 }

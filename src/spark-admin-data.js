@@ -73,6 +73,13 @@ export function createSparkAdminService(db, ops = defaultOps) {
     const stopMenu = watch('sparkMenu', 'menu', ['bottom','top']);
     return () => { stopTheme(); stopMenu(); };
   }
+  // A server read enforces current Firestore authorization; never use cached
+  // data for this private record. No client operation can provision it.
+  async function getSparkSourceHandover() {
+    const snap = await getDocFromServer(doc(db, 'sparkPrivate', 'sourceHandover'));
+    if (!snap.exists()) throw new Error('Source handover is not configured.');
+    return snap.data();
+  }
   async function listSparkDelegations() {
     const snap = await getDocsFromServer(query(collection(db,'sparkDelegations'),limit(100)));
     return snap.docs.map(item => ({email:item.id,status:item.data().status}));
@@ -108,5 +115,5 @@ export function createSparkAdminService(db, ops = defaultOps) {
     }, fail);
   }
 
-  return {getSparkAdminStatus,applySparkWelcome,applySparkAppearance,watchSparkAppearance,listSparkDelegations,inviteSparkDelegate,revokeSparkDelegate,acceptSparkDelegation,watchSparkWelcome};
+  return {getSparkAdminStatus,applySparkWelcome,applySparkAppearance,watchSparkAppearance,getSparkSourceHandover,listSparkDelegations,inviteSparkDelegate,revokeSparkDelegate,acceptSparkDelegation,watchSparkWelcome};
 }

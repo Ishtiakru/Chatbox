@@ -22,7 +22,10 @@
     "test:rate": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/message-throttle-rules.js\"",
     "generate:request-rate-rules": "node scripts/generate-request-rate-rules.mjs",
     "test:request-rate:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"node --test --test-concurrency=1 integration/request-throttle-rules.js\"",
-    "test:request-rate": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/request-throttle-rules.js\""
+    "test:request-rate": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/request-throttle-rules.js\"",
+    "generate:spark-source-rules": "node scripts/generate-spark-source-rules.mjs",
+    "test:spark-source:alternate": "firenook emulators:exec --config firebase.emulator.json --only firestore --project demo-chatbox --plain --no-diagnostics \"node --test --test-concurrency=1 integration/spark-source-rules.js\"",
+    "test:spark-source": "npx --yes firebase-tools@15.37.0 emulators:exec --config firebase.emulator.json --project demo-chatbox --only firestore \"node --test --test-concurrency=1 integration/spark-source-rules.js\""
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "8.6.0",

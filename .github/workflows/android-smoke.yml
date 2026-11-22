@@ -3,7 +3,7 @@ name: Android diagnostic compile smoke test
 on:
   push:
     branches:
-      - arena/f649c1bd-chatbox
+      - arena/66dec666-chatbox
 
 permissions:
   contents: read

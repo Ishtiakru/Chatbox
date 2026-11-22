@@ -1,12 +1,12 @@
 import { Capacitor } from '@capacitor/core';
 import './style.css';
-import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot } from 'lucide';
-const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot };
+import { createIcons, MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot, Menu, ChartNoAxesCombined, ChartNoAxesColumn, FilePenLine, ChevronDown } from 'lucide';
+const icons = { MessageCircle, Phone, Shield, CircleHelp, SquarePen, Search, ArrowLeft, Video, MoreHorizontal, Sparkles, CheckCheck, Plus, Smile, ArrowUp, LockKeyhole, Ellipsis, ArrowUpRight, PhoneCall, ArrowRight, ShieldCheck, Lock, Info, Users, History, Settings, X, Home, Bot, Menu, ChartNoAxesCombined, ChartNoAxesColumn, FilePenLine, ChevronDown };
 import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
 import { authErrorMessage } from './auth-errors.js';
-import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED } from './feature-flags.js';
+import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED, SPARK_SOURCE_HANDOVER_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED } from './feature-flags.js';
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
@@ -19,6 +19,7 @@ import { createSlowOperationNotice } from './slow-operation-notice.js';
 import { createLiveDrafts } from './live-drafts.js';
 import { createAccountOperationGuard } from './account-operation-guard.js';
 import { changeAdminTarget } from './admin-target-confirmation.js';
+import { validateSourceHandover } from './source-handover.js';
 import { canUseCallPage, createNativeCallLifecycle } from './call-page-lifecycle.js';
 
 const contacts = [
@@ -89,15 +90,15 @@ function calls() {
 }
 function sourceHandoverView() {
  const a = state.admin;
- if (!SOURCE_HANDOVER_ENABLED || SPARK_ADMIN_ENABLED || !APP_CHECK_SITE_KEY || a.status !== 'authorized') return '';
- return `<section class="source-handover"><h3>Source code handover</h3><p>Only authorized administrators can request this QR. The linked file must also be shared only with trusted accounts.</p><p>Updates appear only after the source archive is refreshed; automatic updates are not yet configured.</p><button class="account-button" type="button" data-action="${a.sourceQr ? 'source-qr-close' : 'source-qr-open'}" ${a.sourceQrBusy ? 'disabled' : ''}>${a.sourceQrBusy ? 'Loading…' : a.sourceQr ? 'Hide QR' : 'Show source QR'}</button>${a.sourceQrError ? `<p role="alert">${e(a.sourceQrError)}</p>` : ''}${a.sourceQr ? `<img class="source-handover-qr" src="${e(a.sourceQr)}" alt="QR code for the source code archive">${a.sourceCommit ? `<p>Recorded commit (may be outdated): ${e(a.sourceCommit)}</p>` : '<p>Archive version is unavailable.</p>'}` : ''}</section>`;
+ if (a.status !== 'authorized' || !(SPARK_ADMIN_ENABLED ? SPARK_SOURCE_HANDOVER_ENABLED : SOURCE_HANDOVER_ENABLED && APP_CHECK_SITE_KEY)) return '';
+ return `<section class="source-handover"><div class="qr-frame">${a.sourceQr ? `<img class="source-handover-qr" src="${e(a.sourceQr)}" alt="QR code for the private source archive">` : `<div class="qr-empty">${icon('lock-keyhole')}<span>Private source archive</span></div>`}</div><button class="qr-button" type="button" data-action="${a.sourceQr ? 'source-qr-close' : 'source-qr-open'}" ${a.sourceQrBusy ? 'disabled' : ''}>${a.sourceQrBusy ? 'Loading…' : a.sourceQr ? 'Hide QR' : 'Show source QR'}</button>${a.sourceQrError ? `<p role="alert">${e(a.sourceQrError)}</p>` : ''}${a.sourceQr ? `<p>${a.sourceCommit ? `Recorded commit (may be outdated): ${e(a.sourceCommit)}` : 'Archive version is unavailable.'} Drive access is required.</p>` : '<p>Available only to authorized admins. Archive updates are not automatic.</p>'}</section>`;
 }
 function admin() {
  const authorized = state.admin.status === 'authorized' && (SPARK_ADMIN_ENABLED || (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY));
- const qr = authorized ? (SOURCE_HANDOVER_ENABLED && !SPARK_ADMIN_ENABLED && APP_CHECK_SITE_KEY
+ const qr = authorized ? ((SPARK_ADMIN_ENABLED ? SPARK_SOURCE_HANDOVER_ENABLED : SOURCE_HANDOVER_ENABLED && APP_CHECK_SITE_KEY)
    ? sourceHandoverView()
-   : `<div class="admin-qr-unavailable" role="status">${icon('lock-keyhole')}<span>Source QR is not configured</span></div>`) : '';
- return `<main class="main feature-page admin-page"><header class="dashboard-header"><span class="dashboard-menu">${icon('shield-check')}</span><h2>Dashboard</h2><span class="dashboard-private">PRIVATE</span></header><div class="dashboard-content">${authorized ? `<div class="dashboard-qr">${qr}</div>` : ''}<section class="dashboard-panel">${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}</section></div></main>`;
+   : `<div class="admin-qr-unavailable qr-frame" role="status">${icon('lock-keyhole')}<span>Source QR is not configured</span></div>`) : '';
+ return `<main class="main feature-page admin-page"><header class="dashboard-header"><details class="dashboard-menu"><summary aria-label="Open navigation">${icon('menu')}</summary><nav aria-label="App navigation"><button type="button" data-view="chats">Home</button><button type="button" data-view="live">Chats</button><button type="button" data-view="calls">Calls</button><button type="button" data-view="ai">Saira AI</button></nav></details><h2>Dashboard</h2><span class="dashboard-private">PRIVATE</span></header><div class="dashboard-content">${authorized ? `<div class="dashboard-qr">${qr}</div>` : ''}<section class="dashboard-panel">${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}</section></div><nav class="dashboard-nav" aria-label="Dashboard navigation"><button type="button" class="active" data-action="dashboard-top" aria-label="Dashboard home">${icon('home')}</button><button type="button" data-action="dashboard-analytics" aria-label="Analytics" ${authorized ? '' : 'disabled'}>${icon('chart-no-axes-column')}</button><button type="button" data-action="dashboard-security" aria-label="Security" ${authorized ? '' : 'disabled'}>${icon('shield-check')}</button></nav></main>`;
 }
 function modal() {
  if (!state.modal) return '';
@@ -124,6 +125,7 @@ function render(scroll = false) {
  const selectionEnd = document.activeElement?.selectionEnd;
  const liveScrollTop = document.querySelector('#live-messages')?.scrollTop;
  const liveListScrollTop = document.querySelector('.live-list')?.scrollTop;
+ const dashboardScrollTop = document.querySelector('.dashboard-content')?.scrollTop;
  if (!state.user && !state.loginGuest) {
    root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}${loginScreen()}${modal()}`;
    createIcons({ icons });
@@ -135,6 +137,8 @@ function render(scroll = false) {
  if (liveMessages && liveScrollTop != null) liveMessages.scrollTop = liveScrollTop;
  const liveList = document.querySelector('.live-list');
  if (liveList && liveListScrollTop != null) liveList.scrollTop = liveListScrollTop;
+ const dashboard = document.querySelector('.dashboard-content');
+ if (dashboard && dashboardScrollTop != null) dashboard.scrollTop = dashboardScrollTop;
  // The app rerenders its DOM; reattach current streams without persisting them.
  for (const [id, stream] of [['call-local', state.live.call?.localStream], ['call-remote', state.live.call?.remoteStream]]) {
    const element = document.getElementById(id);
@@ -180,6 +184,11 @@ root.addEventListener('click', event => {
  else if (action === 'sign-in') { beginSignIn(); }
  else if (action === 'sign-out') { beginSignOut(); }
  else if (action === 'admin-check') { checkAdmin(); }
+ else if (action === 'dashboard-top') { document.querySelector('.dashboard-content')?.scrollTo({top:0,behavior:'smooth'}); }
+ else if (action === 'dashboard-analytics' || action === 'dashboard-security') {
+   const details = document.querySelector(action === 'dashboard-analytics' ? '[data-admin-analytics]' : '[data-admin-security]');
+   if (details) { details.open = true; details.scrollIntoView({behavior:'smooth',block:'start'}); details.querySelector('summary')?.focus({preventScroll:true}); }
+ }
  else if (action === 'source-qr-open') { openSourceQr(); }
  else if (action === 'source-qr-close') { state.admin.sourceQr = ''; state.admin.sourceCommit = ''; render(); }
  else if (action === 'spark-reauth') { reauthenticateSparkAdmin(); }
@@ -199,7 +208,7 @@ root.addEventListener('input', event => {
  if (event.target.id === 'live-peer-input') state.live.peerDraft = event.target.value;
  if (event.target.id === 'live-search') { state.live.search = event.target.value; render(); }
  if (event.target.id === 'ai-input') state.ai.draft = event.target.value;
- if (event.target.id === 'admin-command') { state.admin.command = event.target.value; state.admin.proposal = null; }
+ if (event.target.id === 'admin-command') { state.admin.command = event.target.value; state.admin.proposalCommand = ''; state.admin.proposalInput = ''; if (state.admin.proposal) { state.admin.proposal = null; render(); } }
  if (event.target.id === 'admin-target' && changeAdminTarget(state.admin, event.target.value)) {
    // Avoid a full rerender while typing, but immediately reflect invalidated
    // confirmation in both the checkbox and submit button.
@@ -214,6 +223,7 @@ root.addEventListener('input', event => {
 });
 root.addEventListener('toggle', event => {
  if (event.target.matches?.('[data-admin-security]')) state.admin.securityOpen = event.target.open;
+ if (event.target.matches?.('[data-admin-analytics]')) state.admin.analyticsOpen = event.target.open;
 }, true);
 root.addEventListener('change', event => {
  if (event.target.id === 'login-language' && ['bn', 'en'].includes(event.target.value)) { state.loginLanguage = event.target.value; render(); }
@@ -633,18 +643,21 @@ async function checkAdmin() {
   finally { if (generation === cloudGeneration) render(); }
 }
 async function openSourceQr() {
-  if (!SOURCE_HANDOVER_ENABLED || SPARK_ADMIN_ENABLED || !APP_CHECK_SITE_KEY || !state.user || state.admin.status !== 'authorized' || state.admin.sourceQrBusy) return;
+  if (!(SPARK_ADMIN_ENABLED ? SPARK_SOURCE_HANDOVER_ENABLED : SOURCE_HANDOVER_ENABLED && APP_CHECK_SITE_KEY) || !state.user || state.admin.status !== 'authorized' || state.admin.sourceQrBusy) return;
   const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation);
   state.admin.sourceQrBusy = true; state.admin.sourceQrError = ''; state.admin.sourceQr = ''; render();
   try {
-    const data = await cloudCall('getSourceHandover', {}, guard);
-    const url = new URL(data?.url);
-    if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com' || url.username || url.password || !/^\/file\/d\/[A-Za-z0-9_-]+\/view$/.test(url.pathname)) throw new Error('Invalid source handover configuration.');
+    let data;
+    if (SPARK_ADMIN_ENABLED) {
+      const api = await import('./spark-admin-service.js');
+      data = await guard.run(() => api.getSparkSourceHandover());
+    } else data = await cloudCall('getSourceHandover', {}, guard);
+    const {url, commit} = validateSourceHandover(data);
     const QRCode = (await import('qrcode')).default;
-    const image = await QRCode.toDataURL(url.href, { errorCorrectionLevel: 'M', margin: 4, width: 360 });
+    const image = await QRCode.toDataURL(url, { errorCorrectionLevel: 'M', margin: 4, width: 360 });
     if (generation === cloudGeneration && state.user === user && isCurrentAuthUser(user) && state.admin.status === 'authorized') {
       state.admin.sourceQr = image;
-      state.admin.sourceCommit = typeof data.commit === 'string' && /^[a-f0-9]{40}$/.test(data.commit) ? data.commit : '';
+      state.admin.sourceCommit = commit;
     }
   } catch {
     if (generation === cloudGeneration && state.user === user) state.admin.sourceQrError = 'Source QR is unavailable or not configured. Check administrator access and try again.';
@@ -655,25 +668,41 @@ async function openSourceQr() {
 async function previewAdmin() {
   if (state.admin.status !== 'authorized' || state.admin.busy || !state.user) return;
   const command = state.admin.command.trim(); if (!command || command.length > 1000) return;
-  const generation = cloudGeneration, guard = accountGuard(state.user, generation); state.admin.busy = true; state.admin.error = ''; state.admin.notice = ''; state.admin.proposal = null; render();
+  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation);
+  state.admin.busy = true; state.admin.error = ''; state.admin.notice = ''; state.admin.proposal = null; state.admin.proposalCommand = ''; state.admin.proposalInput = ''; render();
   try {
-    const proposal = SPARK_ADMIN_ENABLED ? (await import('./spark-admin-commands.js')).parseSparkCommand(command) : (await cloudCall('previewAdminUpdate', {command}, guard))?.proposal;
-    // An async preview must not be shown for a changed command.
-    if (generation === cloudGeneration && state.admin.command.trim() === command) state.admin.proposal = proposal || {action:'unsupported'};
-  }
-  catch (error) { if (generation === cloudGeneration) state.admin.error = cloudMessage(error); }
-  finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
+    let proposal, applyCommand = command;
+    if (SPARK_ADMIN_ENABLED) {
+      const parser = await import('./spark-admin-commands.js');
+      proposal = parser.parseSparkCommand(command);
+      if (!proposal && MULTILINGUAL_ADMIN_LAB_ENABLED && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+        const [ai, validator] = await Promise.all([import('./firebase-ai-service.js'), import('./multilingual-admin.js')]);
+        const answer = await guard.run(() => ai.proposeNativeAdminChange(command));
+        const result = validator.parseMultilingualAdminProposal(answer);
+        proposal = result?.proposal; applyCommand = result?.command || '';
+      }
+    } else proposal = (await cloudCall('previewAdminUpdate', {command}, guard))?.proposal;
+    // Bind both the original input and canonical operation to this session.
+    if (generation === cloudGeneration && state.user === user && isCurrentAuthUser(user) && state.admin.status === 'authorized' && state.admin.command.trim() === command) {
+      state.admin.proposal = proposal || {action:'unsupported'};
+      state.admin.proposalCommand = applyCommand;
+      state.admin.proposalInput = command;
+    }
+  } catch (error) {
+    if (generation === cloudGeneration && state.user === user) state.admin.error = cloudMessage(error);
+  } finally { if (generation === cloudGeneration && state.user === user) { state.admin.busy = false; render(); } }
 }
 async function applyAdmin() {
-  if (state.admin.status !== 'authorized' || state.admin.busy || (!['set_welcome','set_theme','set_menu'].includes(state.admin.proposal?.action) || (!SPARK_ADMIN_ENABLED && state.admin.proposal?.action !== 'set_welcome')) || !state.user) return;
-  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation); const proposal = state.admin.proposal, command = state.admin.command; state.admin.busy = true; state.admin.error = ''; render();
+  if (state.admin.status !== 'authorized' || state.admin.busy || (!['set_welcome','set_theme','set_menu'].includes(state.admin.proposal?.action) || (!SPARK_ADMIN_ENABLED && state.admin.proposal?.action !== 'set_welcome')) || !state.user || state.admin.proposalInput !== state.admin.command.trim()) return;
+  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation);
+  const proposal = state.admin.proposal, command = state.admin.proposalCommand;
+  state.admin.busy = true; state.admin.error = ''; render();
   try {
     if (SPARK_ADMIN_ENABLED) { const api = await import('./spark-admin-service.js'); await guard.run(() => proposal.action === 'set_welcome' ? api.applySparkWelcome(user, command, true, proposal) : api.applySparkAppearance(user, command, true, proposal)); }
     else await cloudCall('applyAdminUpdate', {proposal, confirmed:true}, guard);
-    if (generation === cloudGeneration) { state.admin.proposal = null; state.admin.notice = 'Change saved.'; }
-  }
-  catch (error) { if (generation === cloudGeneration) state.admin.error = SPARK_ADMIN_ENABLED ? sparkAdminError(error) : cloudMessage(error); }
-  finally { if (generation === cloudGeneration) { state.admin.busy = false; render(); } }
+    if (generation === cloudGeneration && state.user === user) { state.admin.proposal = null; state.admin.proposalCommand = ''; state.admin.proposalInput = ''; state.admin.notice = 'Change saved.'; }
+  } catch (error) { if (generation === cloudGeneration && state.user === user) state.admin.error = SPARK_ADMIN_ENABLED ? sparkAdminError(error) : cloudMessage(error); }
+  finally { if (generation === cloudGeneration && state.user === user) { state.admin.busy = false; render(); } }
 }
 async function transferAdmin() {
   if (state.admin.status !== 'authorized' || state.admin.busy || !state.admin.confirm || !state.user) return;

@@ -3,7 +3,7 @@ name: Official local Firestore emulator tests
 on:
   push:
     branches:
-      - arena/f649c1bd-chatbox
+      - arena/66dec666-chatbox
 
 permissions:
   contents: read
@@ -40,6 +40,8 @@ jobs:
         run: npm run build
       - name: Standalone base, admin and calls candidates
         run: npm run test:rules
+      - name: Private source handover candidate
+        run: npm run test:spark-source
       - name: Same-browser fake-media call over local Auth and Firestore emulators
         id: browser_call
         continue-on-error: true
