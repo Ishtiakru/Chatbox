@@ -27,3 +27,6 @@ export const SPARK_SOURCE_HANDOVER_ENABLED = SPARK_ADMIN_ENABLED && import.meta.
 // Multilingual interpretation is an opt-in, isolated Android-only experiment.
 // AI suggestions are restricted to existing settings and need confirmation.
 export const MULTILINGUAL_ADMIN_LAB_ENABLED = SPARK_ADMIN_ENABLED && ANDROID_AI_LAB_ENABLED && SAIRA_PROVIDER === 'firebase-ai' && import.meta.env.VITE_ENABLE_EXPERIMENTAL_MULTILINGUAL_ADMIN === 'true';
+
+// Manual, local clipboard handoff only; no automatic code editing or release.
+export const CODE_REQUEST_HANDOFF_ENABLED = SPARK_ADMIN_ENABLED && import.meta.env.VITE_CHATBOX_TEST_MODE === 'true' && import.meta.env.VITE_ENABLE_CODE_REQUEST_HANDOFF === 'true';

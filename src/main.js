@@ -6,11 +6,12 @@ import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
 import { authErrorMessage } from './auth-errors.js';
-import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED, SPARK_SOURCE_HANDOVER_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED } from './feature-flags.js';
+import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, ANDROID_AI_LAB_ENABLED, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED, SPARK_SOURCE_HANDOVER_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED, CODE_REQUEST_HANDOFF_ENABLED } from './feature-flags.js';
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
 import { copyChatboxId } from './copy-chatbox-id.js';
+import { copyCodeRequest } from './code-request-handoff.js';
 import { liveIdFeedback } from './live-id-view.js';
 import { disposeLiveResources } from './live-lifecycle.js';
 import { createPeerProfileController } from './peer-profile-controller.js';
@@ -193,6 +194,7 @@ root.addEventListener('click', event => {
  else if (action === 'source-qr-close') { state.admin.sourceQr = ''; state.admin.sourceCommit = ''; render(); }
  else if (action === 'spark-reauth') { reauthenticateSparkAdmin(); }
  else if (action === 'admin-apply') { applyAdmin(); }
+ else if (action === 'copy-code-request') { copyAdminCodeRequest(); }
  else if (action === 'spark-accept') { acceptSparkAdmin(); }
  else if (action === 'back') { state.mobileChat = false; render(); }
  else if (action === 'close-modal') { if (event.target.closest('[data-modal]') && !event.target.closest('button')) return; state.modal = null; render(); }
@@ -208,7 +210,7 @@ root.addEventListener('input', event => {
  if (event.target.id === 'live-peer-input') state.live.peerDraft = event.target.value;
  if (event.target.id === 'live-search') { state.live.search = event.target.value; render(); }
  if (event.target.id === 'ai-input') state.ai.draft = event.target.value;
- if (event.target.id === 'admin-command') { state.admin.command = event.target.value; state.admin.proposalCommand = ''; state.admin.proposalInput = ''; if (state.admin.proposal) { state.admin.proposal = null; render(); } }
+ if (event.target.id === 'admin-command') { state.admin.codeRequestFeedback = ''; state.admin.command = event.target.value; state.admin.proposalCommand = ''; state.admin.proposalInput = ''; if (state.admin.proposal) { state.admin.proposal = null; render(); } }
  if (event.target.id === 'admin-target' && changeAdminTarget(state.admin, event.target.value)) {
    // Avoid a full rerender while typing, but immediately reflect invalidated
    // confirmation in both the checkbox and submit button.
@@ -336,6 +338,20 @@ async function beginSignOut() {
     state.authLoading = false;
     render();
   }
+}
+
+async function copyAdminCodeRequest() {
+  const user = state.user, generation = cloudGeneration;
+  if (!CODE_REQUEST_HANDOFF_ENABLED || !user || state.view !== 'admin' || state.admin.status !== 'authorized' || state.admin.busy) return;
+  const command = state.admin.command;
+  if (!command.trim()) { state.admin.codeRequestFeedback = 'Write a request first.'; render(); return; }
+  let clipboard;
+  try { clipboard = navigator.clipboard; } catch { /* unavailable */ }
+  // Call clipboard while the explicit user gesture is still active.
+  const copied = await copyCodeRequest(command, clipboard);
+  if (generation !== cloudGeneration || state.user !== user || !isCurrentAuthUser(user) || state.admin.status !== 'authorized' || state.admin.command !== command) return;
+  state.admin.codeRequestFeedback = copied ? 'Copied. Paste it into your Arena agent chat; it has not been sent.' : 'Could not copy. Select and copy the request manually.';
+  if (state.view === 'admin') render();
 }
 
 async function copyCurrentChatboxId() {

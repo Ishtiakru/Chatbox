@@ -66,11 +66,11 @@ test('native AI rejects empty responses, limits length and propagates failure', 
   await assert.rejects(blocked.askFirebaseSaira('hi'), /App Check is unavailable/);
 });
 
-async function views({enabled=true,native=true,adminAI=false}={}) {
+async function views({enabled=true,native=true,adminAI=false,handoff=false}={}) {
   return load('../src/cloud-views.js',{
     './knowledge.js': {escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')},
     '@capacitor/core': {Capacitor:{isNativePlatform:()=>native,getPlatform:()=>native ? 'android' : 'web'}},
-    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:adminAI,ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
+    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:adminAI,CODE_REQUEST_HANDOFF_ENABLED:handoff,ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
   });
 }
 
@@ -152,4 +152,20 @@ test('experimental multilingual admin discloses the provider and requests review
   assert.match(html,/confirmation required/);
   const web = await views({adminAI:true,native:false});
   assert.doesNotMatch(web.sparkAdminControls({user:{uid:'mock'},admin:{status:'authorized',role:'delegate',command:'',target:'',delegations:[]}}),/Unrecognized requests go to Google Gemini/);
+});
+
+
+test('manual code request handoff is gated and never claims automatic code changes', async () => {
+  const state={user:{uid:'mock'},authLoading:false,admin:{status:'authorized',role:'owner',busy:false,command:'<script>',target:'',delegations:[],codeRequestFeedback:'<img>'}};
+  const disabled=await views();
+  assert.doesNotMatch(disabled.sparkAdminControls(state), /copy-code-request/);
+  const enabled=await views({handoff:true});
+  const html=enabled.sparkAdminControls(state);
+  assert.match(html, /data-action="copy-code-request"/);
+  assert.match(html, /does not send, change code or deploy automatically/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&lt;img&gt;/);
+  assert.doesNotMatch(html, /<script>|<img>/);
+  assert.doesNotMatch(enabled.sparkAdminControls({user:null,authLoading:false,admin:{}}), /copy-code-request/);
+  assert.doesNotMatch(enabled.sparkAdminControls({...state,admin:{...state.admin,status:'forbidden'}}), /copy-code-request/);
 });
