@@ -6,6 +6,8 @@ import { app } from './firebase.js';
 import { createCallController } from './call-controller.js';
 import { createFirestoreCall, watchIncomingCalls } from './firestore-call-transport.js';
 import { createForegroundMediaDevices } from './foreground-media.js';
+import { EXPERIMENTAL_STUN_ENABLED } from './feature-flags.js';
+import { experimentalIceServers } from './call-ice-config.js';
 
 export function createBrowserCallController(onChange, isAvailable) {
   if (Capacitor.isNativePlatform()) throw new Error('Calling is not configured on Android.');
@@ -18,9 +20,9 @@ export function createBrowserCallController(onChange, isAvailable) {
     createSession: options => createFirestoreCall({
       ...options, db, conversationId:options.id,
       mediaDevices, peerFactory:config=>new RTCPeerConnection(config),
-      // No TURN relay is configured. Connectivity outside local/direct paths is
-      // not guaranteed, and candidate addresses can be exposed to the peer.
-      iceServers:[],
+      // STUN is optional and only aids address discovery. There is no TURN
+      // relay, so connectivity is not guaranteed and IPs may reach the peer.
+      iceServers:experimentalIceServers(EXPERIMENTAL_STUN_ENABLED),
     }),
   });
 }
