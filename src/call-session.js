@@ -1,7 +1,7 @@
 // Experimental call orchestration. The transport MUST authenticate and authorize
 // both participants, bind all messages to a unique call ID, and expire sessions.
 // The default-off browser lab uses a candidate transport; it is not production-ready.
-import { PeerCall, validateDescription } from './call-core.js';
+import { MAX_CANDIDATES, PeerCall, validateDescription } from './call-core.js';
 
 export class CallSession {
   constructor({ role, send, ...dependencies }) {
@@ -24,7 +24,7 @@ export class CallSession {
   sendSignal(signal) {
     if (this.closed) return Promise.resolve();
     if (signal.type === 'candidate' && !this.descriptionSent) {
-      if (this.queuedCandidates.length >= 128) return Promise.reject(new Error('Too many local ICE candidates.'));
+      if (this.queuedCandidates.length >= MAX_CANDIDATES) return Promise.reject(new Error('Too many local ICE candidates.'));
       this.queuedCandidates.push(signal);
       return Promise.resolve();
     }

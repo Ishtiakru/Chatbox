@@ -3,6 +3,7 @@
 // here are never an authorization boundary. Not production-ready.
 import { collection, doc, setDoc, addDoc, updateDoc, serverTimestamp, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { CallSession } from './call-session.js';
+import { MAX_CANDIDATES } from './call-core.js';
 import { createIncomingCallFilter } from './incoming-call-filter.js';
 
 // Bounded listing is only a prototype. Account for device clock skew, spam,
@@ -25,7 +26,8 @@ export function createFirestoreCall({ db, conversationId, uid, peerUid, role, ca
   const ref = callId ? doc(calls, callId) : doc(calls);
   const ownCandidates = role === 'caller' ? 'callerCandidates' : 'receiverCandidates';
   const otherCandidates = role === 'caller' ? 'receiverCandidates' : 'callerCandidates';
-  let stopDoc = () => {}, stopCandidates = () => {}, closed = false, listening = false, answerReceived = false, offerReceived = false, sawServerDoc = false;
+  let stopDoc = () => {}, stopCandidates = () => {}, closed = false, listening = false, answerReceived = false, offerReceived = false, sawServerDoc = false, sawServerCandidates = false;
+  const seenCandidates = new Set();
   const detach = () => { if (!closed) { closed = true; try { stopDoc(); } finally { stopCandidates(); } } };
   const fail = error => { if (closed) return; try { session.end(); } finally { detach(); } onError(error); };
   const send = async signal => {
@@ -78,11 +80,24 @@ export function createFirestoreCall({ db, conversationId, uid, peerUid, role, ca
     if (closed) { docListener(); return; }
     stopDoc = docListener;
     let candidateListener;
-    try { candidateListener = subscribe(collection(ref, otherCandidates), snapshot => {
+    // Bound the read as well as the PeerCall candidate queue. The extra item
+    // lets us fail closed on overflow rather than silently losing candidates.
+    const candidates = query(collection(ref, otherCandidates), limit(MAX_CANDIDATES + 1));
+    try { candidateListener = subscribe(candidates, {includeMetadataChanges:true}, snapshot => {
       if (closed) return;
-      for (const change of snapshot.docChanges()) {
-        if (change.type !== 'added' || change.doc.metadata.hasPendingWrites) continue;
-        const data = change.doc.data();
+      // A metadata-only transition can confirm cached documents without any
+      // added changes. Read the full bounded snapshot and deduplicate by ID.
+      if (snapshot.metadata.fromCache) {
+        if (sawServerCandidates) fail(new Error('Call candidates are no longer server-confirmed.'));
+        return;
+      }
+      sawServerCandidates = true;
+      if (snapshot.docs.length > MAX_CANDIDATES) return fail(new Error('Too many remote ICE candidates.'));
+      for (const candidate of snapshot.docs) {
+        if (candidate.metadata.hasPendingWrites || seenCandidates.has(candidate.id)) continue;
+        if (seenCandidates.size >= MAX_CANDIDATES) return fail(new Error('Too many remote ICE candidates.'));
+        seenCandidates.add(candidate.id);
+        const data = candidate.data();
         handleSignal({type:'candidate',candidate:{candidate:data.candidate,sdpMid:data.sdpMid,sdpMLineIndex:data.sdpMLineIndex}});
       }
     }, fail); } catch (error) { fail(error); throw error; }

@@ -86,7 +86,7 @@ test('synchronous candidate failure closes both listeners exactly once', () => {
   let listeners=0, stopped=0, errors=0;
   const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
     mediaDevices:{getUserMedia:async()=>{throw new Error('Unexpected media');}},peerFactory:()=>{},
-    subscribe:(ref,...args)=>{ listeners++; if (listeners===2) args[1](new Error('denied')); return ()=>{stopped++;}; },
+    subscribe:(ref,...args)=>{ listeners++; if (listeners===2) args.at(-1)(new Error('denied')); return ()=>{stopped++;}; },
     onError:()=>{errors++;}});
   call.listen();
   assert.equal(listeners,2); assert.equal(stopped,2); assert.equal(errors,1);
@@ -119,5 +119,47 @@ test('cache fallback after acceptance releases active local media', async () => 
   assert.equal(peer.closed,true);
   assert.equal(fake.listeners.every(item=>item.stopped),true);
   assert.equal(errors.length,1);
+  call.close();
+});
+
+test('candidates require a server snapshot, process metadata confirmation once, and cache fallback stops media', async () => {
+  const fake=fakeSubscribe(), applied=[], errors=[];
+  const track={stopped:false,stop(){this.stopped=true;}};
+  const peer={closed:false,addTrack(){},async setRemoteDescription(){},async createAnswer(){return {type:'answer',sdp:'answer'};},async setLocalDescription(){},async addIceCandidate(ice){applied.push(ice.candidate);},close(){this.closed=true;}};
+  const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
+    mediaDevices:{getUserMedia:async()=>({getTracks:()=>[track]})},peerFactory:()=>peer,subscribe:fake.subscribe,update:async()=>{},onError:error=>errors.push(error)});
+  call.listen();
+  const [document,candidates]=fake.listeners;
+  assert.equal(candidates.options.includeMetadataChanges,true);
+  document.next(snapshot(false));
+  await new Promise(resolve=>setImmediate(resolve));
+  await call.accept();
+  const ice={id:'one',metadata:{hasPendingWrites:false},data:()=>({candidate:'synthetic-ice',sdpMid:'0',sdpMLineIndex:0})};
+  const candidateSnapshot=fromCache=>({metadata:{fromCache},docs:[ice],docChanges:()=>[]});
+  candidates.next(candidateSnapshot(true));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(applied,[]);
+  candidates.next(candidateSnapshot(false));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(applied,['synthetic-ice']);
+  candidates.next(candidateSnapshot(false));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(applied,['synthetic-ice']);
+  candidates.next(candidateSnapshot(true));
+  assert.equal(errors.length,1);
+  assert.equal(track.stopped,true); assert.equal(peer.closed,true);
+  assert.equal(fake.listeners.every(item=>item.stopped),true);
+  call.close();
+});
+
+test('candidate snapshot overflow fails closed without acquiring media', () => {
+  const fake=fakeSubscribe(), errors=[];
+  let mediaRequests=0;
+  const call=createFirestoreCall({db,conversationId:'chat',uid:'bob',peerUid:'alice',role:'receiver',callId:'offer',media:'audio',
+    mediaDevices:{getUserMedia:async()=>{mediaRequests++;}},peerFactory:()=>{},subscribe:fake.subscribe,onError:error=>errors.push(error)});
+  call.listen();
+  fake.listeners[1].next({metadata:{fromCache:false},docs:Array.from({length:129},(_,i)=>({id:String(i)}))});
+  assert.equal(errors.length,1); assert.equal(mediaRequests,0);
+  assert.equal(fake.listeners.every(item=>item.stopped),true);
   call.close();
 });

@@ -1,7 +1,7 @@
 // Experimental WebRTC transport. The browser-only UI is default-off and is
 // not production-ready; authenticated signaling and receiver consent remain essential.
 const MAX_SDP = 65536;
-const MAX_CANDIDATES = 128;
+export const MAX_CANDIDATES = 128;
 
 function stopTracks(stream) {
   for (const track of stream?.getTracks() ?? []) {
