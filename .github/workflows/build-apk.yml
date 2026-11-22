@@ -1,4 +1,4 @@
-# Lightfall Android APK — TwaGenerator ডিরেক্ট (ডায়াগ বুস্টেড)
+# Lightfall Android APK — TwaGenerator ডিরেক্ট + gradle + apksigner
 name: Build Lightfall APK
 
 on:
@@ -83,31 +83,27 @@ jobs:
             console.log('PROJECT_GENERATED_OK');
           })().catch(e => { console.error('GEN_FAIL: ' + (e.stack || e.message)); process.exit(1); });
           JS
-          NODE_PATH=$(npm root -g) node gen.cjs > gen-out.txt 2> gen-err.txt
-          rc=$?
+          rc=0
+          NODE_PATH=$(npm root -g) node gen.cjs > gen-out.txt 2> gen-err.txt || rc=$?
           cat gen-out.txt
-          if [ $rc -ne 0 ]; then
-            echo "exit=$rc"
+          if [ "$rc" -ne 0 ]; then
             head -c 3000 gen-err.txt | tr -d '\r' | fold -s -w 170 | while IFS= read -r line; do
               echo "::error::${line//%/Ø}"
             done
-            tail -c 500 gen-err.txt
             exit 1
           fi
 
       - name: APK বিল্ড (gradle assembleRelease)
         run: |
           cd apkbuild
-          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build.log | tail -3
-
-      - name: ত্রুটি-ডায়াগ
-        if: failure()
-        run: |
-          cd apkbuild
-          if [ -f build.log ]; then
-            grep -E "error:|ERROR|FAILURE|Caused by|What went wrong" build.log | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
+          rc=0
+          ./gradlew assembleRelease --stacktrace --no-daemon > gradle-full.log 2>&1 || rc=$?
+          tail -3 gradle-full.log
+          if [ "$rc" -ne 0 ]; then
+            grep -E "error:|ERROR|FAILURE|Caused by|What went wrong" gradle-full.log | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
               echo "::error::${line//%/Ø}"
             done
+            exit 1
           fi
 
       - name: সাইন করা (zipalign + apksigner)
