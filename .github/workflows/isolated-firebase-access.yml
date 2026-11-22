@@ -183,15 +183,15 @@ jobs:
                   with urllib.request.urlopen(req, timeout=30) as response:
                       data = json.load(response)
                   if label == 'Play Integrity':
-                      print('Play Integrity config: accessible')
+                      print('::notice::Play Integrity config: accessible')
                       ttl = data.get('tokenTtl')
-                      if isinstance(ttl, str): print('Token TTL:', ttl)
+                      if isinstance(ttl, str): print('::notice::Token TTL: ' + ttl)
                   else:
-                      print('Firebase AI App Check enforcement:', data.get('enforcementMode','not reported'))
+                      print('::notice::Firebase AI App Check enforcement: ' + str(data.get('enforcementMode','not reported')))
               except urllib.error.HTTPError as error:
-                  print(label + ': unavailable (HTTP ' + str(error.code) + '); no response details printed')
+                  print('::notice::' + label + ': unavailable (HTTP ' + str(error.code) + '); no response details printed')
               except (urllib.error.URLError, ValueError):
-                  print(label + ': unavailable; no response details printed')
+                  print('::notice::' + label + ': unavailable; no response details printed')
           del token
           print('Read-only inspection; no tokens, debug tokens or configuration details printed and no settings changed.')
           PYCODE
