@@ -1,4 +1,4 @@
-# Lightfall Android APK — সরাসরি twa-manifest লিখে বিল্ড (কোনো ইন্টারঅ্যাকটিভ প্রম্পট নেই)
+# Lightfall Android APK — twa-manifest সরাসরি + pseudo-TTY দিয়ে বিল্ড
 name: Build Lightfall APK
 
 on:
@@ -68,12 +68,12 @@ jobs:
             "minSdkVersion": 21
           }
           JSON
-          echo "twa-manifest লেখা হয়েছে:" && head -8 twa-manifest.json
+          echo "twa-manifest প্রস্তুত"
 
-      - name: APK বিল্ড
+      - name: APK বিল্ড (pseudo-TTY)
         run: |
           cd apkbuild
-          printf 'lightfall123\nlightfall123\n' | bubblewrap build || printf 'lightfall123\nlightfall123\n' | bubblewrap build
+          printf 'lightfall123\nlightfall123\n' | script -qec "bubblewrap build" /dev/null
           ls -la
 
       - name: GitHub Release-এ তোলা
