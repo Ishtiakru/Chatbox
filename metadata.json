@@ -1,0 +1,8 @@
+{
+  "name": "Chatbox",
+  "description": "Saira / Chatbox — a calmer space to stay close, with Demo conversations, Live Firestore messaging, Saira AI, and Spark Admin Studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
