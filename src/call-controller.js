@@ -117,6 +117,12 @@ export function createCallController({ watchIncoming, createSession, onChange = 
       },
     };
     const session = createSession({...selected, role, media, callId, ...callbacks});
+    // A synchronous factory callback may cancel or close the call before it
+    // returns. Do not adopt the obsolete session or overwrite its error.
+    if (disposed || current !== generation || selected !== context || terminal) {
+      try { session?.close?.(); } catch { /* Preserve the prior outcome. */ }
+      return {session:null, current};
+    }
     active = session;
     // Bound unanswered calls and stalled permission or connection setup. A late
     // media grant is stopped by PeerCall after hangUp. Connected calls have no
@@ -127,6 +133,8 @@ export function createCallController({ watchIncoming, createSession, onChange = 
   }
   async function start(media) {
     const {session, current} = begin('caller', media);
+    // onChange can synchronously cancel or switch the selected conversation.
+    if (!session || disposed || current !== generation || active !== session) return;
     try { await session.start(); }
     catch (error) {
       if (!disposed && current === generation) {
@@ -137,7 +145,8 @@ export function createCallController({ watchIncoming, createSession, onChange = 
   function openIncoming(id) {
     const offer = state.incoming.find(call => call.id === id);
     if (!offer) throw new Error('Incoming call is no longer available.');
-    const {session} = begin('receiver', offer.media, id);
+    const {session, current} = begin('receiver', offer.media, id);
+    if (!session || disposed || current !== generation || active !== session) return;
     try { session.listen(); }
     catch { endActive(); update({...clearActive(),error:'Call could not be completed.'}); }
   }
@@ -146,6 +155,7 @@ export function createCallController({ watchIncoming, createSession, onChange = 
     const session = active, current = generation;
     // Set busy before awaiting: double taps must not open media twice.
     update({status:'preparing'});
+    if (disposed || current !== generation || active !== session) return;
     try { await session.accept(); }
     catch (error) {
       if (!disposed && current === generation) {

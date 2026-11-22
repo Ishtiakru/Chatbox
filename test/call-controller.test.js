@@ -317,3 +317,89 @@ test('closed call cannot be revived by a late transport state, but its error is 
   assert.equal(controller.getState().error,'Call could not be completed.');
   controller.dispose();
 });
+
+test('cancelling during initial preparing notification never starts the session', async () => {
+  let controller, starts=0, ended=0;
+  controller=createCallController({
+    watchIncoming:()=>()=>{},
+    createSession:()=>({id:'call',start:async()=>{starts++;},hangUp:()=>{ended++;},close:()=>{ended++;}}),
+    onChange:state=>{if(state.status==='preparing') controller.hangUp();},
+  });
+  controller.setConversation(conversation);
+  await controller.start('video');
+  assert.equal(starts,0);
+  assert.equal(ended,1);
+  assert.equal(controller.getState().status,'idle');
+  controller.dispose();
+});
+
+test('cancelling during receiver loading never subscribes to the call', () => {
+  let controller, next, listens=0, ended=0;
+  controller=createCallController({
+    watchIncoming:(context,cb)=>{next=cb;return ()=>{};},
+    createSession:()=>({id:'offer-1',listen:()=>{listens++;},hangUp:()=>{ended++;},close:()=>{ended++;}}),
+    onChange:state=>{if(state.status==='loading') controller.hangUp();},
+  });
+  controller.setConversation(conversation);
+  next([offer]);
+  controller.openIncoming(offer.id);
+  assert.equal(listens,0);
+  assert.equal(ended,1);
+  assert.equal(controller.getState().status,'idle');
+  controller.dispose();
+});
+
+test('a synchronous session error during creation cannot be replaced with preparing', async () => {
+  let starts=0, closed=0;
+  const controller=createCallController({
+    watchIncoming:()=>()=>{},
+    createSession:options=>{
+      options.onError(new Error('private details'));
+      return {id:'call',start:async()=>{starts++;},close:()=>{closed++;},hangUp:()=>{closed++;}};
+    },
+  });
+  controller.setConversation(conversation);
+  await controller.start('audio');
+  assert.equal(starts,0);
+  assert.equal(closed,1);
+  assert.equal(controller.getState().status,'idle');
+  assert.equal(controller.getState().error,'Call could not be completed.');
+  controller.dispose();
+});
+
+test('receiver cancellation during accept notification never opens media', async () => {
+  let controller, next, session, accepts=0, ended=0;
+  controller=createCallController({
+    watchIncoming:(ctx,cb)=>{next=cb;return ()=>{};},
+    createSession:options=>{
+      session={id:'offer-1',...options,listen:()=>{},accept:async()=>{accepts++;},hangUp:()=>{ended++;},close:()=>{ended++;}};
+      return session;
+    },
+    onChange:state=>{if(state.status==='preparing') controller.hangUp();},
+  });
+  controller.setConversation(conversation);
+  next([offer]); controller.openIncoming(offer.id); session.onIncoming();
+  await controller.accept();
+  assert.equal(accepts,0);
+  assert.equal(ended,1);
+  assert.equal(controller.getState().status,'idle');
+  controller.dispose();
+});
+
+test('synchronous closed callback before factory returns cannot revive the session', async () => {
+  let started=0, closed=0;
+  const controller=createCallController({
+    watchIncoming:()=>()=>{},
+    createSession:options=>{
+      options.onState('closed');
+      options.onState('connected');
+      return {id:'call',start:async()=>{started++;},close:()=>{closed++;}};
+    },
+  });
+  controller.setConversation(conversation);
+  await controller.start('audio');
+  assert.equal(started,0);
+  assert.equal(closed,1);
+  assert.equal(controller.getState().status,'idle');
+  controller.dispose();
+});
