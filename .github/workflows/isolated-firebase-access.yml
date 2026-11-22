@@ -149,6 +149,47 @@ jobs:
               del token
           print('Permission lookup only: no resources, configuration or data were changed. Reported permissions do not prove deployment will work.')
           PY
+      - name: Check current combined source baseline (read only)
+        if: ${{ contains(github.event.head_commit.message, '[source-baseline-check]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, re, subprocess, urllib.error, urllib.request
+          from pathlib import Path
+          project = 'chatbox-test-2c236731bf'
+          source = Path('firestore.combined-experimental.rules').read_text()
+          if hashlib.sha256(source.encode()).hexdigest() != '1e178bb0ba45c4fa036858566a7178c3b2a7b086454f4a06253bb20ccb835c94':
+              raise SystemExit('Reviewed source template changed; refusing comparison.')
+          token = subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          def get(path):
+              req = urllib.request.Request('https://firebaserules.googleapis.com/v1/'+path,headers={'Authorization':'Bearer '+token})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as response: return json.load(response)
+              except urllib.error.HTTPError as error:
+                  print(f'::error::Rules lookup failed with HTTP {error.code}; source and credentials not printed.')
+                  raise SystemExit(1)
+          release = get(f'projects/{project}/releases/cloud.firestore')
+          name = release.get('rulesetName','')
+          if not re.fullmatch(r'projects/' + re.escape(project) + r'/rulesets/[A-Za-z0-9-]+',name): raise SystemExit('Unexpected ruleset resource.')
+          files = get(name).get('source',{}).get('files',[])
+          del token
+          if len(files) != 1 or not isinstance(files[0].get('content'),str): raise SystemExit('Unexpected rules source.')
+          actual = files[0]['content']
+          pattern = r"function\s+signedIn\s*\(\s*\)\s*\{\s*return\s+request\.auth\s*!=\s*null\s*&&\s*request\.auth\.uid\s+in\s*\[\s*'([A-Za-z0-9_-]{1,128})'\s*,\s*'([A-Za-z0-9_-]{1,128})'\s*\]\s*;\s*\}"
+          matches = list(re.finditer(pattern, actual))
+          if len(matches) != 1 or matches[0].group(1) == matches[0].group(2): raise SystemExit('Two-account gate not recognized; review required. No source was printed.')
+          first, second = matches[0].groups()
+          original='function signedIn() { return request.auth != null; }'
+          if source.count(original) != 1: raise SystemExit('Unexpected template.')
+          expected=source.replace(original, f"function signedIn() {{ return request.auth != null && request.auth.uid in ['{first}', '{second}']; }}")
+          token_pattern = r'''(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s])'''
+          def tokenize(text): return [x for x in re.findall(token_pattern,text) if not x.startswith('//') and not x.startswith('/*')]
+          if tokenize(actual) != tokenize(expected): raise SystemExit('Published rules differ from the reviewed two-account combined template; stop and review.')
+          print('::notice title=Isolated baseline::Current test Firestore rules match the reviewed two-account combined template by tokens. This is not a security review.')
+          print('::notice title=Isolated ruleset::' + name)
+          print('Read-only comparison only; no rules or resources changed. Source and account IDs were not printed.')
+          PY
       - name: Compare the published isolated Firestore rules without printing them
         if: ${{ contains(github.event.head_commit.message, '[historical-baseline-compare]') }}
         shell: bash
