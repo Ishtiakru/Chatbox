@@ -122,8 +122,18 @@ jobs:
         run: |
           cd apkbuild
           cp app-release-signed.apk Lightfall-v1.0.apk
+          ok=0
           gh release create lightfall-android-v1.0 Lightfall-v1.0.apk \
             --repo "$GITHUB_REPOSITORY" \
             --title "Lightfall — Android APK v1.0" \
             --notes "ডাউনলোড: Lightfall-v1.0.apk → ফোনে খুলুন → 'অজানা উৎস থেকে ইনস্টল' অনুমতি দিন → ইনস্টল → হোম-স্ক্রিনে Lightfall! ওয়েব সাইট: https://ishtiakru.github.io/Chatbox/" \
-            --clobber || gh release upload lightfall-android-v1.0 Lightfall-v1.0.apk --repo "$GITHUB_REPOSITORY" --clobber
+            > rel-out.txt 2> rel-err.txt || ok=$?
+          if [ "$ok" -ne 0 ]; then
+            tail -c 900 rel-err.txt | fold -s -w 170 | while IFS= read -r line; do echo "::error::${line//%/Ø}"; done
+            gh release upload lightfall-android-v1.0 Lightfall-v1.0.apk --repo "$GITHUB_REPOSITORY" --clobber > up-out.txt 2> up-err.txt || {
+              tail -c 900 up-err.txt | fold -s -w 170 | while IFS= read -r line; do echo "::error::${line//%/Ø}"; done
+              exit 1
+            }
+          fi
+          gh release view lightfall-android-v1.0 --repo "$GITHUB_REPOSITORY" --json assets,url \
+            --jq '"RELEASE_OK url=\(.url) asset=\(.assets[0].name) size=\(.assets[0].size)"'
