@@ -135,17 +135,18 @@ jobs:
               'clientauthconfig.clients.create', 'firebase.clients.get'
           ]
           token = subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
-          req = urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':names}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
           try:
-              with urllib.request.urlopen(req,timeout=30) as response:
-                  granted=set(json.load(response).get('permissions', []))
-          except urllib.error.HTTPError as error:
-              print(f'::error::Permission lookup failed with HTTP {error.code}; no credentials or response details were printed.')
-              raise SystemExit(1)
+              for name in names:
+                  req = urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':[name]}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+                  try:
+                      with urllib.request.urlopen(req,timeout=30) as response:
+                          granted=set(json.load(response).get('permissions', []))
+                      result = 'reported' if name in granted else 'not reported'
+                  except urllib.error.HTTPError as error:
+                      result = f'lookup HTTP {error.code}'
+                  print(f'::notice title=Test project permission::{name}: {result}')
           finally:
               del token
-          for name in names:
-              print(f"::notice title=Test project permission::{name}: {'reported' if name in granted else 'not reported'}")
           print('Permission lookup only: no resources, configuration or data were changed. Reported permissions do not prove deployment will work.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
