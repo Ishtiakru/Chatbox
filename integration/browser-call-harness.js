@@ -5,6 +5,8 @@ import { getFirestore, connectFirestoreEmulator, doc, setDoc, updateDoc, serverT
 import { createCallController } from '../src/call-controller.js';
 import { createFirestoreCall, watchIncomingCalls } from '../src/firestore-call-transport.js';
 import { experimentalCallPanel } from '../src/call-view.js';
+const safeMessages = new Set(['Call ended.','Call has ended.','Peer connection failed.','Call signaling is no longer server-confirmed.','Call candidates are no longer server-confirmed.','No outgoing call is awaiting an answer.','Call is unavailable.','Call identity mismatch.','Too many remote ICE candidates.','Invalid session description.','Invalid ICE candidate.']);
+const safeError = error => ({name: /^[A-Za-z]{1,40}$/.test(error?.name || '') ? error.name : 'unknown', code: /^[a-z-]{1,40}$/.test(error?.code || '') ? error.code : '', reason: safeMessages.has(error?.message) ? error.message : 'other'});
 const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn,label) { const deadline=Date.now()+20000; while(Date.now()<deadline){const v=fn();if(v)return v;await pause(30);} throw Error('Timed out: '+label); }
 export async function run() {
@@ -13,11 +15,13 @@ export async function run() {
   const auth=apps.map(app=>getAuth(app)), db=apps.map(app=>getFirestore(app));
   auth.forEach(a=>connectAuthEmulator(a,'http://127.0.0.1:9099',{disableWarnings:true}));
   db.forEach(d=>connectFirestoreEmulator(d,'127.0.0.1',8080));
+  const conversationId = `call-ui-${crypto.randomUUID()}`;
   const users=await Promise.all(auth.map(a=>signInAnonymously(a).then(r=>r.user.uid)));
   await Promise.all(users.map((uid,i)=>setDoc(doc(db[i],'profiles',uid),{uid,displayName:i?'Receiver':'Caller'})));
-  await setDoc(doc(db[0],'conversations','call-ui-test'),{participants:users,createdBy:users[0],status:'pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
-  await updateDoc(doc(db[1],'conversations','call-ui-test'),{status:'active',updatedAt:serverTimestamp()});
-  const controllers=[], requests=[0,0], streams=[], histories=[[],[]], errors=[];
+  await setDoc(doc(db[0],'conversations',conversationId),{participants:users,createdBy:users[0],status:'pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  await updateDoc(doc(db[1],'conversations',conversationId),{status:'active',updatedAt:serverTimestamp()});
+  const controllers=[], requests=[0,0], streams=[], histories=[[],[]], errors=[], diagnostics=[];
+  window.callHarnessDiagnostics = {histories, diagnostics};
   for (let i=0;i<2;i++) {
     const root=document.createElement('section'); root.id='test-user-'+i; document.body.append(root);
     let controller;
@@ -31,9 +35,17 @@ export async function run() {
     };
     controller=createCallController({onChange:render,
       watchIncoming:(ctx,next,fail)=>watchIncomingCalls(db[i],ctx.id,ctx.uid,next,fail),
-      createSession:opts=>createFirestoreCall({...opts,db:db[i],conversationId:opts.id,
+      createSession:opts=>{
+        const record = (source, error) => diagnostics.push({side:i, source, ...safeError(error)});
+        const session=createFirestoreCall({...opts,onError:error=>{record('transport',error);opts.onError(error);},db:db[i],conversationId:opts.id,
         mediaDevices:{getUserMedia:async constraints=>{requests[i]++;const stream=await navigator.mediaDevices.getUserMedia(constraints);streams.push(stream);return stream;}},
-        peerFactory:config=>new RTCPeerConnection(config),iceServers:[]})});
+        peerFactory:config=>new RTCPeerConnection(config),iceServers:[]});
+        for (const method of ['start','accept']) {
+          const original=session[method];
+          session[method]=async (...args)=>{try{return await original(...args);}catch(error){record(method,error);throw error;}};
+        }
+        return session;
+      }});
     root.addEventListener('click',event=>{const el=event.target.closest('button');if(!el)return;
       if(el.dataset.callOpen) controller.openIncoming(el.dataset.callOpen);
       else if(el.dataset.action==='call-video') controller.start('video').catch(e=>errors.push(e.message));
@@ -45,7 +57,7 @@ export async function run() {
       }
       else if(el.dataset.action==='call-hangup') controller.hangUp();
     });
-    controller.setConversation({id:'call-ui-test',uid:users[i],peerUid:users[1-i]});controllers.push(controller);
+    controller.setConversation({id:conversationId,uid:users[i],peerUid:users[1-i]});controllers.push(controller);
   }
   const [a,b]=controllers;
   try {
