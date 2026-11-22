@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d14">
+<meta name="mobile-web-app-capable" content="yes">
+<title>ট্রাফিক রাশ — ঢাকার রাস্তায় টিকে থাকো</title>
+<script>
+// পুরনো-ব্রাউজার/লোড-এরর ডায়াগ: যেকোনো এরর উপরে লাল ব্যানারে (ES5)
+(function () {
+  function show(msg) {
+    try {
+      var b = document.getElementById('lfErrBanner');
+      if (!b) {
+        b = document.createElement('div');
+        b.id = 'lfErrBanner';
+        b.setAttribute('style', 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#7f1d1d;color:#fff;font:12px/1.45 monospace;padding:10px 14px;white-space:pre-wrap;word-break:break-word;max-height:45vh;overflow:auto;border-bottom:2px solid #ef4444;');
+        (document.body || document.documentElement).appendChild(b);
+      }
+      b.textContent = '⚠ সমস্যা — স্ক্রিনশট পাঠাও:\n' + msg;
+    } catch (e) {}
+  }
+  window.onerror = function (m, s, l, c) { show(m + '  [' + String(s).split('/').pop() + ':' + l + ':' + c + ']'); };
+  window.addEventListener('unhandledrejection', function (e) {
+    show('Promise: ' + (e && e.reason && (e.reason.stack || e.reason.message) || e.reason));
+  });
+})();
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: #0b0d14; touch-action: none;
+    font-family: system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+  #cv { display: block; position: fixed; inset: 0; }
+  #hud { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+    align-items: center; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; pointer-events: none; z-index: 5; }
+  #score { color: #eaf0ff; font-weight: 700; font-size: 20px; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
+  #hudBtns { display: flex; gap: 8px; pointer-events: auto; }
+  #hudBtns button { background: rgba(20,26,44,.8); border: 1px solid #39415f; color: #eaf0ff;
+    font-size: 18px; width: 44px; height: 44px; border-radius: 12px; }
+  .scr { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; background: rgba(7,9,16,.86); backdrop-filter: blur(4px);
+    padding: 24px; text-align: center; color: #eaf0ff; }
+  .scr.hidden { display: none; }
+  .scr h1 { font-size: 44px; letter-spacing: 1px; color: #ffd34d;
+    text-shadow: 0 0 24px rgba(255,211,77,.45); }
+  .scr h2 { font-size: 34px; }
+  .sub { color: #9fb0d8; font-size: 16px; }
+  .hint { color: #8fa0c8; font-size: 14px; line-height: 1.7; }
+  #bestLine { color: #7fe8a8; font-size: 16px; }
+  .scr button { background: linear-gradient(180deg, #3b82f6, #2563eb); border: none; color: #fff;
+    font-size: 20px; font-weight: 700; padding: 14px 44px; border-radius: 14px; margin-top: 8px;
+    box-shadow: 0 6px 22px rgba(37,99,235,.45); }
+  .scr button.ghost { background: none; border: 1px solid #39415f; box-shadow: none; color: #9fb0d8; }
+  .scr button:active { transform: scale(.96); }
+  #finalScore { font-size: 20px; color: #ffd34d; }
+  #newBest { color: #7fe8a8; font-size: 18px; font-weight: 700; }
+  #newBest.hidden { display: none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">
+  <div id="score">স্কোর ০</div>
+  <div id="hudBtns"><button id="btnMute">🔊</button><button id="btnPause">⏸</button></div>
+</div>
+<div id="startScr" class="scr">
+  <h1>ট্রাফিক রাশ</h1>
+  <p class="sub">ঢাকার রাস্তায় টিকে থাকো 🛺🚌</p>
+  <p class="hint">বাঁয়ে ট্যাপ = বাঁয়ে ডানে ট্যাপ = ডানে যাও<br>রিকশা-বাস-ট্রাক এড়াও · ক্লোস-পাসে +৫ বোনাস!<br>(ডেস্কটপে: ← → তীর)</p>
+  <p id="bestLine"></p>
+  <button id="btnStart">খেলা শুরু</button>
+</div>
+<div id="overScr" class="scr hidden">
+  <h2>দুর্ঘটনা! 💥</h2>
+  <p id="finalScore"></p>
+  <p id="newBest" class="hidden">🏆 নতুন রেকর্ড!</p>
+  <button id="btnRetry">আবার খেলো</button>
+  <button id="btnHome" class="ghost">মেনু</button>
+</div>
+<div id="pauseScr" class="scr hidden">
+  <h2>বিরতি ⏸</h2>
+  <button id="btnResume">চালাও</button>
+</div>
+<script src="js/game.js"></script>
+</body>
+</html>
