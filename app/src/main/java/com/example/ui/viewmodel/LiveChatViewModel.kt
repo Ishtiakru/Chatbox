@@ -181,7 +181,13 @@ class LiveChatViewModel(
         _threadState.value = _threadState.value.copy(isOnline = connectivityObserver.isCurrentlyOnline())
         viewModelScope.launch {
             connectivityObserver.isOnline.collect { online ->
-                _threadState.value = _threadState.value.copy(isOnline = online)
+                if (!online && _threadState.value.isRecordingVoice) {
+                    cancelVoiceRecording()
+                }
+                _threadState.value = _threadState.value.copy(
+                    isOnline = online,
+                    newConversationOpen = if (online) _threadState.value.newConversationOpen else false
+                )
             }
         }
         viewModelScope.launch {
@@ -264,6 +270,9 @@ class LiveChatViewModel(
                             Log.w(TAG, "List message listener failed for $convId", error)
                         }
                         .collect { snap ->
+                            if (!snap.fromCache) {
+                                connectivityObserver.reportServerReachable()
+                            }
                             _recentMessagesByConversation.value =
                                 _recentMessagesByConversation.value + (convId to snap.messages)
                         }
@@ -321,6 +330,9 @@ class LiveChatViewModel(
                     )
                 }
                 .collect { snap ->
+                    if (!snap.fromCache) {
+                        connectivityObserver.reportServerReachable()
+                    }
                     val currentOlder = _threadState.value.olderMessages
                     if (oldestCursor == null) {
                         oldestCursor = snap.oldestCursor
@@ -410,11 +422,19 @@ class LiveChatViewModel(
     }
 
     fun appendMessageEmoji(emoji: String = "😊") {
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            reportAttachmentError("Reactions and emojis are disabled offline. Only text SMS can be sent.")
+            return
+        }
         val current = _threadState.value.messageDraft
         updateMessageDraft(current + emoji)
     }
 
     fun createCameraPhotoUri(): Uri? {
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            reportAttachmentError("Camera photos are disabled offline. Only text SMS can be sent.")
+            return null
+        }
         return runCatching { mediaRepository?.createCameraImageUri() }
             .onFailure { error ->
                 _threadState.value = _threadState.value.copy(
@@ -426,6 +446,10 @@ class LiveChatViewModel(
 
     fun attachPendingImage(uriString: String?) {
         val id = _threadState.value.selectedId ?: return
+        if (!uriString.isNullOrBlank() && !connectivityObserver.isCurrentlyOnline()) {
+            reportAttachmentError("Photos and media are disabled offline. Only text SMS can be sent.")
+            return
+        }
         val previous = pendingImagesByConversation[id]
         if (previous != null && previous != uriString) {
             mediaRepository?.cleanupTempCameraFile(previous)
@@ -464,6 +488,10 @@ class LiveChatViewModel(
     fun startVoiceRecording() {
         val state = _threadState.value
         val conversationId = state.selectedId ?: return
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            reportAttachmentError("Voice notes are disabled offline. Only text SMS can be sent.")
+            return
+        }
         if (state.busy || state.isUploadingMedia || state.isRecordingVoice) return
         val recorder = voiceRecorder
         if (recorder == null) {
@@ -612,6 +640,12 @@ class LiveChatViewModel(
 
     fun respondToRequest(conversationId: String, status: String) {
         if (_threadState.value.busy) return
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            _threadState.value = _threadState.value.copy(
+                error = "Accepting or closing requests requires an internet connection. Offline mode supports text SMS only."
+            )
+            return
+        }
         runSlowTrackedWrite {
             val result = repository.respondToConversation(conversationId, status)
             result.onFailure { error ->
@@ -632,7 +666,7 @@ class LiveChatViewModel(
 
         val online = connectivityObserver.isCurrentlyOnline()
         if (!online && (!pendingImage.isNullOrBlank() || !pendingVoicePath.isNullOrBlank())) {
-            val msg = "You're offline. Text messages queue automatically, but photos and voice notes require an internet connection to upload."
+            val msg = "Offline mode supports text SMS only. Remove the photo or voice note attachment to send a text SMS."
             errorsByConversation[conversationId] = msg
             _threadState.value = _threadState.value.copy(error = msg)
             return
@@ -774,6 +808,12 @@ class LiveChatViewModel(
     fun sendQuickReaction(reaction: String) {
         val state = _threadState.value
         val conversationId = state.selectedId ?: return
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            val msg = "Reactions are disabled offline. Only text SMS messages can be sent."
+            errorsByConversation[conversationId] = msg
+            _threadState.value = _threadState.value.copy(error = msg)
+            return
+        }
         val normalized = reaction.trim().take(8)
         if (normalized.isEmpty() || state.busy || state.isUploadingMedia || state.isRecordingVoice) return
 
@@ -808,6 +848,12 @@ class LiveChatViewModel(
 
     fun blockPeer(peerUid: String, conversation: Conversation) {
         if (_threadState.value.busy) return
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            _threadState.value = _threadState.value.copy(
+                error = "Blocking requires an internet connection. Offline mode supports text SMS only."
+            )
+            return
+        }
         runSlowTrackedWrite {
             val result = repository.blockAndClose(currentUserId, peerUid, conversation)
             result.onFailure { error ->
@@ -818,6 +864,12 @@ class LiveChatViewModel(
 
     fun unblockPeer(peerUid: String) {
         if (_threadState.value.busy) return
+        if (!connectivityObserver.isCurrentlyOnline()) {
+            _threadState.value = _threadState.value.copy(
+                error = "Unblocking requires an internet connection. Offline mode supports text SMS only."
+            )
+            return
+        }
         runSlowTrackedWrite {
             val result = repository.unblock(currentUserId, peerUid)
             result.onFailure { error ->

@@ -57,6 +57,7 @@ fun SairaAiScreen(
     isSignedIn: Boolean,
     authBusy: Boolean,
     uiState: SairaAiUiState,
+    isOnline: Boolean = true,
     appUpdateActive: Boolean = false,
     onAppUpdateClick: () -> Unit = {},
     onSignIn: () -> Unit,
@@ -157,6 +158,14 @@ fun SairaAiScreen(
                     testTagPrefix = "saira_ai"
                 )
             } else {
+                if (!isOnline) {
+                    ChatboxNoticeBanner(
+                        text = "Offline · Saira AI is disabled without internet. Offline mode supports text SMS in Messages only.",
+                        isError = true,
+                        modifier = Modifier.testTag("saira_offline_banner")
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 ChatboxNoticeBanner(
                     text = "Your question is sent to Google Gemini via Firebase AI Logic. Do not send private or sensitive information. Answers may be inaccurate."
                 )
@@ -217,11 +226,15 @@ fun SairaAiScreen(
                                 OutlinedTextField(
                                     value = uiState.draft,
                                     onValueChange = onDraftChange,
-                                    enabled = !uiState.isBusy,
-                                    placeholder = { Text("Ask Saira...") },
+                                    enabled = isOnline && !uiState.isBusy,
+                                    placeholder = {
+                                        Text(if (isOnline) "Ask Saira..." else "Offline · Saira AI disabled")
+                                    },
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                    keyboardActions = KeyboardActions(onSend = { onSubmitQuestion() }),
+                                    keyboardActions = KeyboardActions(
+                                        onSend = { if (isOnline) onSubmitQuestion() }
+                                    ),
                                     shape = RoundedCornerShape(22.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -233,7 +246,7 @@ fun SairaAiScreen(
                                         .weight(1f)
                                         .testTag("saira_ai_input")
                                 )
-                                val canSend = !uiState.isBusy && uiState.draft.trim().isNotEmpty()
+                                val canSend = isOnline && !uiState.isBusy && uiState.draft.trim().isNotEmpty()
                                 Surface(
                                     onClick = onSubmitQuestion,
                                     enabled = canSend,

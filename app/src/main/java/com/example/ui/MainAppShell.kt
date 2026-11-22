@@ -152,6 +152,10 @@ fun ChatboxAppRoot(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
+    val connectivityObserver = remember(context) {
+        NetworkConnectivityObserver(context.applicationContext)
+    }
+    val isOnline by connectivityObserver.isOnline.collectAsStateWithLifecycle()
 
     val authFlow = remember { Firebase.auth.authStateFlow() }
     val currentUser by authFlow.collectAsStateWithLifecycle(initialValue = Firebase.auth.currentUser)
@@ -246,6 +250,7 @@ fun ChatboxAppRoot(
                 language = demoUiState.loginLanguage,
                 authReady = authReady,
                 authLoading = authLoading,
+                isOnline = isOnline,
                 onLanguageSelected = { demoViewModel.setLoginLanguage(it) },
                 onGoogleSignIn = startSignIn
             )
@@ -264,7 +269,7 @@ fun ChatboxAppRoot(
                                 displayName = signedInUser.displayName,
                                 mediaRepository = ChatMediaStorageRepository(context.applicationContext),
                                 voiceRecorder = VoiceNoteRecorder(context.applicationContext),
-                                connectivityObserver = NetworkConnectivityObserver(context.applicationContext)
+                                connectivityObserver = connectivityObserver
                             ) as T
                         }
                     }
@@ -296,6 +301,7 @@ fun ChatboxAppRoot(
             ChatboxTheme(lavenderAppearance = appearance.theme == "lavender") {
                 AuthenticatedAppShell(
                     user = signedInUser,
+                    isOnline = isOnline,
                     appearance = appearance,
                     welcomeBanner = welcomeBanner,
                     authLoading = authLoading,
@@ -317,6 +323,7 @@ fun ChatboxAppRoot(
 @Composable
 private fun AuthenticatedAppShell(
     user: FirebaseUser,
+    isOnline: Boolean,
     appearance: SparkAppearance,
     welcomeBanner: String,
     authLoading: Boolean,
@@ -409,6 +416,7 @@ private fun AuthenticatedAppShell(
                     userEmail = user.email,
                     isSignedIn = true,
                     authBusy = authLoading,
+                    isOnline = isOnline,
                     appUpdateActive = appUpdate.active,
                     onAppUpdateClick = { showAppUpdateDialog = true },
                     onSelectContact = { demoViewModel.selectContact(it) },
@@ -471,6 +479,7 @@ private fun AuthenticatedAppShell(
                     isSignedIn = true,
                     authBusy = authLoading,
                     uiState = aiUiState,
+                    isOnline = isOnline,
                     appUpdateActive = appUpdate.active,
                     onAppUpdateClick = { showAppUpdateDialog = true },
                     onSignIn = onSignIn,
@@ -484,12 +493,14 @@ private fun AuthenticatedAppShell(
             }
             composable<CallsRoute> {
                 CallsScreen(
+                    isOnline = isOnline,
                     onBackToConversations = { navigateToTab(navController, LiveRoute) }
                 )
             }
             composable<AdminRoute> {
                 AdminScreen(
                     uiState = adminUiState,
+                    isOnline = isOnline,
                     appUpdateActive = appUpdate.active,
                     onAppUpdateClick = { showAppUpdateDialog = true },
                     onCheckAccess = { adminViewModel.checkAdminAccess() },

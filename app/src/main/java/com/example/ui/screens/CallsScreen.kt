@@ -44,9 +44,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.ui.components.ChatboxNoticeBanner
 
 @Composable
 fun CallsScreen(
+    isOnline: Boolean = true,
     onBackToConversations: () -> Unit
 ) {
     val transition = rememberInfiniteTransition(label = "calls_orbit")
@@ -114,6 +116,14 @@ fun CallsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            if (!isOnline) {
+                Spacer(modifier = Modifier.height(12.dp))
+                ChatboxNoticeBanner(
+                    text = "Offline · Voice and video calls are disabled without internet. Return to Messages for SMS-only chatting.",
+                    isError = true,
+                    modifier = Modifier.testTag("calls_offline_banner")
+                )
+            }
         }
 
         Spacer(modifier = Modifier.weight(1f, fill = true))

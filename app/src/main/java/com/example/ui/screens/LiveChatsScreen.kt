@@ -233,6 +233,7 @@ fun LiveChatsScreen(
                                 currentUserId = currentUserId,
                                 peerProfile = peerProfiles[peerUid],
                                 isBlocked = isBlocked,
+                                isOnline = threadState.isOnline,
                                 busy = threadState.busy || !profileReady,
                                 quickReaction = quickReaction,
                                 onBackToThread = { onSetScreen(LiveScreenMode.THREAD) },
@@ -306,6 +307,7 @@ fun LiveChatsScreen(
                         currentUserId = currentUserId,
                         peerProfile = peerProfiles[peerUid],
                         isBlocked = peerUid in blockedIds,
+                        isOnline = threadState.isOnline,
                         busy = threadState.busy || !profileReady,
                         quickReaction = quickReaction,
                         onBackToThread = { onSetScreen(LiveScreenMode.THREAD) },
@@ -467,6 +469,7 @@ private fun LiveListPane(
             }
             Surface(
                 onClick = onToggleNewConversation,
+                enabled = threadState.isOnline,
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
@@ -477,7 +480,11 @@ private fun LiveListPane(
                     Icon(
                         imageVector = if (threadState.newConversationOpen) Icons.Rounded.Close else Icons.Rounded.EditNote,
                         contentDescription = stringResource(id = R.string.cd_new_conversation),
-                        tint = MaterialTheme.colorScheme.primary
+                        tint = if (threadState.isOnline) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        }
                     )
                 }
             }
@@ -566,7 +573,7 @@ private fun LiveListPane(
 
         if (!threadState.isOnline) {
             ChatboxNoticeBanner(
-                text = "Offline mode · viewing cached chats. Text messages you send will queue until reconnected.",
+                text = "Offline · SMS-only mode — Open a chat to view or send text SMS. Calls, reactions, photos, and new requests require internet.",
                 modifier = Modifier.testTag("live_list_offline_banner")
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -686,7 +693,7 @@ private fun LiveListPane(
                     )
                     Button(
                         onClick = onStartConversation,
-                        enabled = !threadState.busy && profileReady && threadState.peerDraft.trim().isNotEmpty(),
+                        enabled = !threadState.busy && profileReady && threadState.isOnline && threadState.peerDraft.trim().isNotEmpty(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .minimumInteractiveComponentSize()

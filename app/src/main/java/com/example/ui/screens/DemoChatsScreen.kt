@@ -100,6 +100,7 @@ fun DemoChatsScreen(
     userEmail: String?,
     isSignedIn: Boolean,
     authBusy: Boolean,
+    isOnline: Boolean = true,
     appUpdateActive: Boolean = false,
     onAppUpdateClick: () -> Unit = {},
     onSelectContact: (String) -> Unit,
@@ -136,6 +137,7 @@ fun DemoChatsScreen(
                     userEmail = userEmail,
                     isSignedIn = isSignedIn,
                     authBusy = authBusy,
+                    isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     onAppUpdateClick = onAppUpdateClick,
                     onSelectContact = { onSelectContact(it) },
@@ -149,6 +151,7 @@ fun DemoChatsScreen(
                 VerticalDivider(color = MaterialTheme.colorScheme.outline)
                 DemoThreadPane(
                     uiState = uiState,
+                    isOnline = isOnline,
                     showBackButton = false,
                     onBack = {},
                     onDraftChange = onDraftChange,
@@ -186,6 +189,7 @@ fun DemoChatsScreen(
                     userEmail = userEmail,
                     isSignedIn = isSignedIn,
                     authBusy = authBusy,
+                    isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     onAppUpdateClick = onAppUpdateClick,
                     onSelectContact = { contactId ->
@@ -200,6 +204,7 @@ fun DemoChatsScreen(
             } else {
                 DemoThreadPane(
                     uiState = uiState,
+                    isOnline = isOnline,
                     showBackButton = true,
                     onBack = { showingMobileThread = false },
                     onDraftChange = onDraftChange,
@@ -247,6 +252,7 @@ private fun DemoConversationListPane(
     userEmail: String?,
     isSignedIn: Boolean,
     authBusy: Boolean,
+    isOnline: Boolean,
     appUpdateActive: Boolean,
     onAppUpdateClick: () -> Unit,
     onSelectContact: (String) -> Unit,
@@ -291,6 +297,7 @@ private fun DemoConversationListPane(
             }
             Surface(
                 onClick = onNewChat,
+                enabled = isOnline,
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
@@ -304,7 +311,11 @@ private fun DemoConversationListPane(
                     Icon(
                         imageVector = Icons.Rounded.EditNote,
                         contentDescription = stringResource(id = R.string.cd_new_conversation),
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = if (isOnline) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        },
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -527,6 +538,7 @@ private fun DemoContactRow(
 @Composable
 private fun DemoThreadPane(
     uiState: DemoUiState,
+    isOnline: Boolean,
     showBackButton: Boolean,
     onBack: () -> Unit,
     onDraftChange: (String) -> Unit,
@@ -586,22 +598,32 @@ private fun DemoThreadPane(
             }
             IconButton(
                 onClick = onVoiceClick,
+                enabled = isOnline,
                 modifier = Modifier.testTag("demo_voice_button")
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Call,
                     contentDescription = stringResource(id = R.string.cd_voice_call),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (isOnline) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    }
                 )
             }
             IconButton(
                 onClick = onVideoClick,
+                enabled = isOnline,
                 modifier = Modifier.testTag("demo_video_button")
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Videocam,
                     contentDescription = stringResource(id = R.string.cd_video_call),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (isOnline) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    }
                 )
             }
             IconButton(
@@ -682,19 +704,23 @@ private fun DemoThreadPane(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                IconButton(
-                    onClick = onAttachClick,
-                    modifier = Modifier.testTag("demo_attach_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = stringResource(id = R.string.cd_attach_file)
-                    )
+                if (isOnline) {
+                    IconButton(
+                        onClick = onAttachClick,
+                        modifier = Modifier.testTag("demo_attach_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = stringResource(id = R.string.cd_attach_file)
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = uiState.draft,
                     onValueChange = onDraftChange,
-                    placeholder = { Text("Write a little something...") },
+                    placeholder = {
+                        Text(if (isOnline) "Write a little something..." else "Type SMS (offline)…")
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { onSendMessage() }),
@@ -709,14 +735,16 @@ private fun DemoThreadPane(
                         .weight(1f)
                         .testTag("demo_message_input")
                 )
-                IconButton(
-                    onClick = onAppendEmoji,
-                    modifier = Modifier.testTag("demo_emoji_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SentimentSatisfied,
-                        contentDescription = stringResource(id = R.string.cd_add_emoji)
-                    )
+                if (isOnline) {
+                    IconButton(
+                        onClick = onAppendEmoji,
+                        modifier = Modifier.testTag("demo_emoji_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SentimentSatisfied,
+                            contentDescription = stringResource(id = R.string.cd_add_emoji)
+                        )
+                    }
                 }
                 Surface(
                     onClick = onSendMessage,
@@ -762,7 +790,11 @@ private fun DemoThreadPane(
                         modifier = Modifier.size(12.dp)
                     )
                     Text(
-                        text = "Local demo · not sent to anyone",
+                        text = if (isOnline) {
+                            "Local demo · not sent to anyone"
+                        } else {
+                            "Offline · SMS-only mode (calls, media & reactions disabled)"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

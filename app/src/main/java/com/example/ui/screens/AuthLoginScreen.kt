@@ -75,6 +75,7 @@ import com.example.R
 import com.example.data.auth.openGmailInbox
 import com.example.data.auth.sendPasswordResetToGmail
 import com.example.data.model.WorldLanguages
+import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.theme.ChatboxLavenderLogo
 import com.example.ui.theme.ChatboxLoginCanvasBottom
 import com.example.ui.theme.ChatboxLoginCanvasTop
@@ -89,6 +90,7 @@ fun AuthLoginScreen(
     language: String,
     authReady: Boolean,
     authLoading: Boolean,
+    isOnline: Boolean = true,
     onLanguageSelected: (String) -> Unit,
     onGoogleSignIn: () -> Unit
 ) {
@@ -207,9 +209,23 @@ fun AuthLoginScreen(
                     .widthIn(max = 420.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (!isOnline) {
+                    ChatboxNoticeBanner(
+                        text = if (bn) {
+                            "ডাটা বা ইন্টারনেট সংযোগ নেই। প্রথমবার লগ ইন করতে ইন্টারনেট প্রয়োজন; আগে লগ ইন করা থাকলে অফলাইনেই অ্যাপসে ঢুকে শুধু এসএমএস পাঠাতে পারবেন।"
+                        } else {
+                            "No internet connection. Data connection is required to log in. Signed-in users can enter offline for text SMS only."
+                        },
+                        isError = true,
+                        modifier = Modifier
+                            .padding(bottom = 12.dp)
+                            .testTag("offline_login_banner")
+                    )
+                }
+
                 Surface(
                     onClick = {
-                        if (authReady && !authLoading) {
+                        if (authReady && !authLoading && isOnline) {
                             onGoogleSignIn()
                         }
                     },
@@ -257,7 +273,7 @@ fun AuthLoginScreen(
 
                 Button(
                     onClick = onGoogleSignIn,
-                    enabled = authReady && !authLoading,
+                    enabled = authReady && !authLoading && isOnline,
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = ChatboxLavenderLogo,
@@ -304,6 +320,7 @@ fun AuthLoginScreen(
 
                 TextButton(
                     onClick = { showForgotPasswordDialog = true },
+                    enabled = isOnline,
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
                         .testTag("forgot_password_button")
@@ -311,7 +328,7 @@ fun AuthLoginScreen(
                     Text(
                         text = if (bn) "পাসওয়ার্ড ভুলে গেছেন?" else "Forgot password?",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = ChatboxLoginTextPrimary
+                        color = if (isOnline) ChatboxLoginTextPrimary else ChatboxLoginTextSecondary
                     )
                 }
 
@@ -319,9 +336,12 @@ fun AuthLoginScreen(
 
                 OutlinedButton(
                     onClick = onGoogleSignIn,
-                    enabled = authReady && !authLoading,
+                    enabled = authReady && !authLoading && isOnline,
                     shape = CircleShape,
-                    border = BorderStroke(1.2.dp, ChatboxLoginPrimary),
+                    border = BorderStroke(
+                        1.2.dp,
+                        if (isOnline) ChatboxLoginPrimary else ChatboxLoginPrimary.copy(alpha = 0.45f)
+                    ),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = ChatboxLoginPrimary
                     ),

@@ -79,6 +79,7 @@ fun AdminSignInGate(
 @Composable
 fun AdminScreen(
     uiState: SparkAdminUiState,
+    isOnline: Boolean = true,
     appUpdateActive: Boolean = false,
     onAppUpdateClick: () -> Unit = {},
     onCheckAccess: () -> Unit,
@@ -118,6 +119,17 @@ fun AdminScreen(
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Spacer(modifier = Modifier.height(16.dp))
 
+            if (!isOnline) {
+                ChatboxNoticeBanner(
+                    text = "Offline · Admin Studio is disabled without internet. Offline mode supports text SMS in Messages only.",
+                    isError = true,
+                    modifier = Modifier.testTag("admin_offline_banner")
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            val controlsUiState = if (isOnline) uiState else uiState.copy(busy = true)
+
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 val wide = maxWidth >= 840.dp
                 if (wide) {
@@ -127,7 +139,7 @@ fun AdminScreen(
                         verticalAlignment = Alignment.Top
                     ) {
                         AdminControlsCard(
-                            uiState = uiState,
+                            uiState = controlsUiState,
                             onCheckAccess = onCheckAccess,
                             onVerifyGoogleAgain = onVerifyGoogleAgain,
                             onCommandChange = onCommandChange,
@@ -153,7 +165,7 @@ fun AdminScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         AdminControlsCard(
-                            uiState = uiState,
+                            uiState = controlsUiState,
                             onCheckAccess = onCheckAccess,
                             onVerifyGoogleAgain = onVerifyGoogleAgain,
                             onCommandChange = onCommandChange,

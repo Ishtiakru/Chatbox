@@ -243,6 +243,12 @@ internal fun LiveThreadPane(
         }
     }
 
+    LaunchedEffect(threadState.isOnline) {
+        if (!threadState.isOnline) {
+            showEmojiBar = false
+        }
+    }
+
     LaunchedEffect(conversation.id, displayMessages.lastOrNull()?.id) {
         if (displayMessages.isNotEmpty() && !threadState.loadingOlder && !threadState.threadSearchOpen) {
             listState.animateScrollToItem(headerItemsCount + displayMessages.lastIndex)
@@ -326,6 +332,7 @@ internal fun LiveThreadPane(
             }
             IconButton(
                 onClick = onOpenCalls,
+                enabled = threadState.isOnline,
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .testTag("live_thread_voice_call_button")
@@ -333,11 +340,16 @@ internal fun LiveThreadPane(
                 Icon(
                     imageVector = Icons.Rounded.Call,
                     contentDescription = stringResource(id = R.string.cd_voice_call),
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = if (threadState.isOnline) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    }
                 )
             }
             IconButton(
                 onClick = onOpenCalls,
+                enabled = threadState.isOnline,
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .testTag("live_thread_video_call_button")
@@ -345,7 +357,11 @@ internal fun LiveThreadPane(
                 Icon(
                     imageVector = Icons.Rounded.Videocam,
                     contentDescription = stringResource(id = R.string.cd_video_call),
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = if (threadState.isOnline) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    }
                 )
             }
             IconButton(
@@ -480,7 +496,7 @@ internal fun LiveThreadPane(
                 item(key = "cache_hint") {
                     ChatboxNoticeBanner(
                         text = if (!threadState.isOnline) {
-                            "You're offline. Viewing cached messages — new text messages will queue and send automatically when back online."
+                            "Offline · SMS-only mode — View & send text SMS (queued until reconnected). Calls, video calls, reactions, photos, and voice notes are disabled."
                         } else {
                             "Showing cached messages while syncing with the server…"
                         },
@@ -694,7 +710,7 @@ internal fun LiveThreadPane(
             )
         }
 
-        AnimatedVisibility(visible = showEmojiBar && composerEnabled && !threadState.isRecordingVoice) {
+        AnimatedVisibility(visible = threadState.isOnline && showEmojiBar && composerEnabled && !threadState.isRecordingVoice) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -719,7 +735,7 @@ internal fun LiveThreadPane(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f))
 
-        if (threadState.isRecordingVoice) {
+        if (threadState.isRecordingVoice && threadState.isOnline) {
             LiveVoiceRecordingBar(
                 elapsedMs = threadState.recordingElapsedMs,
                 amplitude = threadState.recordingAmplitude,
@@ -731,89 +747,109 @@ internal fun LiveThreadPane(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(0.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                IconButton(
-                    onClick = {
-                        galleryPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                if (threadState.isOnline) {
+                    IconButton(
+                        onClick = {
+                            galleryPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        enabled = composerEnabled,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("live_attach_gallery_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PhotoLibrary,
+                            contentDescription = stringResource(id = R.string.cd_choose_gallery),
+                            tint = if (composerEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            }
                         )
-                    },
-                    enabled = composerEnabled,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("live_attach_gallery_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PhotoLibrary,
-                        contentDescription = stringResource(id = R.string.cd_choose_gallery),
-                        tint = if (composerEnabled) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                        }
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        val hasCameraPermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (hasCameraPermission) {
-                            launchCameraCapture()
-                        } else {
-                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                        }
-                    },
-                    enabled = composerEnabled,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("live_attach_camera_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PhotoCamera,
-                        contentDescription = stringResource(id = R.string.cd_take_photo),
-                        tint = if (composerEnabled) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                        }
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        val hasAudioPermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (hasAudioPermission) {
-                            onStartVoiceRecording()
-                        } else {
-                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    enabled = composerEnabled,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("live_voice_record_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Mic,
-                        contentDescription = stringResource(id = R.string.cd_record_voice_note),
-                        tint = if (composerEnabled) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                        }
-                    )
+                    }
+                    IconButton(
+                        onClick = {
+                            val hasCameraPermission = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.CAMERA
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasCameraPermission) {
+                                launchCameraCapture()
+                            } else {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
+                        enabled = composerEnabled,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("live_attach_camera_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PhotoCamera,
+                            contentDescription = stringResource(id = R.string.cd_take_photo),
+                            tint = if (composerEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            }
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            val hasAudioPermission = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasAudioPermission) {
+                                onStartVoiceRecording()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        enabled = composerEnabled,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("live_voice_record_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Mic,
+                            contentDescription = stringResource(id = R.string.cd_record_voice_note),
+                            tint = if (composerEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            }
+                        )
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.testTag("live_sms_only_badge")
+                    ) {
+                        Text(
+                            text = "SMS",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
 
-                val hasSendContent = threadState.messageDraft.trim().isNotEmpty() ||
-                    !threadState.pendingImageUri.isNullOrBlank() ||
-                    !threadState.pendingVoicePath.isNullOrBlank()
+                val hasSendContent = if (threadState.isOnline) {
+                    threadState.messageDraft.trim().isNotEmpty() ||
+                        !threadState.pendingImageUri.isNullOrBlank() ||
+                        !threadState.pendingVoicePath.isNullOrBlank()
+                } else {
+                    threadState.messageDraft.trim().isNotEmpty()
+                }
                 val canSend = composerEnabled && hasSendContent
 
                 OutlinedTextField(
@@ -822,33 +858,37 @@ internal fun LiveThreadPane(
                     enabled = composerEnabled,
                     placeholder = {
                         Text(
-                            text = if (!threadState.pendingImageUri.isNullOrBlank() || !threadState.pendingVoicePath.isNullOrBlank()) {
-                                "Add a caption…"
-                            } else {
-                                "Message"
+                            text = when {
+                                !threadState.isOnline -> "Type SMS (offline)…"
+                                !threadState.pendingImageUri.isNullOrBlank() || !threadState.pendingVoicePath.isNullOrBlank() -> "Add a caption…"
+                                else -> "Message"
                             },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = { showEmojiBar = !showEmojiBar },
-                            enabled = composerEnabled,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("live_emoji_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.SentimentSatisfied,
-                                contentDescription = stringResource(id = R.string.cd_add_emoji),
-                                tint = if (composerEnabled) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                                }
-                            )
+                    trailingIcon = if (threadState.isOnline) {
+                        {
+                            IconButton(
+                                onClick = { showEmojiBar = !showEmojiBar },
+                                enabled = composerEnabled,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("live_emoji_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SentimentSatisfied,
+                                    contentDescription = stringResource(id = R.string.cd_add_emoji),
+                                    tint = if (composerEnabled) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                    }
+                                )
+                            }
                         }
+                    } else {
+                        null
                     },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -867,8 +907,6 @@ internal fun LiveThreadPane(
                         .testTag("live_message_input")
                 )
 
-                Spacer(modifier = Modifier.width(4.dp))
-
                 if (threadState.isUploadingMedia) {
                     Box(
                         modifier = Modifier.size(48.dp),
@@ -880,7 +918,7 @@ internal fun LiveThreadPane(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                } else if (hasSendContent) {
+                } else if (hasSendContent || !threadState.isOnline) {
                     Surface(
                         onClick = onSendMessage,
                         enabled = canSend,

@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.Conversation
 import com.example.data.model.UserProfile
+import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.MessengerAvatar
 
 @Composable
@@ -66,6 +67,7 @@ internal fun LiveDetailsPane(
     currentUserId: String,
     peerProfile: UserProfile?,
     isBlocked: Boolean,
+    isOnline: Boolean = true,
     busy: Boolean,
     quickReaction: String,
     onBackToThread: () -> Unit,
@@ -269,6 +271,13 @@ internal fun LiveDetailsPane(
             )
         }
 
+        if (!isOnline) {
+            ChatboxNoticeBanner(
+                text = "Offline · Calls, reactions, and account controls are disabled without internet. Text SMS stays available in the thread.",
+                modifier = Modifier.testTag("live_details_offline_banner")
+            )
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -279,6 +288,7 @@ internal fun LiveDetailsPane(
                 icon = Icons.Rounded.Call,
                 label = "Audio",
                 contentDescription = stringResource(id = R.string.cd_voice_call),
+                enabled = isOnline,
                 onClick = onOpenCalls,
                 testTag = "live_details_call_button"
             )
@@ -286,6 +296,7 @@ internal fun LiveDetailsPane(
                 icon = Icons.Rounded.Videocam,
                 label = "Video",
                 contentDescription = stringResource(id = R.string.cd_video_call),
+                enabled = isOnline,
                 onClick = onOpenCalls,
                 testTag = "live_details_video_button"
             )
@@ -334,6 +345,7 @@ internal fun LiveDetailsPane(
             DetailsSectionTitle("Customization")
             Surface(
                 onClick = { showReactionPicker = true },
+                enabled = isOnline,
                 shape = MaterialTheme.shapes.medium,
                 color = Color.Transparent,
                 modifier = Modifier
@@ -359,10 +371,10 @@ internal fun LiveDetailsPane(
                         Text(
                             text = "Quick reaction",
                             style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = if (isOnline) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Tap to change default emoji",
+                            text = if (isOnline) "Tap to change default emoji" else "Disabled offline (SMS only)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -380,8 +392,8 @@ internal fun LiveDetailsPane(
             ConversationLifecycleBar(
                 conversation = conversation,
                 currentUserId = currentUserId,
-                busy = busy,
-                canInteract = !isBlocked,
+                busy = busy || !isOnline,
+                canInteract = !isBlocked && isOnline,
                 onAccept = onAcceptRequest,
                 onCloseOrDecline = onCloseOrDecline
             )
@@ -400,7 +412,7 @@ internal fun LiveDetailsPane(
                     title = "Unblock $peerName",
                     subtitle = "Allow new conversation requests",
                     tint = MaterialTheme.colorScheme.primary,
-                    enabled = !busy,
+                    enabled = !busy && isOnline,
                     onClick = onUnblockPeer,
                     testTag = "live_unblock_button"
                 )
@@ -410,7 +422,7 @@ internal fun LiveDetailsPane(
                     title = "Block $peerName",
                     subtitle = "Stop messages and close this conversation",
                     tint = MaterialTheme.colorScheme.error,
-                    enabled = !busy,
+                    enabled = !busy && isOnline,
                     onClick = { showBlockConfirm = true },
                     testTag = "live_block_button"
                 )
@@ -424,15 +436,22 @@ private fun DetailsQuickActionButton(
     icon: ImageVector,
     label: String,
     contentDescription: String,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     testTag: String
 ) {
+    val contentTint = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Surface(
             onClick = onClick,
+            enabled = enabled,
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier
@@ -443,7 +462,7 @@ private fun DetailsQuickActionButton(
                 Icon(
                     imageVector = icon,
                     contentDescription = contentDescription,
-                    tint = MaterialTheme.colorScheme.onSurface,
+                    tint = contentTint,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -451,7 +470,7 @@ private fun DetailsQuickActionButton(
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = contentTint
         )
     }
 }
