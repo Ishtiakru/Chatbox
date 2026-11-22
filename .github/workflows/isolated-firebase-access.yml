@@ -50,9 +50,35 @@ jobs:
           cleanup_credentials: true
       - name: Install Google Cloud CLI
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Confirm service account impersonation without exposing tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          if ! gcloud auth print-access-token >/dev/null 2>"$error_file"; then
+            if grep -Eqi 'API.*(disabled|not been used)|SERVICE_DISABLED|has not been used.*before' "$error_file"; then
+              echo '::error::A required Google API appears disabled. Check IAM Service Account Credentials and Security Token Service APIs in the test project.'
+            else
+              echo '::error::Could not obtain a service account access token. Check the impersonation grant, required APIs, and provider configuration.'
+            fi
+            exit 1
+          fi
+          echo 'Service account impersonation completed; no token was printed.'
       - name: Read isolated project metadata only
         shell: bash
         run: |
           set -euo pipefail
-          gcloud projects describe "$PROJECT_ID" --format='value(projectId)'
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          if ! gcloud projects describe "$PROJECT_ID" --format='value(projectId)' 2>"$error_file"; then
+            if grep -Eqi 'permission|PERMISSION_DENIED|403' "$error_file"; then
+              echo '::error::Project metadata access was denied. Check that the test service account has the Browser role on this project.'
+            elif grep -Eqi 'API.*(disabled|not been used)|SERVICE_DISABLED|has not been used.*before' "$error_file"; then
+              echo '::error::A required Google API appears disabled. Check the Cloud Resource Manager API in the test project.'
+            else
+              echo '::error::Project metadata could not be read. Check the project, network and Google Cloud settings.'
+            fi
+            exit 1
+          fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
