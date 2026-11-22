@@ -48,3 +48,19 @@ test('Spark source handover is disabled unless both admin and isolated test gate
   }
   assert.equal((await load({VITE_CHATBOX_TEST_MODE:'true',VITE_ENABLE_SPARK_ADMIN:'true',VITE_ENABLE_SPARK_SOURCE_HANDOVER:'true'})).SPARK_SOURCE_HANDOVER_ENABLED,true);
 });
+
+test('restricted source rules preserve exact two-account combined baseline and fail closed', async () => {
+  const {readFileSync} = await import('node:fs');
+  const {restrictedCombinedSourceTestRules} = await import('../scripts/generate-isolated-combined-source-rules.mjs');
+  const {restrictedCombinedTestRules} = await import('../scripts/generate-isolated-combined-rules.mjs');
+  const {sparkSourceRules} = await import('../scripts/generate-spark-source-rules.mjs');
+  const base=readFileSync('firestore.combined-experimental.rules','utf8');
+  const result=restrictedCombinedSourceTestRules(base,'alice','bob');
+  assert.equal(result,sparkSourceRules(restrictedCombinedTestRules(base,'alice','bob')));
+  assert.match(result,/request.auth.uid in \['alice', 'bob'\]/);
+  assert.match(result,/match \/sparkPrivate\/sourceHandover/);
+  assert.match(result,/match \/conversations\/\{conversationId\}/);
+  assert.throws(()=>restrictedCombinedSourceTestRules(base+'\n','alice','bob'));
+  assert.throws(()=>restrictedCombinedSourceTestRules(base,'alice','alice'));
+  assert.throws(()=>restrictedCombinedSourceTestRules(base,"alice' || true",'bob'));
+});
