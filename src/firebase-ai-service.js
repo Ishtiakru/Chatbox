@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { ANDROID_AI_LAB_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED } from './feature-flags.js';
+import { ANDROID_AI_LAB_ENABLED, MULTILINGUAL_ADMIN_LAB_ENABLED, CODE_PROPOSAL_LAB_ENABLED } from './feature-flags.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'firebase/ai';
 import { app } from './firebase.js';
 import { ensureAppCheck } from './app-check.js';
@@ -42,5 +42,14 @@ export async function proposeNativeAdminChange(request) {
   const native = registerPlugin('NativeSaira');
   const result = await native.proposeAdminChange({request:text});
   if (typeof result?.answer !== 'string' || !result.answer.trim() || result.answer.length > 2048) throw new Error('AI service is unavailable.');
+  return result.answer;
+}
+
+// Untrusted, review-only model output; never applied to source or executed.
+export async function proposeNativeCodeChange(request, path, source) {
+  if (!CODE_PROPOSAL_LAB_ENABLED || !Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') throw new Error('Code proposal is not configured.');
+  if (typeof request !== 'string' || !request.trim() || request.length > 1000 || typeof path !== 'string' || !path || path.length > 180 || typeof source !== 'string' || !source.trim() || source.length > 24000) throw new Error('Invalid code request.');
+  const result = await registerPlugin('NativeSaira').proposeCodeChange({request:request.trim(), path, source});
+  if (typeof result?.answer !== 'string' || !result.answer.trim() || result.answer.length > 50000) throw new Error('AI service is unavailable.');
   return result.answer;
 }

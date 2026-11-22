@@ -138,3 +138,9 @@
 .dashboard-execute,.dashboard-security,.dashboard-analytics{scroll-margin-bottom:calc(78px + env(safe-area-inset-bottom))}
 /* Keep the dashboard bar outside the scrollable content so it never covers controls. */
 .admin-page{overflow:hidden}.dashboard-content{min-height:0;overflow-y:auto}.dashboard-nav{position:relative;bottom:auto}
+
+.code-proposal-panel { margin: 1rem 0; padding: 1rem; border: 1px solid #705e2b; border-radius: 12px; color: #eee4c5; }
+.code-proposal-panel summary { cursor: pointer; font-weight: 700; }
+.code-proposal-panel p { font-size: .85rem; line-height: 1.5; }
+.code-proposal-panel input { display: block; width: 100%; margin: .5rem 0; }
+.code-proposal-text { max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .75rem; background: #0b1423; color: #e7e7e7; border-radius: 8px; font-size: .75rem; }

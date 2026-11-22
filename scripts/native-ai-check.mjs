@@ -19,12 +19,12 @@ async function load(file, dependencies) {
   await module.evaluate();
   return module.namespace;
 }
-function mocks({enabled=true, platform='android', ask, propose} = {}) {
+function mocks({enabled=true, platform='android', ask, propose, code} = {}) {
   const calls=[];
-  const plugin={ask:ask || (async payload => { calls.push(payload); return {answer:'hello'}; }), proposeAdminChange:propose || (async payload => { calls.push(payload); return {answer:'{\"action\":\"set_menu\",\"value\":\"top\"}'}; })};
+  const plugin={proposeCodeChange:code || (async payload => { calls.push(payload); return {answer:'review this code'}; }),ask:ask || (async payload => { calls.push(payload); return {answer:'hello'}; }), proposeAdminChange:propose || (async payload => { calls.push(payload); return {answer:'{\"action\":\"set_menu\",\"value\":\"top\"}'}; })};
   const dependencies={
     '@capacitor/core': {Capacitor:{isNativePlatform:()=>platform !== 'web',getPlatform:()=>platform},registerPlugin:()=>plugin},
-    './feature-flags.js': {ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:enabled},
+    './feature-flags.js': {ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:enabled,CODE_PROPOSAL_LAB_ENABLED:enabled},
     'firebase/ai': {getAI:()=>{},getGenerativeModel:()=>{},GoogleAIBackend:class {}},
     './firebase.js': {app:{}}, './app-check.js': {ensureAppCheck:()=>{}},
     './saira-ai-adapter.js': {askSairaWithModel:()=>{}},
@@ -66,11 +66,11 @@ test('native AI rejects empty responses, limits length and propagates failure', 
   await assert.rejects(blocked.askFirebaseSaira('hi'), /App Check is unavailable/);
 });
 
-async function views({enabled=true,native=true,adminAI=false,handoff=false}={}) {
+async function views({enabled=true,native=true,adminAI=false,handoff=false,codeProposal=false}={}) {
   return load('../src/cloud-views.js',{
     './knowledge.js': {escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')},
     '@capacitor/core': {Capacitor:{isNativePlatform:()=>native,getPlatform:()=>native ? 'android' : 'web'}},
-    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:adminAI,CODE_REQUEST_HANDOFF_ENABLED:handoff,ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
+    './feature-flags.js': {SAIRA_AI_ENABLED:enabled,SAIRA_PROVIDER:'firebase-ai',ANDROID_AI_LAB_ENABLED:enabled,MULTILINGUAL_ADMIN_LAB_ENABLED:adminAI,CODE_REQUEST_HANDOFF_ENABLED:handoff,CODE_PROPOSAL_LAB_ENABLED:codeProposal,CODE_PROPOSAL_REF:'a'.repeat(40),ADMIN_BACKEND_ENABLED:false,APP_CHECK_SITE_KEY:''},
   });
 }
 
@@ -168,4 +168,27 @@ test('manual code request handoff is gated and never claims automatic code chang
   assert.doesNotMatch(html, /<script>|<img>/);
   assert.doesNotMatch(enabled.sparkAdminControls({user:null,authLoading:false,admin:{}}), /copy-code-request/);
   assert.doesNotMatch(enabled.sparkAdminControls({...state,admin:{...state.admin,status:'forbidden'}}), /copy-code-request/);
+});
+
+
+test('native code proposal sends only explicitly supplied bounded inputs', async () => {
+  const {dependencies,calls}=mocks();
+  const service=await load('../src/firebase-ai-service.js',dependencies);
+  assert.equal(await service.proposeNativeCodeChange(' বাংলা ', 'src/a.js', 'const a=1;'), 'review this code');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].request,'বাংলা'); assert.equal(calls[0].path,'src/a.js'); assert.equal(calls[0].source,'const a=1;');
+  for (const [req,path,source] of [['','src/a.js','x'],['x'.repeat(1001),'src/a.js','x'],['x','', 'x'],['x','src/a.js','x'.repeat(24001)]]) await assert.rejects(service.proposeNativeCodeChange(req,path,source),/Invalid/);
+  assert.equal(calls.length,1);
+  const off=await load('../src/firebase-ai-service.js',mocks({enabled:false}).dependencies);
+  await assert.rejects(off.proposeNativeCodeChange('x','src/a.js','x'),/not configured/);
+});
+
+test('code proposal panel requires authorized test UI and escapes source and AI text', async () => {
+  const view=await views({codeProposal:true});
+  const state={user:{uid:'mock'},authLoading:false,admin:{status:'authorized',role:'owner',busy:false,command:'test',target:'',delegations:[],codePath:'src/a.js',codeSource:'<script>',codeAnswer:'<img>',codePanelOpen:true}};
+  const html=view.sparkAdminControls(state);
+  assert.match(html,/data-action="generate-code-proposal"/); assert.match(html,/not applied or tested/);
+  assert.match(html,/&lt;script&gt;/); assert.match(html,/&lt;img&gt;/); assert.doesNotMatch(html,/<script>|<img>/);
+  assert.doesNotMatch(view.sparkAdminControls({...state,admin:{...state.admin,status:'forbidden'}}),/generate-code-proposal/);
+  const off=await views({codeProposal:false}); assert.doesNotMatch(off.sparkAdminControls(state),/generate-code-proposal/);
 });

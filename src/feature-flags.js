@@ -30,3 +30,7 @@ export const MULTILINGUAL_ADMIN_LAB_ENABLED = SPARK_ADMIN_ENABLED && ANDROID_AI_
 
 // Manual, local clipboard handoff only; no automatic code editing or release.
 export const CODE_REQUEST_HANDOFF_ENABLED = SPARK_ADMIN_ENABLED && import.meta.env.VITE_CHATBOX_TEST_MODE === 'true' && import.meta.env.VITE_ENABLE_CODE_REQUEST_HANDOFF === 'true';
+
+// Review-only single-file Gemini code suggestion; never edits or deploys.
+export const CODE_PROPOSAL_LAB_ENABLED = MULTILINGUAL_ADMIN_LAB_ENABLED && import.meta.env.VITE_ENABLE_CODE_PROPOSAL_LAB === 'true';
+export const CODE_PROPOSAL_REF = import.meta.env.VITE_CODE_PROPOSAL_REF || '';
