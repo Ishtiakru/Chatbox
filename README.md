@@ -126,7 +126,7 @@ The admin prototype checks a server-controlled `system/admin` UID, not an email 
 
 ### Isolated calling rules candidate (not deployed)
 
-`scripts/generate-isolated-call-rules.mjs FIRST_UID SECOND_UID` generates a two-account version of the pinned experimental call rules. It does not connect to Firebase or deploy anything and must not be used for production. Local synthetic tests check that only those two IDs can access signaling, including when an outsider appears in an existing conversation; the official emulator workflow also runs the candidate test. The candidate does not supply abuse limits, retention cleanup, relay infrastructure, Android support or a security review. Existing test-project rules are unchanged.
+`node scripts/generate-isolated-call-rules.mjs FIRST_UID SECOND_UID` prints a two-account version of the pinned experimental call rules. It does not connect to Firebase, verify project isolation or deploy anything. Use only for review in a disposable, isolated lab; never deploy it to production. It restricts signed-in operations, but `settings/public` remains publicly readable, and it does not stop other users from signing in. Local synthetic tests check that only those two IDs can access signaling, including when an outsider appears in an existing conversation; the official emulator workflow also runs the candidate test. The candidate has no comprehensive abuse/rate limits, automatic data cleanup, relay infrastructure or independent security review; chat is not end-to-end encrypted, and Android calling is not supported. Actual calls have not been validated. Existing test-project rules are unchanged; a deployment would replace them and requires separate review.
 
 ### Optional experimental STUN (browser lab)
 

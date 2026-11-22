@@ -14,6 +14,7 @@ before(async()=>{
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async ctx=>{
     const db=ctx.firestore(), now=new Date();
+    await setDoc(doc(db,'settings','public'),{example:'public'});
     await setDoc(doc(db,'conversations','allowed'),{participants:['alice','bob'],createdBy:'alice',status:'active',createdAt:now,updatedAt:now});
     // An outsider who is present in an existing conversation must still be
     // denied; this checks UID gating separately from membership checks.
@@ -27,6 +28,10 @@ test('allowed participants can signal while an outsider and anonymous user are d
   const eve=env.authenticatedContext('eve').firestore(), anon=env.unauthenticatedContext().firestore();
   const ref=db=>doc(db,'conversations','allowed','calls','call');
   const offer={callerId:'alice',receiverId:'bob',media:'audio',offer:{type:'offer',sdp:'offer'},status:'ringing',createdAt:serverTimestamp(),updatedAt:serverTimestamp()};
+  // Public settings are an intentional exception to the UID restriction.
+  await assertSucceeds(getDoc(doc(anon,'settings','public')));
+  await assertFails(setDoc(doc(anon,'settings','public'),{example:'tampered'}));
+  await assertFails(setDoc(ref(anon),offer));
   await assertSucceeds(setDoc(ref(alice),offer));
   await assertSucceeds(getDoc(ref(bob)));
   await assertFails(getDoc(ref(eve))); await assertFails(getDoc(ref(anon)));
