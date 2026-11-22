@@ -40,3 +40,6 @@ The `[historical-baseline-compare]` workflow step compares the former two-accoun
 ## Test Android App Check access
 
 After the owner approved support for the off-Play test APK, run `45003916376` read the test Android app config: `allowUnrecognizedVersion` was false. The attempt to update that single field returned HTTP 403, and the attempt to list the existing Android SHA certificates also returned HTTP 403. The update was not applied and no SHA certificate was added; the one-off mutation was removed. App Check for Firebase AI was previously observed enforced. The existing APK's SHA-1 was present in the supplied downloaded `google-services (22).json`, but its SHA-256 registration could not be verified via the API. No production setting was changed.
+
+
+After App Check Admin permission became effective, run `45004867027` updated only the test Android app Play Integrity `appIntegrity.allowUnrecognizedVersion` from false to true, then read it back and observed device, account and TTL fields unchanged. This relaxes the app-recognition check for the isolated app only, while Firebase AI App Check enforcement was not changed. The attempt to list SHA certificates still returned HTTP 403; no SHA was added and the existing APK's SHA-256 remains unverified. No real-device attestation or AI request was performed. The one-off mutation was removed.
