@@ -1,4 +1,4 @@
-# Lightfall Android APK — checksum-নেই পাথে প্রজেক্ট জেনারেট (y+1.0.0 পাইপ) + skipSigning + apksigner
+# Lightfall Android APK — TwaGenerator ডিরেক্ট + gradle + apksigner (শূন্য-প্রম্পট)
 name: Build Lightfall APK
 
 on:
@@ -25,15 +25,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Bubblewrap CLI ইনস্টল
+      - name: Bubblewrap কোর ইনস্টল
         run: npm install -g @bubblewrap/cli
-
-      - name: Bubblewrap config প্রি-সেট (প্রম্পট বাইপাস)
-        run: |
-          mkdir -p ~/.bubblewrap "$ANDROID_HOME/bin"
-          printf '{"jdkPath": "%s", "androidSdkPath": "%s"}' "$JAVA_HOME" "$ANDROID_HOME" \
-            > ~/.bubblewrap/config.json
-          cat ~/.bubblewrap/config.json
 
       - name: সাইনিং-কী + twa-manifest
         run: |
@@ -75,31 +68,38 @@ jobs:
           }
           JSON
 
-      - name: APK বিল্ড (checksum-নেই → y+1.0.0 পাইপ, skipSigning)
+      - name: TWA প্রজেক্ট জেনারেট (TwaGenerator ডিরেক্ট — প্রম্পট-ফ্রি)
         run: |
           cd apkbuild
-          set -o pipefail
-          printf 'y\n1.0.0\n' | bubblewrap build --skipSigning 2>&1 | tee build.log
-          ls -la
+          NODE_PATH=$(npm root -g) node -e "
+            const core = require('@bubblewrap/core');
+            const log = { info(){}, warn(){}, error(){}, debug(){} };
+            (async () => {
+              const twaManifest = await core.TwaManifest.fromFile('twa-manifest.json');
+              const gen = new core.TwaGenerator();
+              await gen.createTwaProject('.', twaManifest, log);
+              console.log('PROJECT_GENERATED ✓');
+            })().catch(e => { console.error('GEN_FAIL: ' + (e.stack || e.message)); process.exit(1); });
+          "
+
+      - name: APK বিল্ড (gradle assembleRelease)
+        run: |
+          cd apkbuild
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build.log | tail -3
 
       - name: ত্রুটি-ডায়াগ
         if: failure()
         run: |
           cd apkbuild
-          tail -n 12 build.log | cut -c1-160 | while IFS= read -r line; do
+          grep -E "error:|ERROR|FAILURE|Caused by|What went wrong" build.log | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
             echo "::error::${line//%/Ø}"
           done
-          if [ -f gradlew ]; then
-            ./gradlew --no-daemon assembleRelease 2>&1 | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
-              echo "::error::${line//%/Ø}"
-            done
-          fi
 
-      - name: নিজে সাইন করা (apksigner)
+      - name: সাইন করা (zipalign + apksigner)
         run: |
           cd apkbuild
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
-          "$BT/zipalign" -f 4 app-release-unsigned.apk aligned.apk
+          "$BT/zipalign" -f 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks android.keystore --ks-key-alias android \
             --ks-pass pass:lightfall123 --key-pass pass:lightfall123 \
             --out app-release-signed.apk aligned.apk
