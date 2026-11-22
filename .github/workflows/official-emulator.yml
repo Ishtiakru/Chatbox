@@ -84,6 +84,16 @@ jobs:
           npx --yes firebase-tools@15.37.0 emulators:exec
           --config firebase.emulator.json --project demo-chatbox --only firestore
           'node --test --test-concurrency=1 integration/restricted-combined-source-rules.js'
+      - name: Synthetic email verification and profile reservation (local emulators only)
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.browser-emulator.json --project demo-chatbox --only auth,firestore
+          'node --test --test-concurrency=1 integration/email-verification-emulator.js'
+      - name: Profile contact ID candidate (local emulator only)
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.emulator.json --project demo-chatbox --only firestore
+          'node --test --test-concurrency=1 integration/profile-identity-rules.js'
       - name: Combined candidate, simulated accounts
         run: npm run test:combined
       - name: Message cooldown candidate

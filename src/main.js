@@ -10,6 +10,7 @@ import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_EN
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
+import { loginView } from './login-view.js';
 import { copyChatboxId } from './copy-chatbox-id.js';
 import { copyCodeRequest } from './code-request-handoff.js';
 import { loadCodeSource, copyCodeProposal } from './code-proposal.js';
@@ -115,12 +116,6 @@ function modal() {
  if (!data) return '';
  return `<div class="modal-overlay" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal><button class="modal-close" data-action="close-modal" aria-label="Close">${icon('x')}</button><div class="modal-symbol">✳</div><span class="eyebrow">SAIRA / A LITTLE NOTE</span><h2 id="modal-title">${e(data[0])}</h2><p>${e(data[1])}</p>${state.modal === 'authError' && state.authAltAvailable && testProject.isTestProject && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' ? `<button class="account-button" type="button" data-action="sign-in-legacy" ${state.authLoading ? 'disabled' : ''}>বিকল্প Google sign-in চেষ্টা করুন</button>` : ''}<button class="primary-button" data-action="close-modal">Got it ${icon('arrow-right')}</button></section></div>`;
 }
-// Adapted from the lavender-auth design. Authentication still uses the existing
-// Firebase bridge; this screen does not grant access or expose the source QR.
-function loginScreen() {
- const bn = state.loginLanguage === 'bn';
- return `<main class="lavender-login" lang="${bn ? 'bn' : 'en'}"><div class="login-content"><div class="login-top"><label for="login-language" class="login-language-label">${bn ? 'ভাষা' : 'Language'}</label><select id="login-language" aria-label="${bn ? 'ভাষা নির্বাচন করুন' : 'Select language'}"><option value="bn" ${bn ? 'selected' : ''}>বাংলা (BD)</option><option value="en" ${!bn ? 'selected' : ''}>English (US)</option></select></div><div class="login-intro"><img class="login-logo" src="/chatbox-logo.jpg" alt="Chatbox"><h1>${bn ? 'Chatbox-এ স্বাগতম' : 'Welcome to Chatbox'}</h1><p>${bn ? 'আপনার কথোপকথন, এক সুন্দর জায়গায়।' : 'Your conversations, in one thoughtful space.'}</p></div><div class="login-actions"><button type="button" class="login-primary" data-action="sign-in" ${!state.authReady || state.authLoading ? 'disabled' : ''}>${!state.authReady ? (bn ? 'অ্যাকাউন্ট যাচাই হচ্ছে…' : 'Checking account…') : state.authLoading ? (bn ? 'সাইন ইন হচ্ছে…' : 'Signing in…') : (bn ? 'Google দিয়ে লগ ইন' : 'Log in with Google')}</button><p class="login-explanation">${bn ? 'নিরাপদে সাইন ইন করতে আপনার Google অ্যাকাউন্ট ব্যবহার করুন।' : 'Use your Google account to sign in.'}</p><button type="button" class="login-secondary" data-action="login-guest">${bn ? 'ডেমো দেখুন' : 'Explore the demo'}</button><p class="login-disclaimer">${bn ? 'ডেমোতে সাইন ইন হয় না; লাইভ ফিচারের জন্য সাইন ইন প্রয়োজন।' : 'Demo access does not sign you in; live features require an account.'}</p></div><div class="login-wordmark">✦ &nbsp; Chatbox</div></div></main>`;
-}
 function render(scroll = false) {
  const activeId = document.activeElement?.id;
  const selectionStart = document.activeElement?.selectionStart;
@@ -129,7 +124,7 @@ function render(scroll = false) {
  const liveListScrollTop = document.querySelector('.live-list')?.scrollTop;
  const dashboardScrollTop = document.querySelector('.dashboard-content')?.scrollTop;
  if (!state.user && !state.loginGuest) {
-   root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}${loginScreen()}${modal()}`;
+   root.innerHTML = `${testProject.isTestProject ? `<div class="test-project-banner" role="status">TEST PROJECT: ${e(testProject.config.projectId)} · Do not use sensitive information</div>` : ''}${loginView({language:state.loginLanguage,authReady:state.authReady,authLoading:state.authLoading})}${modal()}`;
    createIcons({ icons });
    return;
  }
