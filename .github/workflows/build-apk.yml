@@ -1,4 +1,4 @@
-# Lightfall Android APK — skipSigning + apksigner + ত্রুটি অ্যানোটেশনে
+# Lightfall Android APK — JDK-প্রম্পটে 'n' (সিস্টেম JDK) + skipSigning + apksigner
 name: Build Lightfall APK
 
 on:
@@ -74,11 +74,11 @@ jobs:
               crypto.createHash('sha1').update(data).digest('hex'));
           "
 
-      - name: APK বিল্ড (skipSigning + লগ)
+      - name: APK বিল্ড (JDK-প্রম্পটে n + skipSigning)
         run: |
           cd apkbuild
           set -o pipefail
-          bubblewrap build --skipSigning 2>&1 | tee build.log
+          printf 'n\n' | bubblewrap build --skipSigning 2>&1 | tee build.log
           ls -la
 
       - name: ত্রুটি-টেইল অ্যানোটেশনে
