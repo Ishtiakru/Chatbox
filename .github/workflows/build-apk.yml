@@ -1,4 +1,4 @@
-# Lightfall Android APK — TwaGenerator ডিরেক্ট + gradle + apksigner
+# Lightfall Android APK — TwaGenerator ডিরেক্ট + gradle + apksigner (minSdk 24)
 name: Build Lightfall APK
 
 on:
@@ -64,7 +64,7 @@ jobs:
             "webManifestUrl": "https://ishtiakru.github.io/Chatbox/manifest.webmanifest",
             "fallbackType": "webview",
             "features": {},
-            "minSdkVersion": 21
+            "minSdkVersion": 24
           }
           JSON
 
