@@ -117,3 +117,37 @@ jobs:
               raise SystemExit(1)
           print('Permission lookup only; no Firebase rules or resources were changed.')
           PY
+      - name: Compare the published isolated Firestore rules without printing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, re, subprocess, urllib.error, urllib.request
+
+          project = 'chatbox-test-2c236731bf'
+          expected = '64a2d3e822ae44354853250dea8f9cb43c430c06c0e365d4f9788d17a79ab44d'
+          token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          def get(path):
+              request = urllib.request.Request('https://firebaserules.googleapis.com/v1/' + path, headers={'Authorization': 'Bearer ' + token})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  print(f'::error::Rules lookup failed with HTTP {error.code}; no credentials or response details were printed.')
+                  raise SystemExit(1)
+          release = get(f'projects/{project}/releases/cloud.firestore')
+          ruleset_name = release.get('rulesetName', '')
+          if not re.fullmatch(r'projects/' + re.escape(project) + r'/rulesets/[A-Za-z0-9-]+', ruleset_name):
+              raise SystemExit('Unexpected ruleset resource; refusing lookup.')
+          ruleset = get(ruleset_name)
+          del token
+          sources = ruleset.get('source', {}).get('files', [])
+          if len(sources) != 1 or not isinstance(sources[0].get('content'), str):
+              raise SystemExit('Unexpected rules source; no source was printed.')
+          digest = hashlib.sha256(sources[0]['content'].encode('utf-8')).hexdigest()
+          if digest != expected:
+              print('::warning::Published rules are not a byte-for-byte match for the prepared two-account rules. This alone does not establish whether the differences are material.')
+          else:
+              print('Published Firestore rules match the prepared two-account rules byte for byte.')
+          print('Read-only comparison only; no rules or resources were changed.')
+          PY
