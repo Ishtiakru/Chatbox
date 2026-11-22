@@ -17,6 +17,7 @@ class DemoPreferencesRepository(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
     private val savedMessagesKey = stringPreferencesKey("saira_demo_messages_v1")
     private val loginLanguageKey = stringPreferencesKey("login_language")
+    private val quickReactionKey = stringPreferencesKey("dm_quick_reaction")
 
     val savedMessages: Flow<Map<String, List<DemoMessage>>> =
         context.demoDataStore.data.map { prefs ->
@@ -34,6 +35,12 @@ class DemoPreferencesRepository(private val context: Context) {
             if (lang == "en" || lang == "bn") lang else "bn"
         }
 
+    val quickReaction: Flow<String> =
+        context.demoDataStore.data.map { prefs ->
+            val saved = prefs[quickReactionKey]?.trim().orEmpty()
+            if (saved.isNotEmpty() && saved.length <= 8) saved else "💜"
+        }
+
     suspend fun saveDemoMessages(messages: Map<String, List<DemoMessage>>) {
         val encoded = json.encodeToString(messages)
         context.demoDataStore.edit { prefs ->
@@ -45,6 +52,13 @@ class DemoPreferencesRepository(private val context: Context) {
         val normalized = if (languageCode == "en") "en" else "bn"
         context.demoDataStore.edit { prefs ->
             prefs[loginLanguageKey] = normalized
+        }
+    }
+
+    suspend fun setQuickReaction(reaction: String) {
+        val normalized = reaction.trim().take(8).ifEmpty { "💜" }
+        context.demoDataStore.edit { prefs ->
+            prefs[quickReactionKey] = normalized
         }
     }
 }

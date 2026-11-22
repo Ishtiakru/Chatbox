@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -21,15 +23,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,14 +55,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.ui.theme.ChatboxBodyInk
-import com.example.ui.theme.ChatboxInk
-import com.example.ui.theme.ChatboxLoginOverlayBottom
-import com.example.ui.theme.ChatboxLoginOverlayTop
-import com.example.ui.theme.ChatboxLoginPrimary
+import com.example.ui.theme.ChatboxLoginBlue
+import com.example.ui.theme.ChatboxLoginCanvasBottom
+import com.example.ui.theme.ChatboxLoginCanvasTop
+import com.example.ui.theme.ChatboxLoginCardBorder
+import com.example.ui.theme.ChatboxLoginTextPrimary
+import com.example.ui.theme.ChatboxLoginTextSecondary
 
 @Composable
 fun AuthLoginScreen(
@@ -61,140 +71,182 @@ fun AuthLoginScreen(
     authReady: Boolean,
     authLoading: Boolean,
     onLanguageSelected: (String) -> Unit,
-    onGoogleSignIn: () -> Unit,
-    onExploreDemo: () -> Unit
+    onGoogleSignIn: () -> Unit
 ) {
     val bn = language == "bn"
     var languageMenuExpanded by remember { mutableStateOf(false) }
+    var showSignInInfoDialog by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = R.drawable.login_lavender),
-            contentDescription = stringResource(id = R.string.cd_login_backdrop),
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(ChatboxLoginOverlayTop, ChatboxLoginOverlayBottom)
-                    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(ChatboxLoginCanvasTop, ChatboxLoginCanvasBottom)
                 )
-        )
-
+            )
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 520.dp),
-                contentAlignment = Alignment.CenterEnd
+                    .padding(top = 8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = if (bn) "ভাষা" else "Language",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = ChatboxBodyInk
-                    )
-                    Box {
-                        Surface(
-                            onClick = { languageMenuExpanded = true },
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.White.copy(alpha = 0.85f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("language_selector")
-                        ) {
-                            Text(
-                                text = if (bn) "বাংলা (BD)" else "English (US)",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = ChatboxInk,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = languageMenuExpanded,
-                            onDismissRequest = { languageMenuExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("বাংলা (BD)") },
-                                onClick = {
-                                    languageMenuExpanded = false
-                                    onLanguageSelected("bn")
-                                },
-                                modifier = Modifier.testTag("language_option_bn")
-                            )
-                            DropdownMenuItem(
-                                text = { Text("English (US)") },
-                                onClick = {
-                                    languageMenuExpanded = false
-                                    onLanguageSelected("en")
-                                },
-                                modifier = Modifier.testTag("language_option_en")
-                            )
-                        }
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { languageMenuExpanded = true }
+                            .minimumInteractiveComponentSize()
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .testTag("language_selector"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = if (bn) "বাংলা (BD)" else "English (US)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ChatboxLoginTextSecondary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowDown,
+                            contentDescription = stringResource(id = R.string.cd_language_chevron),
+                            tint = ChatboxLoginTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = languageMenuExpanded,
+                        onDismissRequest = { languageMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("English (US)") },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected("en")
+                            },
+                            modifier = Modifier.testTag("language_option_en")
+                        )
+                        DropdownMenuItem(
+                            text = { Text("বাংলা (BD)") },
+                            onClick = {
+                                languageMenuExpanded = false
+                                onLanguageSelected("bn")
+                            },
+                            modifier = Modifier.testTag("language_option_bn")
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f, fill = true))
-
-            Column(
+            Spacer(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 420.dp)
-                    .padding(vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .weight(0.62f, fill = true)
+                    .heightIn(min = 28.dp)
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(1.2.dp, ChatboxLoginCardBorder, CircleShape),
+                contentAlignment = Alignment.Center
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.chatbox_logo),
                     contentDescription = stringResource(id = R.string.cd_chatbox_logo),
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(88.dp)
+                        .fillMaxSize()
+                        .padding(3.dp)
                         .clip(CircleShape)
-                        .border(3.dp, Color.White, CircleShape)
                 )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = if (bn) "Chatbox-এ স্বাগতম" else "Welcome to Chatbox",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = ChatboxInk,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (bn) "আপনার কথোপকথন, এক সুন্দর জায়গায়।" else "Your conversations, in one thoughtful space.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = ChatboxBodyInk,
-                    textAlign = TextAlign.Center
-                )
+            }
 
-                Spacer(modifier = Modifier.height(32.dp))
+            Spacer(
+                modifier = Modifier
+                    .weight(0.55f, fill = true)
+                    .heightIn(min = 28.dp)
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(
+                    onClick = {
+                        if (authReady && !authLoading) {
+                            onGoogleSignIn()
+                        }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, ChatboxLoginCardBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .testTag("google_account_row")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 18.dp, end = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (bn) "Google অ্যাকাউন্ট দিয়ে চালিয়ে যান" else "Continue with Google account",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = ChatboxLoginTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 14.dp)
+                        )
+                        IconButton(
+                            onClick = { showSignInInfoDialog = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("sign_in_info_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = stringResource(id = R.string.cd_sign_in_info),
+                                tint = ChatboxLoginTextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Button(
                     onClick = onGoogleSignIn,
                     enabled = authReady && !authLoading,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = ChatboxLoginPrimary,
-                        contentColor = Color.White
+                        containerColor = ChatboxLoginBlue,
+                        contentColor = Color.White,
+                        disabledContainerColor = ChatboxLoginBlue.copy(alpha = 0.65f),
+                        disabledContentColor = Color.White
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
+                        .height(50.dp)
                         .testTag("google_sign_in_button")
                 ) {
                     if (!authReady) {
@@ -204,7 +256,10 @@ fun AuthLoginScreen(
                             color = Color.White
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(if (bn) "অ্যাকাউন্ট যাচাই হচ্ছে…" else "Checking account…")
+                        Text(
+                            text = if (bn) "অ্যাকাউন্ট যাচাই হচ্ছে…" else "Checking account…",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
                     } else if (authLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
@@ -212,61 +267,92 @@ fun AuthLoginScreen(
                             color = Color.White
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(if (bn) "সাইন ইন হচ্ছে…" else "Signing in…")
+                        Text(
+                            text = if (bn) "সাইন ইন হচ্ছে…" else "Logging in…",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
                     } else {
                         Text(
-                            text = if (bn) "Google দিয়ে লগ ইন" else "Log in with Google",
-                            fontWeight = FontWeight.SemiBold
+                            text = if (bn) "লগ ইন" else "Log in",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (bn) "নিরাপদে সাইন ইন করতে আপনার Google অ্যাকাউন্ট ব্যবহার করুন।" else "Use your Google account to sign in.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ChatboxBodyInk,
-                    textAlign = TextAlign.Center
-                )
 
-                Spacer(modifier = Modifier.height(18.dp))
-
-                OutlinedButton(
-                    onClick = onExploreDemo,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, ChatboxLoginPrimary.copy(alpha = 0.45f)),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = Color.White.copy(alpha = 0.72f),
-                        contentColor = ChatboxInk
-                    ),
+                TextButton(
+                    onClick = { showSignInInfoDialog = true },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("explore_demo_button")
+                        .minimumInteractiveComponentSize()
+                        .testTag("login_help_button")
                 ) {
                     Text(
-                        text = if (bn) "ডেমো দেখুন" else "Explore the demo",
-                        fontWeight = FontWeight.Medium
+                        text = if (bn) "লগ ইনে সাহায্য প্রয়োজন?" else "Having trouble logging in?",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                        color = ChatboxLoginTextPrimary
                     )
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (bn) "ডেমোতে সাইন ইন হয় না; লাইভ ফিচারের জন্য সাইন ইন প্রয়োজন।" else "Demo access does not sign you in; live features require an account.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ChatboxBodyInk.copy(alpha = 0.85f),
-                    textAlign = TextAlign.Center
-                )
             }
 
-            Spacer(modifier = Modifier.weight(1f, fill = true))
-
-            Text(
-                text = "✦  Chatbox",
-                style = MaterialTheme.typography.labelLarge,
-                color = ChatboxInk.copy(alpha = 0.75f),
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+            Spacer(
+                modifier = Modifier
+                    .weight(1f, fill = true)
+                    .heightIn(min = 24.dp)
             )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp)
+                    .padding(bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Forum,
+                        contentDescription = stringResource(id = R.string.cd_brand_mark),
+                        tint = ChatboxLoginBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Chatbox",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = ChatboxLoginTextPrimary
+                    )
+                }
+            }
         }
+    }
+
+    if (showSignInInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignInInfoDialog = false },
+            title = {
+                Text(
+                    text = if (bn) "Google দিয়ে Chatbox লগ ইন" else "Sign in to Chatbox",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Text(
+                    text = if (bn) {
+                        "Chatbox নিরাপদ Google সাইন-ইন ব্যবহার করে। প্রথমবার লগ ইন করলে আপনার অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে তৈরি হবে, আলাদা পাসওয়ার্ড মনে রাখার প্রয়োজন নেই।"
+                    } else {
+                        "Chatbox uses your Google account via Android Credential Manager so there is no separate password to remember. Signing in automatically creates or restores your live Chatbox profile."
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showSignInInfoDialog = false }) {
+                    Text(if (bn) "ঠিক আছে" else "Got it")
+                }
+            }
+        )
     }
 }

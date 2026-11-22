@@ -81,11 +81,46 @@ service cloud.firestore {
         && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidOptionalImageUrl(data) {
+      return !('imageUrl' in data) || (
+        data.imageUrl is string
+        && data.imageUrl.size() > 0
+        && data.imageUrl.size() <= 2048
+        && data.imageUrl.matches('^https://(firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com)/.*')
+      );
+    }
+
+    function isValidOptionalAudioUrl(data) {
+      return !('audioUrl' in data) || (
+        data.audioUrl is string
+        && data.audioUrl.size() > 0
+        && data.audioUrl.size() <= 2048
+        && data.audioUrl.matches('^https://(firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com)/.*')
+      );
+    }
+
+    function isValidOptionalAudioDuration(data) {
+      return !('audioDurationMs' in data) || (
+        ('audioUrl' in data && data.audioUrl is string && data.audioUrl.size() > 0)
+        && data.audioDurationMs is int
+        && data.audioDurationMs >= 0
+        && data.audioDurationMs <= 300000
+      );
+    }
+
     function isValidMessage(data) {
       return data.keys().hasAll(['senderId', 'body', 'sentAt'])
-        && data.keys().hasOnly(['senderId', 'body', 'sentAt'])
+        && data.keys().hasOnly(['senderId', 'body', 'sentAt', 'imageUrl', 'audioUrl', 'audioDurationMs'])
         && data.senderId is string && data.senderId.size() > 0 && data.senderId.size() <= 128
-        && data.body is string && data.body.size() > 0 && data.body.size() <= 2000
+        && data.body is string && data.body.size() <= 2000
+        && isValidOptionalImageUrl(data)
+        && isValidOptionalAudioUrl(data)
+        && isValidOptionalAudioDuration(data)
+        && (
+          data.body.size() > 0
+          || ('imageUrl' in data && data.imageUrl.size() > 0)
+          || ('audioUrl' in data && data.audioUrl.size() > 0)
+        )
         && data.sentAt is timestamp && data.sentAt <= request.time;
     }
 

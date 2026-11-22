@@ -70,6 +70,7 @@ import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
+import com.example.media.VoicePlaybackState
 import com.example.notifications.NotificationHelper
 import com.example.ui.components.ChatboxNoticeBanner
 import com.example.ui.components.ConversationSearchBar
@@ -143,9 +144,16 @@ fun LiveChatsScreen(
     peerProfiles: Map<String, UserProfile>,
     conversationMessages: Map<String, List<LiveMessage>>,
     threadState: LiveThreadState,
+    voicePlaybackState: VoicePlaybackState,
     profileReady: Boolean,
+    quickReaction: String,
+    onQuickReactionChange: (String) -> Unit,
     onSelectConversation: (String) -> Unit,
     onSetScreen: (LiveScreenMode) -> Unit,
+    onOpenCalls: () -> Unit,
+    onOpenThreadSearch: () -> Unit,
+    onCloseThreadSearch: () -> Unit,
+    onThreadSearchQueryChange: (String) -> Unit,
     onToggleNewConversation: () -> Unit,
     onSearchChange: (String) -> Unit,
     onPeerDraftChange: (String) -> Unit,
@@ -154,7 +162,18 @@ fun LiveChatsScreen(
     onRespondToRequest: (String, String) -> Unit,
     onLoadOlderMessages: () -> Unit,
     onMessageDraftChange: (String) -> Unit,
+    onAppendEmoji: (String) -> Unit,
+    onCreateCameraUri: () -> android.net.Uri?,
+    onAttachImage: (String?) -> Unit,
+    onClearAttachedImage: () -> Unit,
+    onStartVoiceRecording: () -> Unit,
+    onStopVoiceRecording: (Boolean) -> Unit,
+    onCancelVoiceRecording: () -> Unit,
+    onClearPendingVoice: () -> Unit,
+    onToggleVoicePlayback: (String, String, Long) -> Unit,
+    onAttachmentError: (String) -> Unit,
     onSendMessage: () -> Unit,
+    onSendQuickReaction: (String) -> Unit,
     onBlockPeer: (String, Conversation) -> Unit,
     onUnblockPeer: (String) -> Unit
 ) {
@@ -209,7 +228,11 @@ fun LiveChatsScreen(
                                 peerProfile = peerProfiles[peerUid],
                                 isBlocked = isBlocked,
                                 busy = threadState.busy || !profileReady,
+                                quickReaction = quickReaction,
                                 onBackToThread = { onSetScreen(LiveScreenMode.THREAD) },
+                                onOpenCalls = onOpenCalls,
+                                onSearchInConversation = onOpenThreadSearch,
+                                onQuickReactionChange = onQuickReactionChange,
                                 onAcceptRequest = { onRespondToRequest(activeConversation.id, "active") },
                                 onCloseOrDecline = { onRespondToRequest(activeConversation.id, "closed") },
                                 onBlockPeer = { onBlockPeer(peerUid, activeConversation) },
@@ -222,16 +245,32 @@ fun LiveChatsScreen(
                                 currentUserId = currentUserId,
                                 peerProfile = peerProfiles[peerUid],
                                 threadState = threadState,
+                                voicePlaybackState = voicePlaybackState,
                                 isBlocked = isBlocked,
                                 profileReady = profileReady,
+                                quickReaction = quickReaction,
                                 showBackButton = false,
                                 onBack = {},
                                 onOpenDetails = { onSetScreen(LiveScreenMode.DETAILS) },
+                                onOpenCalls = onOpenCalls,
+                                onCloseThreadSearch = onCloseThreadSearch,
+                                onThreadSearchQueryChange = onThreadSearchQueryChange,
                                 onAcceptRequest = { onRespondToRequest(activeConversation.id, "active") },
                                 onCloseOrDecline = { onRespondToRequest(activeConversation.id, "closed") },
                                 onLoadOlder = onLoadOlderMessages,
                                 onMessageDraftChange = onMessageDraftChange,
+                                onAppendEmoji = onAppendEmoji,
+                                onCreateCameraUri = onCreateCameraUri,
+                                onAttachImage = onAttachImage,
+                                onClearAttachedImage = onClearAttachedImage,
+                                onStartVoiceRecording = onStartVoiceRecording,
+                                onStopVoiceRecording = onStopVoiceRecording,
+                                onCancelVoiceRecording = onCancelVoiceRecording,
+                                onClearPendingVoice = onClearPendingVoice,
+                                onToggleVoicePlayback = onToggleVoicePlayback,
+                                onAttachmentError = onAttachmentError,
                                 onSendMessage = onSendMessage,
+                                onSendQuickReaction = onSendQuickReaction,
                                 onUnblockPeer = { onUnblockPeer(peerUid) },
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -262,7 +301,11 @@ fun LiveChatsScreen(
                         peerProfile = peerProfiles[peerUid],
                         isBlocked = peerUid in blockedIds,
                         busy = threadState.busy || !profileReady,
+                        quickReaction = quickReaction,
                         onBackToThread = { onSetScreen(LiveScreenMode.THREAD) },
+                        onOpenCalls = onOpenCalls,
+                        onSearchInConversation = onOpenThreadSearch,
+                        onQuickReactionChange = onQuickReactionChange,
                         onAcceptRequest = { onRespondToRequest(activeConversation.id, "active") },
                         onCloseOrDecline = { onRespondToRequest(activeConversation.id, "closed") },
                         onBlockPeer = { onBlockPeer(peerUid, activeConversation) },
@@ -277,16 +320,32 @@ fun LiveChatsScreen(
                         currentUserId = currentUserId,
                         peerProfile = peerProfiles[peerUid],
                         threadState = threadState,
+                        voicePlaybackState = voicePlaybackState,
                         isBlocked = peerUid in blockedIds,
                         profileReady = profileReady,
+                        quickReaction = quickReaction,
                         showBackButton = true,
                         onBack = { onSetScreen(LiveScreenMode.LIST) },
                         onOpenDetails = { onSetScreen(LiveScreenMode.DETAILS) },
+                        onOpenCalls = onOpenCalls,
+                        onCloseThreadSearch = onCloseThreadSearch,
+                        onThreadSearchQueryChange = onThreadSearchQueryChange,
                         onAcceptRequest = { onRespondToRequest(activeConversation.id, "active") },
                         onCloseOrDecline = { onRespondToRequest(activeConversation.id, "closed") },
                         onLoadOlder = onLoadOlderMessages,
                         onMessageDraftChange = onMessageDraftChange,
+                        onAppendEmoji = onAppendEmoji,
+                        onCreateCameraUri = onCreateCameraUri,
+                        onAttachImage = onAttachImage,
+                        onClearAttachedImage = onClearAttachedImage,
+                        onStartVoiceRecording = onStartVoiceRecording,
+                        onStopVoiceRecording = onStopVoiceRecording,
+                        onCancelVoiceRecording = onCancelVoiceRecording,
+                        onClearPendingVoice = onClearPendingVoice,
+                        onToggleVoicePlayback = onToggleVoicePlayback,
+                        onAttachmentError = onAttachmentError,
                         onSendMessage = onSendMessage,
+                        onSendQuickReaction = onSendQuickReaction,
                         onUnblockPeer = { onUnblockPeer(peerUid) },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -764,7 +823,13 @@ private fun LiveConversationRow(
     val previewText = when {
         matchedMessage != null -> {
             val prefix = if (matchedMessage.senderId == currentUserId) "You: " else ""
-            "$prefix${matchedMessage.body}"
+            val label = when {
+                matchedMessage.body.isNotBlank() -> matchedMessage.body
+                !matchedMessage.imageUrl.isNullOrBlank() -> "📷 Photo"
+                !matchedMessage.audioUrl.isNullOrBlank() -> "🎤 Voice note"
+                else -> "Message"
+            }
+            "$prefix$label"
         }
         conversation.status == "pending" && conversation.createdBy == currentUserId ->
             "Request sent · waiting"
@@ -772,7 +837,20 @@ private fun LiveConversationRow(
             "Message request · tap to review"
         latestMessage != null -> {
             val prefix = if (latestMessage.senderId == currentUserId) "You: " else ""
-            "$prefix${latestMessage.body}"
+            val label = when {
+                !latestMessage.imageUrl.isNullOrBlank() && latestMessage.body.isNotBlank() ->
+                    "📷 ${latestMessage.body}"
+                !latestMessage.imageUrl.isNullOrBlank() ->
+                    "📷 Photo"
+                !latestMessage.audioUrl.isNullOrBlank() && latestMessage.body.isNotBlank() ->
+                    "🎤 ${latestMessage.body}"
+                !latestMessage.audioUrl.isNullOrBlank() -> {
+                    val dur = latestMessage.audioDurationMs ?: 0L
+                    if (dur > 0L) "🎤 Voice note (${formatAudioDuration(dur)})" else "🎤 Voice note"
+                }
+                else -> latestMessage.body
+            }
+            "$prefix$label"
         }
         conversation.status == "active" -> "Conversation"
         else -> "Closed conversation"

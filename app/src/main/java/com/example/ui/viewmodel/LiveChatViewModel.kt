@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,8 +8,12 @@ import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
 import com.example.data.model.UiState
 import com.example.data.model.UserProfile
+import com.example.data.repository.ChatMediaStorageRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.friendlyFirestoreMessage
+import com.example.media.VoiceNotePlayer
+import com.example.media.VoiceNoteRecorder
+import com.example.media.VoicePlaybackState
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
@@ -34,7 +39,18 @@ data class LiveThreadState(
     val newConversationOpen: Boolean = false,
     val peerDraft: String = "",
     val messageDraft: String = "",
+    val pendingImageUri: String? = null,
+    val uploadingImage: Boolean = false,
+    val isRecordingVoice: Boolean = false,
+    val recordingElapsedMs: Long = 0L,
+    val recordingAmplitude: Float = 0.1f,
+    val pendingVoicePath: String? = null,
+    val pendingVoiceDurationMs: Long = 0L,
+    val uploadingVoice: Boolean = false,
+    val uploadProgress: Float = 0f,
     val searchQuery: String = "",
+    val threadSearchOpen: Boolean = false,
+    val threadSearchQuery: String = "",
     val messages: List<LiveMessage> = emptyList(),
     val olderMessages: List<LiveMessage> = emptyList(),
     val hasOlder: Boolean = false,
@@ -45,6 +61,9 @@ data class LiveThreadState(
     val error: String = "",
     val idCopiedNotice: Boolean = false
 ) {
+    val isUploadingMedia: Boolean
+        get() = uploadingImage || uploadingVoice
+
     val allDisplayMessages: List<LiveMessage>
         get() {
             val recentIds = messages.mapTo(HashSet()) { it.id }
@@ -56,7 +75,9 @@ data class LiveThreadState(
 class LiveChatViewModel(
     private val repository: LiveChatRepository,
     private val currentUserId: String,
-    displayName: String?
+    displayName: String?,
+    private val mediaRepository: ChatMediaStorageRepository? = null,
+    private val voiceRecorder: VoiceNoteRecorder? = null
 ) : ViewModel() {
 
     private companion object {
@@ -66,14 +87,22 @@ class LiveChatViewModel(
         const val LIST_MESSAGE_PREVIEW_LIMIT = 50L
         const val SLOW_WRITE_NOTICE_MS = 8000L
         const val PAGE_SIZE = 100L
+        const val MAX_VOICE_DURATION_MS = 60_000L
+        const val RECORD_TICK_MS = 150L
     }
 
     private val draftsByConversation = mutableMapOf<String, String>()
+    private val pendingImagesByConversation = mutableMapOf<String, String>()
+    private val pendingVoicesByConversation = mutableMapOf<String, Pair<String, Long>>()
     private val errorsByConversation = mutableMapOf<String, String>()
     private val profileJobs = mutableMapOf<String, Job>()
     private val listMessageJobs = mutableMapOf<String, Job>()
     private var messageObserverJob: Job? = null
+    private var recordingTickerJob: Job? = null
     private var oldestCursor: DocumentSnapshot? = null
+
+    private val voicePlayer = VoiceNotePlayer(viewModelScope)
+    val voicePlaybackState: StateFlow<VoicePlaybackState> = voicePlayer.state
 
     private val _peerProfiles = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
     val peerProfiles: StateFlow<Map<String, UserProfile>> = _peerProfiles.asStateFlow()
@@ -228,8 +257,12 @@ class LiveChatViewModel(
 
     fun selectConversation(conversationId: String) {
         messageObserverJob?.cancel()
+        cancelVoiceRecording()
+        voicePlayer.stopAndRelease()
         oldestCursor = null
         val savedDraft = draftsByConversation[conversationId].orEmpty()
+        val savedPendingImage = pendingImagesByConversation[conversationId]
+        val savedPendingVoice = pendingVoicesByConversation[conversationId]
         val savedError = errorsByConversation[conversationId].orEmpty()
         val cachedMessages = _recentMessagesByConversation.value[conversationId].orEmpty()
         val cachedOlder = _olderMessagesByConversation.value[conversationId].orEmpty()
@@ -237,7 +270,18 @@ class LiveChatViewModel(
             selectedId = conversationId,
             screen = LiveScreenMode.THREAD,
             newConversationOpen = false,
+            threadSearchOpen = false,
+            threadSearchQuery = "",
             messageDraft = savedDraft,
+            pendingImageUri = savedPendingImage,
+            uploadingImage = false,
+            isRecordingVoice = false,
+            recordingElapsedMs = 0L,
+            recordingAmplitude = 0.1f,
+            pendingVoicePath = savedPendingVoice?.first,
+            pendingVoiceDurationMs = savedPendingVoice?.second ?: 0L,
+            uploadingVoice = false,
+            uploadProgress = 0f,
             messages = cachedMessages,
             olderMessages = cachedOlder,
             hasOlder = cachedOlder.isNotEmpty() || cachedMessages.size >= PAGE_SIZE.toInt(),
@@ -317,6 +361,24 @@ class LiveChatViewModel(
         _threadState.value = _threadState.value.copy(searchQuery = query.take(128))
     }
 
+    fun openThreadSearch() {
+        _threadState.value = _threadState.value.copy(
+            screen = LiveScreenMode.THREAD,
+            threadSearchOpen = true
+        )
+    }
+
+    fun closeThreadSearch() {
+        _threadState.value = _threadState.value.copy(
+            threadSearchOpen = false,
+            threadSearchQuery = ""
+        )
+    }
+
+    fun updateThreadSearch(query: String) {
+        _threadState.value = _threadState.value.copy(threadSearchQuery = query.take(128))
+    }
+
     fun updatePeerDraft(text: String) {
         _threadState.value = _threadState.value.copy(peerDraft = text.take(128))
     }
@@ -328,6 +390,176 @@ class LiveChatViewModel(
             draftsByConversation[id] = clamped
         }
         _threadState.value = _threadState.value.copy(messageDraft = clamped)
+    }
+
+    fun appendMessageEmoji(emoji: String = "😊") {
+        val current = _threadState.value.messageDraft
+        updateMessageDraft(current + emoji)
+    }
+
+    fun createCameraPhotoUri(): Uri? {
+        return runCatching { mediaRepository?.createCameraImageUri() }
+            .onFailure { error ->
+                _threadState.value = _threadState.value.copy(
+                    error = error.message ?: "Unable to prepare camera photo file."
+                )
+            }
+            .getOrNull()
+    }
+
+    fun attachPendingImage(uriString: String?) {
+        val id = _threadState.value.selectedId ?: return
+        val previous = pendingImagesByConversation[id]
+        if (previous != null && previous != uriString) {
+            mediaRepository?.cleanupTempCameraFile(previous)
+        }
+        if (uriString.isNullOrBlank()) {
+            pendingImagesByConversation.remove(id)
+        } else {
+            pendingImagesByConversation[id] = uriString
+        }
+        errorsByConversation[id] = ""
+        _threadState.value = _threadState.value.copy(
+            pendingImageUri = uriString,
+            error = ""
+        )
+    }
+
+    fun clearPendingImage() {
+        val id = _threadState.value.selectedId
+        val previous = if (id != null) pendingImagesByConversation.remove(id) else _threadState.value.pendingImageUri
+        mediaRepository?.cleanupTempCameraFile(previous)
+        _threadState.value = _threadState.value.copy(
+            pendingImageUri = null,
+            uploadingImage = false,
+            uploadProgress = 0f
+        )
+    }
+
+    fun reportAttachmentError(message: String) {
+        val id = _threadState.value.selectedId
+        if (id != null) {
+            errorsByConversation[id] = message
+        }
+        _threadState.value = _threadState.value.copy(error = message)
+    }
+
+    fun startVoiceRecording() {
+        val state = _threadState.value
+        val conversationId = state.selectedId ?: return
+        if (state.busy || state.isUploadingMedia || state.isRecordingVoice) return
+        val recorder = voiceRecorder
+        if (recorder == null) {
+            reportAttachmentError("Voice recording is unavailable on this device.")
+            return
+        }
+
+        voicePlayer.stopAndRelease()
+        pendingVoicesByConversation.remove(conversationId)?.let { (oldPath, _) ->
+            recorder.deleteFile(oldPath)
+        }
+        errorsByConversation[conversationId] = ""
+
+        val started = recorder.start()
+        if (started.isFailure) {
+            reportAttachmentError("Unable to start microphone recording. Check device audio availability.")
+            return
+        }
+
+        _threadState.value = _threadState.value.copy(
+            isRecordingVoice = true,
+            recordingElapsedMs = 0L,
+            recordingAmplitude = 0.12f,
+            pendingVoicePath = null,
+            pendingVoiceDurationMs = 0L,
+            error = ""
+        )
+
+        recordingTickerJob?.cancel()
+        recordingTickerJob = viewModelScope.launch {
+            var elapsed = 0L
+            while (_threadState.value.isRecordingVoice) {
+                delay(RECORD_TICK_MS)
+                elapsed += RECORD_TICK_MS
+                val amp = recorder.currentAmplitudeNormalized()
+                if (elapsed >= MAX_VOICE_DURATION_MS) {
+                    _threadState.value = _threadState.value.copy(
+                        recordingElapsedMs = MAX_VOICE_DURATION_MS,
+                        recordingAmplitude = amp
+                    )
+                    stopVoiceRecording(sendImmediately = false)
+                    break
+                } else {
+                    _threadState.value = _threadState.value.copy(
+                        recordingElapsedMs = elapsed,
+                        recordingAmplitude = amp
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelVoiceRecording() {
+        recordingTickerJob?.cancel()
+        recordingTickerJob = null
+        voiceRecorder?.cancel()
+        _threadState.value = _threadState.value.copy(
+            isRecordingVoice = false,
+            recordingElapsedMs = 0L,
+            recordingAmplitude = 0.1f
+        )
+    }
+
+    fun stopVoiceRecording(sendImmediately: Boolean = false) {
+        recordingTickerJob?.cancel()
+        recordingTickerJob = null
+        val conversationId = _threadState.value.selectedId
+        val result = voiceRecorder?.stop()?.getOrNull()
+        if (result == null) {
+            _threadState.value = _threadState.value.copy(
+                isRecordingVoice = false,
+                recordingElapsedMs = 0L,
+                recordingAmplitude = 0.1f
+            )
+            reportAttachmentError("Voice note was too short. Record for at least a second.")
+            return
+        }
+
+        val path = result.file.absolutePath
+        if (conversationId != null) {
+            pendingVoicesByConversation[conversationId] = path to result.durationMs
+        }
+        _threadState.value = _threadState.value.copy(
+            isRecordingVoice = false,
+            recordingElapsedMs = 0L,
+            recordingAmplitude = 0.1f,
+            pendingVoicePath = path,
+            pendingVoiceDurationMs = result.durationMs,
+            error = ""
+        )
+        if (sendImmediately) {
+            sendMessage()
+        }
+    }
+
+    fun clearPendingVoice() {
+        val id = _threadState.value.selectedId
+        voicePlayer.stopIfKey("pending_voice")
+        val removedPath = if (id != null) {
+            pendingVoicesByConversation.remove(id)?.first
+        } else {
+            _threadState.value.pendingVoicePath
+        }
+        voiceRecorder?.deleteFile(removedPath)
+        _threadState.value = _threadState.value.copy(
+            pendingVoicePath = null,
+            pendingVoiceDurationMs = 0L,
+            uploadingVoice = false
+        )
+    }
+
+    fun toggleVoicePlayback(key: String, source: String, fallbackDurationMs: Long = 0L) {
+        voicePlayer.togglePlayPause(key, source, fallbackDurationMs)
     }
 
     fun markIdCopied() {
@@ -371,18 +603,151 @@ class LiveChatViewModel(
         val state = _threadState.value
         val conversationId = state.selectedId ?: return
         val text = state.messageDraft
-        if (state.busy || text.trim().isEmpty()) return
+        val pendingImage = state.pendingImageUri
+        val pendingVoicePath = state.pendingVoicePath
+        val pendingVoiceDurationMs = state.pendingVoiceDurationMs
+        if (state.busy || state.isUploadingMedia) return
+        if (text.trim().isEmpty() && pendingImage.isNullOrBlank() && pendingVoicePath.isNullOrBlank()) return
+
+        voicePlayer.stopIfKey("pending_voice")
         errorsByConversation[conversationId] = ""
         runSlowTrackedWrite {
-            val result = repository.sendMessage(conversationId, currentUserId, text)
+            var uploadedImageUrl: String? = null
+            var uploadedAudioUrl: String? = null
+            val uploadedAudioDurationMs: Long? = if (!pendingVoicePath.isNullOrBlank()) pendingVoiceDurationMs else null
+
+            if (!pendingImage.isNullOrBlank()) {
+                val uploader = mediaRepository
+                if (uploader == null) {
+                    val msg = "Image upload service is unavailable."
+                    errorsByConversation[conversationId] = msg
+                    _threadState.value = _threadState.value.copy(error = msg)
+                    return@runSlowTrackedWrite
+                }
+                _threadState.value = _threadState.value.copy(uploadingImage = true, uploadProgress = 0.05f)
+                val uploadResult = uploader.uploadChatImage(
+                    conversationId = conversationId,
+                    senderId = currentUserId,
+                    imageUri = Uri.parse(pendingImage),
+                    onProgress = { progress ->
+                        if (_threadState.value.selectedId == conversationId) {
+                            _threadState.value = _threadState.value.copy(uploadProgress = progress)
+                        }
+                    }
+                )
+                uploadResult.onFailure { error ->
+                    val msg = error.message ?: "Unable to upload image."
+                    errorsByConversation[conversationId] = msg
+                    if (_threadState.value.selectedId == conversationId) {
+                        _threadState.value = _threadState.value.copy(
+                            uploadingImage = false,
+                            uploadProgress = 0f,
+                            error = msg
+                        )
+                    }
+                    return@runSlowTrackedWrite
+                }
+                uploadedImageUrl = uploadResult.getOrNull()
+            }
+
+            if (!pendingVoicePath.isNullOrBlank()) {
+                val uploader = mediaRepository
+                if (uploader == null) {
+                    val msg = "Voice upload service is unavailable."
+                    errorsByConversation[conversationId] = msg
+                    _threadState.value = _threadState.value.copy(
+                        uploadingImage = false,
+                        uploadingVoice = false,
+                        error = msg
+                    )
+                    return@runSlowTrackedWrite
+                }
+                _threadState.value = _threadState.value.copy(
+                    uploadingImage = false,
+                    uploadingVoice = true,
+                    uploadProgress = 0.05f
+                )
+                val uploadResult = uploader.uploadVoiceNote(
+                    conversationId = conversationId,
+                    senderId = currentUserId,
+                    audioFile = java.io.File(pendingVoicePath),
+                    onProgress = { progress ->
+                        if (_threadState.value.selectedId == conversationId) {
+                            _threadState.value = _threadState.value.copy(uploadProgress = progress)
+                        }
+                    }
+                )
+                uploadResult.onFailure { error ->
+                    val msg = error.message ?: "Unable to upload voice note."
+                    errorsByConversation[conversationId] = msg
+                    if (_threadState.value.selectedId == conversationId) {
+                        _threadState.value = _threadState.value.copy(
+                            uploadingImage = false,
+                            uploadingVoice = false,
+                            uploadProgress = 0f,
+                            error = msg
+                        )
+                    }
+                    return@runSlowTrackedWrite
+                }
+                uploadedAudioUrl = uploadResult.getOrNull()
+            }
+
+            val result = repository.sendMessage(
+                conversationId = conversationId,
+                uid = currentUserId,
+                rawBody = text,
+                imageUrl = uploadedImageUrl,
+                audioUrl = uploadedAudioUrl,
+                audioDurationMs = uploadedAudioDurationMs
+            )
             result.onSuccess {
                 if (draftsByConversation[conversationId] == text) {
                     draftsByConversation[conversationId] = ""
                 }
-                if (_threadState.value.selectedId == conversationId && _threadState.value.messageDraft == text) {
-                    _threadState.value = _threadState.value.copy(messageDraft = "", error = "")
+                if (pendingImagesByConversation[conversationId] == pendingImage) {
+                    pendingImagesByConversation.remove(conversationId)
+                }
+                if (pendingVoicesByConversation[conversationId]?.first == pendingVoicePath) {
+                    pendingVoicesByConversation.remove(conversationId)
+                }
+                if (_threadState.value.selectedId == conversationId) {
+                    _threadState.value = _threadState.value.copy(
+                        messageDraft = if (_threadState.value.messageDraft == text) "" else _threadState.value.messageDraft,
+                        pendingImageUri = if (_threadState.value.pendingImageUri == pendingImage) null else _threadState.value.pendingImageUri,
+                        pendingVoicePath = if (_threadState.value.pendingVoicePath == pendingVoicePath) null else _threadState.value.pendingVoicePath,
+                        pendingVoiceDurationMs = if (_threadState.value.pendingVoicePath == pendingVoicePath) 0L else _threadState.value.pendingVoiceDurationMs,
+                        uploadingImage = false,
+                        uploadingVoice = false,
+                        uploadProgress = 0f,
+                        error = ""
+                    )
                 }
             }.onFailure { error ->
+                val msg = friendlyFirestoreMessage(error)
+                errorsByConversation[conversationId] = msg
+                if (_threadState.value.selectedId == conversationId) {
+                    _threadState.value = _threadState.value.copy(
+                        uploadingImage = false,
+                        uploadingVoice = false,
+                        uploadProgress = 0f,
+                        error = msg
+                    )
+                }
+            }
+        }
+    }
+
+    fun sendQuickReaction(reaction: String) {
+        val state = _threadState.value
+        val conversationId = state.selectedId ?: return
+        val normalized = reaction.trim().take(8)
+        if (normalized.isEmpty() || state.busy || state.isUploadingMedia || state.isRecordingVoice) return
+
+        errorsByConversation[conversationId] = ""
+        runSlowTrackedWrite {
+            val result = repository.sendMessage(conversationId, currentUserId, normalized, null)
+            result.onFailure { error ->
                 val msg = friendlyFirestoreMessage(error)
                 errorsByConversation[conversationId] = msg
                 if (_threadState.value.selectedId == conversationId) {
@@ -426,5 +791,16 @@ class LiveChatViewModel(
                 _threadState.value = _threadState.value.copy(busy = false, pendingNotice = false)
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        recordingTickerJob?.cancel()
+        voiceRecorder?.release()
+        voicePlayer.stopAndRelease()
+        pendingVoicesByConversation.values.forEach { (path, _) ->
+            voiceRecorder?.deleteFile(path)
+        }
+        pendingVoicesByConversation.clear()
     }
 }

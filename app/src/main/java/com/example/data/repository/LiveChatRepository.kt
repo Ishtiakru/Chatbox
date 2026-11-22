@@ -184,24 +184,67 @@ class LiveChatRepository(
         }
     }
 
-    suspend fun sendMessage(conversationId: String, uid: String, rawBody: String): Result<Unit> {
+    suspend fun sendMessage(
+        conversationId: String,
+        uid: String,
+        rawBody: String,
+        imageUrl: String? = null,
+        audioUrl: String? = null,
+        audioDurationMs: Long? = null
+    ): Result<Unit> {
         val path = "conversations/$conversationId/messages"
         return try {
             val currentUid = requireUserId()
             check(currentUid == uid) { "Signed-in user changed." }
             val body = rawBody.trim()
-            require(body.isNotEmpty() && body.length <= 2000) {
-                "Message must be between 1 and 2000 characters."
+            val cleanImageUrl = imageUrl?.trim()?.takeIf { it.isNotEmpty() }
+            val cleanAudioUrl = audioUrl?.trim()?.takeIf { it.isNotEmpty() }
+            val cleanAudioDurationMs = if (cleanAudioUrl != null) {
+                audioDurationMs?.coerceIn(0L, 300_000L)
+            } else {
+                null
+            }
+            require(body.length <= 2000) {
+                "Message must be 2000 characters or fewer."
+            }
+            require(body.isNotEmpty() || cleanImageUrl != null || cleanAudioUrl != null) {
+                "Enter a message, attach an image, or record a voice note."
+            }
+            if (cleanImageUrl != null) {
+                require(
+                    cleanImageUrl.length <= 2048 &&
+                        (cleanImageUrl.startsWith("https://firebasestorage.googleapis.com/") ||
+                            cleanImageUrl.startsWith("https://storage.googleapis.com/"))
+                ) {
+                    "Attached image URL must be a valid Firebase Storage HTTPS URL."
+                }
+            }
+            if (cleanAudioUrl != null) {
+                require(
+                    cleanAudioUrl.length <= 2048 &&
+                        (cleanAudioUrl.startsWith("https://firebasestorage.googleapis.com/") ||
+                            cleanAudioUrl.startsWith("https://storage.googleapis.com/"))
+                ) {
+                    "Attached voice note URL must be a valid Firebase Storage HTTPS URL."
+                }
+            }
+            val payload = buildMap<String, Any> {
+                put("senderId", uid)
+                put("body", body)
+                if (cleanImageUrl != null) {
+                    put("imageUrl", cleanImageUrl)
+                }
+                if (cleanAudioUrl != null) {
+                    put("audioUrl", cleanAudioUrl)
+                    if (cleanAudioDurationMs != null) {
+                        put("audioDurationMs", cleanAudioDurationMs)
+                    }
+                }
+                put("sentAt", FieldValue.serverTimestamp())
             }
             val docRef = db.collection("conversations").document(conversationId)
                 .collection("messages").document()
-            docRef.set(
-                mapOf(
-                    "senderId" to uid,
-                    "body" to body,
-                    "sentAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            docRef.set(payload).await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e

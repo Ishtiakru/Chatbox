@@ -15,4 +15,22 @@
     <string name="cd_conversation_details">Conversation details</string>
     <string name="cd_clear_search">Clear search</string>
     <string name="search_conversations_placeholder">Search by name or message…</string>
+    <string name="cd_attach_image">Attach image</string>
+    <string name="cd_remove_attachment">Remove attached image</string>
+    <string name="cd_attached_image">Attached image</string>
+    <string name="cd_close_image_viewer">Close image viewer</string>
+    <string name="cd_quick_reaction">Send quick reaction</string>
+    <string name="cd_share_chatbox_id">Share Chatbox ID</string>
+    <string name="cd_search_in_conversation">Search in conversation</string>
+    <string name="cd_take_photo">Take photo</string>
+    <string name="cd_choose_gallery">Choose from gallery</string>
+    <string name="cd_record_voice_note">Record voice note</string>
+    <string name="cd_stop_voice_recording">Stop recording</string>
+    <string name="cd_cancel_voice_recording">Cancel voice recording</string>
+    <string name="cd_remove_voice_note">Remove voice note</string>
+    <string name="cd_play_voice_note">Play voice note</string>
+    <string name="cd_pause_voice_note">Pause voice note</string>
+    <string name="cd_language_chevron">Choose language</string>
+    <string name="cd_sign_in_info">Sign-in information</string>
+    <string name="cd_brand_mark">Chatbox brand mark</string>
 </resources>

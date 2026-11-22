@@ -71,20 +71,20 @@ import com.example.data.auth.onGoogleSignInClicked
 import com.example.data.auth.signOutUser
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.SparkAppearance
+import com.example.data.repository.ChatMediaStorageRepository
 import com.example.data.repository.DemoPreferencesRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.SparkAdminRepository
+import com.example.media.VoiceNoteRecorder
 import com.example.notifications.ActiveConversationTracker
 import com.example.notifications.FcmTokenRepository
 import com.example.ui.components.AuthErrorDialog
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.screens.AdminScreen
-import com.example.ui.screens.AdminSignInGate
 import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.DemoChatsScreen
 import com.example.ui.screens.LiveChatsScreen
-import com.example.ui.screens.LiveChatsSignInGate
 import com.example.ui.screens.SairaAiScreen
 import com.example.ui.theme.ChatboxTheme
 import com.example.ui.viewmodel.DemoChatViewModel
@@ -96,6 +96,7 @@ import com.example.ui.viewmodel.SparkAdminViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -144,7 +145,6 @@ fun ChatboxAppRoot(
     var authReady by remember { mutableStateOf(Firebase.auth.currentUser != null) }
     var authLoading by remember { mutableStateOf(false) }
     var authError by rememberSaveable { mutableStateOf<String?>(null) }
-    var isGuestDemo by rememberSaveable { mutableStateOf(false) }
 
     val demoViewModel: DemoChatViewModel = viewModel(
         factory = remember(context) {
@@ -198,7 +198,6 @@ fun ChatboxAppRoot(
     val startSignOut: () -> Unit = {
         if (!authLoading) {
             authLoading = true
-            isGuestDemo = false
             signOutUser(
                 credentialManager = credentialManager,
                 scope = scope,
@@ -217,18 +216,17 @@ fun ChatboxAppRoot(
     }
 
     val signedInUser = currentUser
-    if (signedInUser == null && !isGuestDemo) {
+    if (signedInUser == null) {
         ChatboxTheme(lavenderAppearance = false) {
             AuthLoginScreen(
                 language = demoUiState.loginLanguage,
                 authReady = authReady,
                 authLoading = authLoading,
                 onLanguageSelected = { demoViewModel.setLoginLanguage(it) },
-                onGoogleSignIn = startSignIn,
-                onExploreDemo = { isGuestDemo = true }
+                onGoogleSignIn = startSignIn
             )
         }
-    } else if (signedInUser != null) {
+    } else {
         key(signedInUser.uid) {
             val liveViewModel: LiveChatViewModel = viewModel(
                 key = "live_${signedInUser.uid}",
@@ -239,7 +237,9 @@ fun ChatboxAppRoot(
                             return LiveChatViewModel(
                                 repository = LiveChatRepository(context.applicationContext),
                                 currentUserId = signedInUser.uid,
-                                displayName = signedInUser.displayName
+                                displayName = signedInUser.displayName,
+                                mediaRepository = ChatMediaStorageRepository(context.applicationContext),
+                                voiceRecorder = VoiceNoteRecorder(context.applicationContext)
                             ) as T
                         }
                     }
@@ -286,15 +286,6 @@ fun ChatboxAppRoot(
                 )
             }
         }
-    } else {
-        ChatboxTheme(lavenderAppearance = false) {
-            GuestDemoAppShell(
-                authLoading = authLoading,
-                demoViewModel = demoViewModel,
-                sairaAiViewModel = sairaAiViewModel,
-                onSignIn = startSignIn
-            )
-        }
     }
 }
 
@@ -315,6 +306,8 @@ private fun AuthenticatedAppShell(
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val prefsRepo = remember(context) { DemoPreferencesRepository(context.applicationContext) }
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val isAdminTab = backStackEntry?.destination?.hasRoute<AdminRoute>() == true
@@ -327,8 +320,10 @@ private fun AuthenticatedAppShell(
     val peerProfiles by liveViewModel.peerProfiles.collectAsStateWithLifecycle()
     val conversationMessages by liveViewModel.searchableMessagesByConversation.collectAsStateWithLifecycle()
     val threadState by liveViewModel.threadState.collectAsStateWithLifecycle()
+    val voicePlaybackState by liveViewModel.voicePlaybackState.collectAsStateWithLifecycle()
     val profileReady by liveViewModel.profileReady.collectAsStateWithLifecycle()
     val adminUiState by adminViewModel.uiState.collectAsStateWithLifecycle()
+    val quickReaction by prefsRepo.quickReaction.collectAsStateWithLifecycle(initialValue = "💜")
 
     LaunchedEffect(pendingConversationId) {
         if (!pendingConversationId.isNullOrBlank()) {
@@ -394,9 +389,18 @@ private fun AuthenticatedAppShell(
                     peerProfiles = peerProfiles,
                     conversationMessages = conversationMessages,
                     threadState = threadState,
+                    voicePlaybackState = voicePlaybackState,
                     profileReady = profileReady,
+                    quickReaction = quickReaction,
+                    onQuickReactionChange = { emoji ->
+                        scope.launch { prefsRepo.setQuickReaction(emoji) }
+                    },
                     onSelectConversation = { liveViewModel.selectConversation(it) },
                     onSetScreen = { liveViewModel.setScreen(it) },
+                    onOpenCalls = { navigateToTab(navController, CallsRoute) },
+                    onOpenThreadSearch = { liveViewModel.openThreadSearch() },
+                    onCloseThreadSearch = { liveViewModel.closeThreadSearch() },
+                    onThreadSearchQueryChange = { liveViewModel.updateThreadSearch(it) },
                     onToggleNewConversation = { liveViewModel.toggleNewConversation() },
                     onSearchChange = { liveViewModel.updateSearch(it) },
                     onPeerDraftChange = { liveViewModel.updatePeerDraft(it) },
@@ -405,7 +409,18 @@ private fun AuthenticatedAppShell(
                     onRespondToRequest = { id, status -> liveViewModel.respondToRequest(id, status) },
                     onLoadOlderMessages = { liveViewModel.loadOlderMessages() },
                     onMessageDraftChange = { liveViewModel.updateMessageDraft(it) },
+                    onAppendEmoji = { liveViewModel.appendMessageEmoji(it) },
+                    onCreateCameraUri = { liveViewModel.createCameraPhotoUri() },
+                    onAttachImage = { liveViewModel.attachPendingImage(it) },
+                    onClearAttachedImage = { liveViewModel.clearPendingImage() },
+                    onStartVoiceRecording = { liveViewModel.startVoiceRecording() },
+                    onStopVoiceRecording = { sendNow -> liveViewModel.stopVoiceRecording(sendNow) },
+                    onCancelVoiceRecording = { liveViewModel.cancelVoiceRecording() },
+                    onClearPendingVoice = { liveViewModel.clearPendingVoice() },
+                    onToggleVoicePlayback = { key, src, dur -> liveViewModel.toggleVoicePlayback(key, src, dur) },
+                    onAttachmentError = { liveViewModel.reportAttachmentError(it) },
                     onSendMessage = { liveViewModel.sendMessage() },
+                    onSendQuickReaction = { liveViewModel.sendQuickReaction(it) },
                     onBlockPeer = { peerUid, conv -> liveViewModel.blockPeer(peerUid, conv) },
                     onUnblockPeer = { peerUid -> liveViewModel.unblockPeer(peerUid) }
                 )
@@ -444,84 +459,6 @@ private fun AuthenticatedAppShell(
                     onInviteDelegate = { adminViewModel.inviteDelegate() },
                     onRevokeDelegate = { email -> adminViewModel.revokeDelegate(email) },
                     onAcceptDelegation = { adminViewModel.acceptDelegation() }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun GuestDemoAppShell(
-    authLoading: Boolean,
-    demoViewModel: DemoChatViewModel,
-    sairaAiViewModel: SairaAiViewModel,
-    onSignIn: () -> Unit
-) {
-    val navController = rememberNavController()
-    val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
-    val aiUiState by sairaAiViewModel.uiState.collectAsStateWithLifecycle()
-
-    AdaptiveAppScaffold(
-        navController = navController,
-        menuPosition = "bottom",
-        userDisplayName = null,
-        onAboutClick = {
-            navigateToTab(navController, DemoRoute)
-            demoViewModel.showModal(DemoModal.ABOUT)
-        }
-    ) {
-        NavHost(
-            navController = navController,
-            startDestination = DemoRoute,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            composable<DemoRoute> {
-                DemoChatsScreen(
-                    uiState = demoUiState,
-                    publicWelcomeBanner = "",
-                    userDisplayName = null,
-                    userEmail = null,
-                    isSignedIn = false,
-                    authBusy = authLoading,
-                    onSelectContact = { demoViewModel.selectContact(it) },
-                    onSearchChange = { demoViewModel.updateSearch(it) },
-                    onDraftChange = { demoViewModel.updateDraft(it) },
-                    onAppendEmoji = { demoViewModel.appendEmoji() },
-                    onSendMessage = { demoViewModel.sendMessage() },
-                    onShowModal = { demoViewModel.showModal(it) },
-                    onAccountAction = onSignIn
-                )
-            }
-            composable<LiveRoute> {
-                LiveChatsSignInGate(
-                    authBusy = authLoading,
-                    onSignIn = onSignIn,
-                    onExploreDemo = { navigateToTab(navController, DemoRoute) }
-                )
-            }
-            composable<SairaAiRoute> {
-                SairaAiScreen(
-                    isSignedIn = false,
-                    authBusy = authLoading,
-                    uiState = aiUiState,
-                    onSignIn = onSignIn,
-                    onOpenOfflineDemo = {
-                        demoViewModel.selectContact("saira")
-                        navigateToTab(navController, DemoRoute)
-                    },
-                    onDraftChange = {},
-                    onSubmitQuestion = {}
-                )
-            }
-            composable<CallsRoute> {
-                CallsScreen(
-                    onBackToConversations = { navigateToTab(navController, DemoRoute) }
-                )
-            }
-            composable<AdminRoute> {
-                AdminSignInGate(
-                    authBusy = authLoading,
-                    onSignIn = onSignIn
                 )
             }
         }

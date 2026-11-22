@@ -62,7 +62,7 @@
     },
     "ChatMessage": {
       "title": "ChatMessage",
-      "description": "Immutable direct message inside a conversation.",
+      "description": "Immutable direct message inside a conversation (text, attached image, and/or Firebase Storage voice note).",
       "type": "object",
       "properties": {
         "senderId": {
@@ -71,7 +71,19 @@
         },
         "body": {
           "type": "string",
-          "description": "Message text content (1..2000 chars)."
+          "description": "Message text content (0..2000 chars; required non-empty when imageUrl and audioUrl are absent)."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Optional Firebase Storage HTTPS download URL for an attached image."
+        },
+        "audioUrl": {
+          "type": "string",
+          "description": "Optional Firebase Storage HTTPS download URL for a recorded voice note."
+        },
+        "audioDurationMs": {
+          "type": "integer",
+          "description": "Optional duration in milliseconds for the attached voice note (0..300000)."
         },
         "sentAt": {
           "type": "string",

@@ -76,6 +76,8 @@ dependencies {
     implementation(libs.firebase.appcheck.recaptcha)
     implementation(libs.firebase.appcheck.debug)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.storage)
+    implementation(libs.coil.compose)
 
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)

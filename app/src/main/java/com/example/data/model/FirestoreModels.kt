@@ -33,6 +33,9 @@ data class LiveMessage(
     @DocumentId val id: String = "",
     val senderId: String = "",
     val body: String = "",
+    val imageUrl: String? = null,
+    val audioUrl: String? = null,
+    val audioDurationMs: Long? = null,
     @ServerTimestamp val sentAt: Timestamp? = null,
     val pendingWrites: Boolean = false
 )

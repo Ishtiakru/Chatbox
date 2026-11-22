@@ -125,15 +125,78 @@ test("Conversations consent lifecycle, message creation, pagination query, and t
     updatedAt: new Date(Date.now() - 400),
   }));
 
-  // Active conversation allows messaging and ordered read
+  // Active conversation allows messaging, image attachments, and ordered read
   await assertSucceeds(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_1").set({
     senderId: ALICE_UID,
     body: "Hello Bob!",
     sentAt: new Date(Date.now() - 300),
   }));
+  await assertSucceeds(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_img_only").set({
+    senderId: ALICE_UID,
+    body: "",
+    imageUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0251556445.firebasestorage.app/o/chat_media%2Fconv_1%2Falice%2Fphoto.jpg?alt=media&token=abc",
+    sentAt: new Date(Date.now() - 280),
+  }));
+  await assertSucceeds(bob.collection("conversations").doc("conv_1").collection("messages").doc("msg_img_caption").set({
+    senderId: BOB_UID,
+    body: "Check this out",
+    imageUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0251556445.firebasestorage.app/o/chat_media%2Fconv_1%2Fbob%2Fphoto2.jpg?alt=media&token=def",
+    sentAt: new Date(Date.now() - 260),
+  }));
+  await assertSucceeds(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_voice_only").set({
+    senderId: ALICE_UID,
+    body: "",
+    audioUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0251556445.firebasestorage.app/o/chat_media%2Fconv_1%2Falice%2Fvoice_1.m4a?alt=media&token=ghi",
+    audioDurationMs: 5400,
+    sentAt: new Date(Date.now() - 255),
+  }));
+  await assertSucceeds(bob.collection("conversations").doc("conv_1").collection("messages").doc("msg_voice_caption").set({
+    senderId: BOB_UID,
+    body: "Listen to this",
+    audioUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0251556445.firebasestorage.app/o/chat_media%2Fconv_1%2Fbob%2Fvoice_2.m4a?alt=media&token=jkl",
+    audioDurationMs: 12000,
+    sentAt: new Date(Date.now() - 250),
+  }));
   await assertSucceeds(
     bob.collection("conversations").doc("conv_1").collection("messages").orderBy("sentAt").limitToLast(100).get()
   );
+
+  // Empty message without imageUrl or audioUrl rejected
+  await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_empty").set({
+    senderId: ALICE_UID,
+    body: "",
+    sentAt: new Date(Date.now() - 240),
+  }));
+
+  // Non-Firebase-Storage or HTTP imageUrl/audioUrl rejected
+  await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_bad_url").set({
+    senderId: ALICE_UID,
+    body: "Bad image",
+    imageUrl: "http://evil.example.com/photo.jpg",
+    sentAt: new Date(Date.now() - 220),
+  }));
+  await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_bad_audio_url").set({
+    senderId: ALICE_UID,
+    body: "",
+    audioUrl: "https://evil.example.com/voice.m4a",
+    audioDurationMs: 3000,
+    sentAt: new Date(Date.now() - 215),
+  }));
+
+  // Orphan audioDurationMs without audioUrl or negative/oversized duration rejected
+  await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_orphan_dur").set({
+    senderId: ALICE_UID,
+    body: "Text only",
+    audioDurationMs: 3000,
+    sentAt: new Date(Date.now() - 210),
+  }));
+  await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_oversize_dur").set({
+    senderId: ALICE_UID,
+    body: "",
+    audioUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0251556445.firebasestorage.app/o/chat_media%2Fconv_1%2Falice%2Fvoice_long.m4a?alt=media&token=mno",
+    audioDurationMs: 400000,
+    sentAt: new Date(Date.now() - 205),
+  }));
 
   // Future timestamp rejected
   await assertFails(alice.collection("conversations").doc("conv_1").collection("messages").doc("msg_future").set({
