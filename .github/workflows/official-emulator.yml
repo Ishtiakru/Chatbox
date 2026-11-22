@@ -39,6 +39,13 @@ jobs:
         run: npm run build
       - name: Standalone base, admin and calls candidates
         run: npm run test:rules
+      - name: Same-browser fake-media call over local Auth and Firestore emulators
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: >-
+          npx --yes firebase-tools@15.37.0 emulators:exec
+          --config firebase.browser-emulator.json --project demo-chatbox --only auth,firestore
+          'node scripts/run-browser-call-check.mjs'
       - name: Two-account isolated test rules
         run: >-
           npx --yes firebase-tools@15.37.0 emulators:exec

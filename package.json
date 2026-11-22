@@ -34,6 +34,7 @@
     "@capacitor/cli": "8.6.2",
     "@firebase/rules-unit-testing": "5.0.0",
     "firenook": "0.2.6",
+    "puppeteer-core": "24.32.1",
     "vite": "^6.1.0"
   },
   "overrides": {
