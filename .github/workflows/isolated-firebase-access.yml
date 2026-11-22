@@ -86,7 +86,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') && !contains(github.event.head_commit.message, '[appcheck-iam]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') && !contains(github.event.head_commit.message, '[appcheck-details]') && !contains(github.event.head_commit.message, '[appcheck-iam]') && !contains(github.event.head_commit.message, '[test-deploy-check]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -120,6 +120,33 @@ jobs:
               print('::error::One or more requested rules permissions were not reported for this project.')
               raise SystemExit(1)
           print('Permission lookup only; no Firebase rules or resources were changed.')
+          PY
+      - name: Inspect isolated deployment permissions (read only)
+        if: ${{ contains(github.event.head_commit.message, '[test-deploy-check]') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, urllib.error, urllib.request
+          names = [
+              'firebasehosting.sites.get', 'firebasehosting.versions.create',
+              'firebasehosting.versions.update', 'firebasehosting.releases.create',
+              'datastore.entities.get', 'datastore.entities.create', 'datastore.entities.update',
+              'clientauthconfig.clients.create', 'firebase.clients.get'
+          ]
+          token = subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          req = urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':names}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  granted=set(json.load(response).get('permissions', []))
+          except urllib.error.HTTPError as error:
+              print(f'::error::Permission lookup failed with HTTP {error.code}; no credentials or response details were printed.')
+              raise SystemExit(1)
+          finally:
+              del token
+          for name in names:
+              print(f"::notice title=Test project permission::{name}: {'reported' if name in granted else 'not reported'}")
+          print('Permission lookup only: no resources, configuration or data were changed. Reported permissions do not prove deployment will work.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
         if: ${{ contains(github.event.head_commit.message, '[historical-baseline-compare]') }}
