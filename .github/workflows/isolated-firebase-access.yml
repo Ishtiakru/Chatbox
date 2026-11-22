@@ -86,7 +86,7 @@ jobs:
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
       - name: Check isolated Firebase Rules permissions without making changes
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +122,7 @@ jobs:
           print('Permission lookup only; no Firebase rules or resources were changed.')
           PY
       - name: Compare the published isolated Firestore rules without printing them
-        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[appcheck-inspect]') && !contains(github.event.head_commit.message, '[deploy-two-account]') && !contains(github.event.head_commit.message, '[rules-access-inspect]') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -202,3 +202,30 @@ jobs:
         if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy-two-account]') }}
         shell: bash
         run: python3 scripts/deploy-isolated-combined-once.py
+      - name: Inspect only test-project Rules access
+        if: ${{ contains(github.event.head_commit.message, '[rules-access-inspect]') }}
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json, subprocess, urllib.error, urllib.request
+          token=subprocess.run(['gcloud','auth','print-access-token'],check=True,capture_output=True,text=True).stdout.strip()
+          permissions=['firebaserules.releases.get','firebaserules.releases.update','firebaserules.rulesets.get','firebaserules.rulesets.create']
+          req=urllib.request.Request('https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',data=json.dumps({'permissions':permissions}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=30) as response: granted=set(json.load(response).get('permissions',[]))
+              for permission in permissions: print('::notice::'+permission+': '+('granted' if permission in granted else 'not reported'))
+          except urllib.error.HTTPError as error: print('::warning::IAM permissions lookup HTTP '+str(error.code))
+          url='https://firebaserules.googleapis.com/v1/projects/chatbox-test-2c236731bf/releases/cloud.firestore'
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token})
+          try:
+              with urllib.request.urlopen(req,timeout=30) as response: json.load(response)
+              print('::notice::Current test Firestore release: readable')
+          except urllib.error.HTTPError as error:
+              status='unknown'
+              try:
+                  status=json.load(error).get('error',{}).get('status','unknown')
+                  if status not in ['PERMISSION_DENIED','NOT_FOUND','UNAUTHENTICATED','FAILED_PRECONDITION']: status='other'
+              except (ValueError,AttributeError): pass
+              print('::warning::Current test Firestore release: HTTP '+str(error.code)+' ('+status+')')
+          del token
+          PYCODE
