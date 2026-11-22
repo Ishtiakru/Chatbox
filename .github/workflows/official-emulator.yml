@@ -11,7 +11,7 @@ permissions:
 jobs:
   official-emulator:
     # A dedicated, explicitly requested read-only connection run is not a test run.
-    if: ${{ !contains(github.event.head_commit.message, '[isolated-firebase-access]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[isolated-firebase-access]') && !contains(github.event.head_commit.message, '[isolated-apk]') }}
     name: Experimental rules (demo project only)
     runs-on: ubuntu-latest
     timeout-minutes: 20

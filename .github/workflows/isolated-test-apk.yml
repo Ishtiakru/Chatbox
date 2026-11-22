@@ -44,14 +44,14 @@ jobs:
             }], configuration_version:'1'
           };
           writeFileSync('android/app/google-services.json',JSON.stringify(android));
-          appendFileSync(process.env.GITHUB_ENV,`VITE_CHATBOX_TEST_MODE=true\nVITE_CHATBOX_NATIVE_TEST_MODE=true\nVITE_ENABLE_FIRESTORE_CHAT=true\nVITE_CHATBOX_TEST_FIREBASE_CONFIG=${JSON.stringify(web)}\n`);
+          appendFileSync(process.env.GITHUB_ENV,`VITE_CHATBOX_TEST_MODE=true\nVITE_CHATBOX_NATIVE_TEST_MODE=true\nVITE_ENABLE_FIRESTORE_CHAT=true\nVITE_ENABLE_EXPERIMENTAL_CALLS=true\nVITE_ENABLE_EXPERIMENTAL_ANDROID_CALLS=true\nVITE_ENABLE_EXPERIMENTAL_STUN=true\nVITE_CHATBOX_TEST_FIREBASE_CONFIG=${JSON.stringify(web)}\n`);
           NODE
       - name: Install and build isolated debug app
         run: |
           npm ci --no-audit --no-fund
           npm run build
           npx cap sync android
-          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug -PchatboxIsolatedTest=true)
+          (cd android && ./gradlew --no-daemon --max-workers=2 :app:assembleDebug -PchatboxIsolatedTest=true -PchatboxCallLab=true)
       - name: Verify and package diagnostic APK
         run: |
           mkdir -p /tmp/chatbox-test-output
