@@ -1,5 +1,18 @@
 # Isolated Firebase access through GitHub Actions
 
+## Current branch: read-only connection preparation (not yet authorized)
+
+The connection workflow is prepared for `arena/66dec666-chatbox`. The existing provider trust described below was configured for the earlier branch and does not authorize this one. Before any connection check, the test-project administrator must separately review and update or create a provider condition for this branch and this exact workflow, keeping the immutable repository and owner checks. For example, after reviewing the provider mapping:
+
+```
+assertion.repository_id == '1466284145' &&
+assertion.repository_owner_id == '359412232' &&
+assertion.ref == 'refs/heads/arena/66dec666-chatbox' &&
+assertion.workflow_ref == 'Ishtiakru/Chatbox/.github/workflows/isolated-firebase-access.yml@refs/heads/arena/66dec666-chatbox'
+```
+
+This is only for the isolated project. Updating the trust grants the workflow access to whatever permissions the test service account already has, potentially including Firebase Rules Admin, not merely its read-only checks. Branch writers can change a workflow; restrict branch access and review changes. No project permissions or provider settings are changed by this repository. After authorization, an explicitly requested marker commit may run the existing read-only check; this is not a deployment. Firebase Hosting deploy, source publishing, production access, signing and real-device verification each need separate review and appropriate least-privilege setup. The history below describes previous-branch operations and does not establish access for the current branch.
+
 This is a first step toward remote work without Cloud Shell. It is not a Cloud Shell session and does not give the agent direct Firebase Console access. The configured workflow is read-only and restricted to the isolated test project `chatbox-test-2c236731bf` (project number `1012186851732`), not the production project.
 
 A Google Cloud project administrator must first configure Workload Identity Federation and service-account impersonation in that project. This can be done in Google Cloud Console, but may require enabling relevant APIs; enabling APIs and granting IAM roles are consequential changes and may affect billing or quotas. The owner must explicitly approve them. No service-account key or long-lived token is required. Do not paste credentials into chat, commit them, or upload them to Drive.

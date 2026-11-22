@@ -6,7 +6,7 @@ name: Isolated Firebase connection (read only)
 on:
   push:
     branches:
-      - arena/f649c1bd-chatbox
+      - arena/66dec666-chatbox
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   inspect-test-project:
     if: >-
-      github.ref == 'refs/heads/arena/f649c1bd-chatbox' &&
+      github.ref == 'refs/heads/arena/66dec666-chatbox' &&
       (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[isolated-firebase-access]'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
