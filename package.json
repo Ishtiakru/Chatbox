@@ -28,7 +28,8 @@
     "@capacitor/android": "8.6.2",
     "@capacitor/core": "8.6.2",
     "firebase": "12.19.0",
-    "lucide": "^0.468.0"
+    "lucide": "^0.468.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@capacitor/cli": "8.6.2",

@@ -15,4 +15,6 @@ export const SAIRA_PROVIDER = import.meta.env.VITE_SAIRA_PROVIDER === 'firebase-
 export const SAIRA_AI_ENABLED = import.meta.env.VITE_ENABLE_SAIRA_AI === 'true';
 export const SPARK_ADMIN_ENABLED = import.meta.env.VITE_ENABLE_SPARK_ADMIN === 'true';
 export const ADMIN_BACKEND_ENABLED = import.meta.env.VITE_ENABLE_ADMIN_BACKEND === 'true';
+// Review-only. Requires a deployed, authorized backend and a private Drive file.
+export const SOURCE_HANDOVER_ENABLED = ADMIN_BACKEND_ENABLED && import.meta.env.VITE_ENABLE_SOURCE_HANDOVER === 'true';
 export const APP_CHECK_SITE_KEY = import.meta.env.VITE_APP_CHECK_SITE_KEY || '';

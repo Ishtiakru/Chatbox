@@ -2,7 +2,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { app } from './firebase.js';
 import { ensureAppCheck } from './app-check.js';
 
-const allowed = new Set(['askSaira', 'adminStatus', 'previewAdminUpdate', 'applyAdminUpdate', 'transferAdmin']);
+const allowed = new Set(['askSaira', 'adminStatus', 'previewAdminUpdate', 'applyAdminUpdate', 'transferAdmin', 'getSourceHandover']);
 export async function callCloud(name, data = {}) {
   if (!allowed.has(name)) throw new Error('Unsupported request.');
   ensureAppCheck();

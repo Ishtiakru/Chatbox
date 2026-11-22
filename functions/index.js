@@ -45,6 +45,22 @@ export const adminStatus = onCall(options, async request => {
   return { isAdmin: isAdministrator((await adminRef.get()).data(), uid) };
 });
 
+// Review-only source handover endpoint. The Drive file itself must separately
+// enforce its own permissions: hiding a URL or a QR is not access control.
+// Configuration is written only by a trusted operator via the Admin SDK.
+export const getSourceHandover = onCall(options, async request => {
+  const uid = requireUser(request);
+  await requireAdmin(uid);
+  const data = (await db.doc('system/sourceHandover').get()).data();
+  let url;
+  try { url = new URL(data?.url); } catch { throw new HttpsError('failed-precondition', 'Source handover is not configured.'); }
+  if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com' || url.username || url.password || !/^\/file\/d\/[A-Za-z0-9_-]+\/view$/.test(url.pathname)) {
+    throw new HttpsError('failed-precondition', 'Invalid source handover configuration.');
+  }
+  const commit = typeof data?.commit === 'string' && /^[a-f0-9]{40}$/.test(data.commit) ? data.commit : '';
+  return { url: url.href, commit };
+});
+
 // A user explicitly sends only the question to the AI provider, not their other chats.
 export const askSaira = onCall(aiOptions, async request => {
   const uid = requireUser(request);

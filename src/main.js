@@ -5,7 +5,7 @@ import { sairaReply, escapeHtml as e, APP_VERSION } from './knowledge.js';
 import { watchAuth, isCurrentAuthUser, googleSignIn, googleSignOut, googleReauthenticate } from './firebase.js';
 import { resolveFirebaseConfig } from './firebase-config.js';
 import { authErrorMessage } from './auth-errors.js';
-import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY } from './feature-flags.js';
+import { LIVE_CHAT_ENABLED, EXPERIMENTAL_CALLS_ENABLED, EXPERIMENTAL_BLOCKING_ENABLED, EXPERIMENTAL_MESSAGE_COOLDOWN, EXPERIMENTAL_REQUEST_COOLDOWN, SAIRA_AI_ENABLED, SAIRA_PROVIDER, SPARK_ADMIN_ENABLED, ADMIN_BACKEND_ENABLED, APP_CHECK_SITE_KEY, SOURCE_HANDOVER_ENABLED } from './feature-flags.js';
 import { sairaAiView, adminControls, sparkAdminControls } from './cloud-views.js';
 import { chatErrorMessage } from './chat-utils.js';
 import { liveView } from './live-view.js';
@@ -86,9 +86,14 @@ function infoPanel() {
 function calls() {
  return `<main class="main feature-page"><div class="feature-top"><div><span class="eyebrow">STAY CLOSE, FROM ANYWHERE</span><h2>Calls</h2><p>Some conversations deserve to be heard.</p></div><div class="feature-icon">${icon('phone-call')}</div></div><div class="feature-content"><div class="empty-illustration"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="illustration-center">${icon('video')}</div><span class="star-one">✳</span><span class="star-two">✦</span></div><span class="eyebrow">A LITTLE SOMETHING TO LOOK FORWARD TO</span><h3>Closer than a message.</h3><p>Voice and video calling are planned, but not connected yet. Once Firebase and calling services are set up, this space can bring you face to face.</p><button class="primary-button" data-view="chats">Back to conversations ${icon('arrow-right')}</button></div></main>`;
 }
+function sourceHandoverView() {
+ const a = state.admin;
+ if (!SOURCE_HANDOVER_ENABLED || SPARK_ADMIN_ENABLED || !APP_CHECK_SITE_KEY || a.status !== 'authorized') return '';
+ return `<section class="source-handover"><h3>Source code handover</h3><p>Only authorized administrators can request this QR. The linked file must also be shared only with trusted accounts.</p><p>Updates appear only after the source archive is refreshed; automatic updates are not yet configured.</p><button class="account-button" type="button" data-action="${a.sourceQr ? 'source-qr-close' : 'source-qr-open'}" ${a.sourceQrBusy ? 'disabled' : ''}>${a.sourceQrBusy ? 'Loading…' : a.sourceQr ? 'Hide QR' : 'Show source QR'}</button>${a.sourceQrError ? `<p role="alert">${e(a.sourceQrError)}</p>` : ''}${a.sourceQr ? `<img class="source-handover-qr" src="${e(a.sourceQr)}" alt="QR code for the source code archive">${a.sourceCommit ? `<p>Recorded commit (may be outdated): ${e(a.sourceCommit)}</p>` : '<p>Archive version is unavailable.</p>'}` : ''}</section>`;
+}
 function admin() {
  const authorized = state.admin.status === 'authorized' && (SPARK_ADMIN_ENABLED || (ADMIN_BACKEND_ENABLED && APP_CHECK_SITE_KEY));
- return `<main class="main feature-page admin-page"><div class="feature-top"><div><span class="eyebrow">A SPACE FOR THE PEOPLE IN CHARGE</span><h2>Admin studio <span class="beta-pill">EXPERIMENTAL</span></h2><p>A thoughtful way to manage your space.</p></div><div class="feature-icon">${icon('shield-check')}</div></div><div class="admin-layout"><section class="locked-card"><div class="lock-icon">${icon('lock-keyhole')}</div><span class="eyebrow">SECURITY FIRST</span><h3>${authorized ? 'Administrator controls' : 'This space is locked.'}</h3><p>${authorized ? (SPARK_ADMIN_ENABLED ? 'Only limited changes are supported. Full audit history is not available.' : 'Changes are limited, reviewed and recorded.') : 'Verified sign-in and server-side security rules or admin permissions are required.'}</p>${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}<div class="security-note">${icon('shield-check')} An email address alone will never grant admin access.</div></section><section class="studio-preview"><div class="preview-head"><div><span class="eyebrow">WHAT IS SUPPORTED</span><h3>Just say what you need.</h3></div><span class="preview-label">LIMITED</span></div><p>When configured, you can preview and confirm a public welcome message. Code changes and arbitrary actions are not supported.</p><div class="example-command"><span>✳</span><p>“Make the welcome message a little warmer...”</p></div><div class="preview-footer">${icon('info')} AI requests may be sent to an external provider.</div><div class="preview-item">${icon('users')} <div><strong>Admin access</strong><span>One verified admin at a time</span></div>${icon('arrow-up-right')}</div><div class="preview-item">${icon('history')} <div><strong>Activity history</strong><span>${SPARK_ADMIN_ENABLED ? 'Full audit history is not available' : 'Privileged actions are audited'}</span></div>${icon('arrow-up-right')}</div></section></div></main>`;
+ return `<main class="main feature-page admin-page"><div class="feature-top"><div><span class="eyebrow">A SPACE FOR THE PEOPLE IN CHARGE</span><h2>Admin studio <span class="beta-pill">EXPERIMENTAL</span></h2><p>A thoughtful way to manage your space.</p></div><div class="feature-icon">${icon('shield-check')}</div></div><div class="admin-layout"><section class="locked-card"><div class="lock-icon">${icon('lock-keyhole')}</div><span class="eyebrow">SECURITY FIRST</span><h3>${authorized ? 'Administrator controls' : 'This space is locked.'}</h3><p>${authorized ? (SPARK_ADMIN_ENABLED ? 'Only limited changes are supported. Full audit history is not available.' : 'Changes are limited, reviewed and recorded.') : 'Verified sign-in and server-side security rules or admin permissions are required.'}</p>${SPARK_ADMIN_ENABLED ? sparkAdminControls(state) : adminControls(state)}${sourceHandoverView()}<div class="security-note">${icon('shield-check')} An email address alone will never grant admin access.</div></section><section class="studio-preview"><div class="preview-head"><div><span class="eyebrow">WHAT IS SUPPORTED</span><h3>Just say what you need.</h3></div><span class="preview-label">LIMITED</span></div><p>When configured, you can preview and confirm a public welcome message. Code changes and arbitrary actions are not supported.</p><div class="example-command"><span>✳</span><p>“Make the welcome message a little warmer...”</p></div><div class="preview-footer">${icon('info')} AI requests may be sent to an external provider.</div><div class="preview-item">${icon('users')} <div><strong>Admin access</strong><span>One verified admin at a time</span></div>${icon('arrow-up-right')}</div><div class="preview-item">${icon('history')} <div><strong>Activity history</strong><span>${SPARK_ADMIN_ENABLED ? 'Full audit history is not available' : 'Privileged actions are audited'}</span></div>${icon('arrow-up-right')}</div></section></div></main>`;
 }
 function modal() {
  if (!state.modal) return '';
@@ -159,6 +164,8 @@ root.addEventListener('click', event => {
  else if (action === 'sign-in') { beginSignIn(); }
  else if (action === 'sign-out') { beginSignOut(); }
  else if (action === 'admin-check') { checkAdmin(); }
+ else if (action === 'source-qr-open') { openSourceQr(); }
+ else if (action === 'source-qr-close') { state.admin.sourceQr = ''; state.admin.sourceCommit = ''; render(); }
  else if (action === 'spark-reauth') { reauthenticateSparkAdmin(); }
  else if (action === 'admin-apply') { applyAdmin(); }
  else if (action === 'spark-accept') { acceptSparkAdmin(); }
@@ -588,7 +595,7 @@ async function reauthenticateSparkAdmin() {
 }
 async function checkAdmin() {
   if ((!SPARK_ADMIN_ENABLED && (!ADMIN_BACKEND_ENABLED || !APP_CHECK_SITE_KEY)) || !state.user || state.admin.status === 'checking') return;
-  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation); state.admin.status = 'checking'; state.admin.error = ''; render();
+  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation); state.admin.status = 'checking'; state.admin.error = ''; state.admin.sourceQr = ''; state.admin.sourceCommit = ''; render();
   try {
     if (SPARK_ADMIN_ENABLED) {
       const api = await import('./spark-admin-service.js');
@@ -601,6 +608,26 @@ async function checkAdmin() {
     }
   } catch (error) { if (generation === cloudGeneration) { state.admin.status = 'error'; state.admin.error = SPARK_ADMIN_ENABLED ? sparkAdminError(error) : cloudMessage(error); } }
   finally { if (generation === cloudGeneration) render(); }
+}
+async function openSourceQr() {
+  if (!SOURCE_HANDOVER_ENABLED || SPARK_ADMIN_ENABLED || !APP_CHECK_SITE_KEY || !state.user || state.admin.status !== 'authorized' || state.admin.sourceQrBusy) return;
+  const generation = cloudGeneration, user = state.user, guard = accountGuard(user, generation);
+  state.admin.sourceQrBusy = true; state.admin.sourceQrError = ''; state.admin.sourceQr = ''; render();
+  try {
+    const data = await cloudCall('getSourceHandover', {}, guard);
+    const url = new URL(data?.url);
+    if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com' || url.username || url.password || !/^\/file\/d\/[A-Za-z0-9_-]+\/view$/.test(url.pathname)) throw new Error('Invalid source handover configuration.');
+    const QRCode = (await import('qrcode')).default;
+    const image = await QRCode.toDataURL(url.href, { errorCorrectionLevel: 'M', margin: 4, width: 360 });
+    if (generation === cloudGeneration && state.user === user && isCurrentAuthUser(user) && state.admin.status === 'authorized') {
+      state.admin.sourceQr = image;
+      state.admin.sourceCommit = typeof data.commit === 'string' && /^[a-f0-9]{40}$/.test(data.commit) ? data.commit : '';
+    }
+  } catch {
+    if (generation === cloudGeneration && state.user === user) state.admin.sourceQrError = 'Source QR is unavailable or not configured. Check administrator access and try again.';
+  } finally {
+    if (generation === cloudGeneration && state.user === user) { state.admin.sourceQrBusy = false; render(); }
+  }
 }
 async function previewAdmin() {
   if (state.admin.status !== 'authorized' || state.admin.busy || !state.user) return;

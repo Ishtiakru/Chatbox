@@ -55,3 +55,7 @@
 @media(max-width:700px){
  .messenger-page{padding:0;bottom:67px}.messenger-page .live-layout{display:flex;flex:1;min-height:0;overflow:hidden}.messenger-page .live-list{width:100%;border:0;padding:24px 18px;flex:none}.messenger-page .live-thread{width:100%;flex:none;display:none}.messenger-page.messenger-screen-thread,.messenger-page.messenger-screen-details{bottom:0}.messenger-page.messenger-screen-thread .live-list,.messenger-page.messenger-screen-details .live-list{display:none}.messenger-page.messenger-screen-thread .live-thread,.messenger-page.messenger-screen-details .live-thread{display:flex}.messenger-screen-thread~.mobile-nav,.messenger-screen-details~.mobile-nav{display:none}.messenger-back{display:grid}.messenger-page .live-contact{padding:10px 2px}.messenger-page .live-message{max-width:82%}.messenger-page .live-composer{padding-bottom:calc(11px + env(safe-area-inset-bottom))}
 }
+
+/* Source handover preview is enabled only with a configured admin backend. */
+.source-handover{margin-top:22px;padding:16px;border:1px solid #e6dff1;border-radius:14px;background:#faf8ff;overflow-wrap:anywhere}
+.source-handover h3{font-size:15px;margin:0 0 8px}.source-handover p{font-size:12px;line-height:1.5;color:#615b70;margin:8px 0}.source-handover-qr{display:block;width:min(100%,280px);height:auto;margin-top:14px;background:#fff}
