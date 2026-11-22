@@ -1,4 +1,4 @@
-# Lightfall Android APK — TwaGenerator ডিরেক্ট + gradle + apksigner (শূন্য-প্রম্পট)
+# Lightfall Android APK — TwaGenerator ডিরেক্ট (ডায়াগ বুস্টেড)
 name: Build Lightfall APK
 
 on:
@@ -68,19 +68,32 @@ jobs:
           }
           JSON
 
-      - name: TWA প্রজেক্ট জেনারেট (TwaGenerator ডিরেক্ট — প্রম্পট-ফ্রি)
+      - name: TWA প্রজেক্ট জেনারেট
         run: |
           cd apkbuild
-          NODE_PATH=$(npm root -g) node -e "
-            const core = require('@bubblewrap/core');
-            const log = { info(){}, warn(){}, error(){}, debug(){} };
-            (async () => {
-              const twaManifest = await core.TwaManifest.fromFile('twa-manifest.json');
-              const gen = new core.TwaGenerator();
-              await gen.createTwaProject('.', twaManifest, log);
-              console.log('PROJECT_GENERATED ✓');
-            })().catch(e => { console.error('GEN_FAIL: ' + (e.stack || e.message)); process.exit(1); });
-          "
+          cat > gen.cjs <<'JS'
+          const core = require('@bubblewrap/core');
+          const log = new Proxy({ __no_op: 1 }, {
+            get(t, p) { if (p in t) return t[p]; return () => {}; }
+          });
+          (async () => {
+            const twaManifest = await core.TwaManifest.fromFile('twa-manifest.json');
+            const gen = new core.TwaGenerator();
+            await gen.createTwaProject('.', twaManifest, log);
+            console.log('PROJECT_GENERATED_OK');
+          })().catch(e => { console.error('GEN_FAIL: ' + (e.stack || e.message)); process.exit(1); });
+          JS
+          NODE_PATH=$(npm root -g) node gen.cjs > gen-out.txt 2> gen-err.txt
+          rc=$?
+          cat gen-out.txt
+          if [ $rc -ne 0 ]; then
+            echo "exit=$rc"
+            head -c 3000 gen-err.txt | tr -d '\r' | fold -s -w 170 | while IFS= read -r line; do
+              echo "::error::${line//%/Ø}"
+            done
+            tail -c 500 gen-err.txt
+            exit 1
+          fi
 
       - name: APK বিল্ড (gradle assembleRelease)
         run: |
@@ -91,9 +104,11 @@ jobs:
         if: failure()
         run: |
           cd apkbuild
-          grep -E "error:|ERROR|FAILURE|Caused by|What went wrong" build.log | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
-            echo "::error::${line//%/Ø}"
-          done
+          if [ -f build.log ]; then
+            grep -E "error:|ERROR|FAILURE|Caused by|What went wrong" build.log | tail -n 15 | cut -c1-160 | while IFS= read -r line; do
+              echo "::error::${line//%/Ø}"
+            done
+          fi
 
       - name: সাইন করা (zipalign + apksigner)
         run: |
