@@ -82,3 +82,38 @@ jobs:
             exit 1
           fi
           echo 'Read-only connection completed. No Firebase rules or resources were changed.'
+      - name: Check isolated Firebase Rules permissions without making changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, urllib.error, urllib.request
+
+          permissions = [
+              'firebaserules.releases.get', 'firebaserules.releases.list',
+              'firebaserules.releases.create', 'firebaserules.releases.update',
+              'firebaserules.rulesets.get', 'firebaserules.rulesets.list',
+              'firebaserules.rulesets.create', 'firebaserules.rulesets.test',
+          ]
+          token = subprocess.run(['gcloud', 'auth', 'print-access-token'], check=True, capture_output=True, text=True).stdout.strip()
+          request = urllib.request.Request(
+              'https://cloudresourcemanager.googleapis.com/v3/projects/chatbox-test-2c236731bf:testIamPermissions',
+              data=json.dumps({'permissions': permissions}).encode(),
+              headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+              method='POST',
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  granted = set(json.load(response).get('permissions', []))
+          except urllib.error.HTTPError as error:
+              print(f'::error::Permission lookup failed with HTTP {error.code}; no credentials or response details were printed.')
+              raise SystemExit(1)
+          finally:
+              del token
+          for permission in permissions:
+              print(f'{permission}: {"granted" if permission in granted else "not reported"}')
+          if not set(permissions).issubset(granted):
+              print('::error::One or more requested rules permissions were not reported for this project.')
+              raise SystemExit(1)
+          print('Permission lookup only; no Firebase rules or resources were changed.')
+          PY
