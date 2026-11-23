@@ -138,7 +138,10 @@ jobs:
       - name: Compile unit tests
         run: gradle :app:compileDebugUnitTestKotlin --no-daemon
 
-      - name: Prepare & optionally sign APKs
+      - name: Run AI router unit tests
+        run: gradle :app:testDebugUnitTest --tests "com.example.data.ai.AiRouterTest" --no-daemon
+
+      - name: Prepare & sign APKs
         id: sign_apk
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -146,22 +149,29 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           mkdir -p release-apks
-          cp app/build/outputs/apk/debug/app-debug.apk release-apks/Chatbox-debug.apk
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            # Gradle already signed it with the repository release keystore.
+            cp app/build/outputs/apk/release/app-release.apk release-apks/Chatbox-release.apk
+            echo "Signed release APK: release-apks/Chatbox-release.apk"
+            "$APKSIGNER" verify --print-certs release-apks/Chatbox-release.apk | grep -E "SHA-1|SHA-256" || true
+          elif [ -n "${KEYSTORE_BASE64:-}" ] && [ -n "${STORE_PASSWORD:-}" ] && [ -n "${KEY_ALIAS:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
             echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > release.keystore
-            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             "$APKSIGNER" sign \
               --ks release.keystore \
               --ks-pass "pass:$STORE_PASSWORD" \
               --ks-key-pass "pass:$KEY_PASSWORD" \
               --ks-alias "$KEY_ALIAS" \
-              --out release-apks/Chatbox-release-signed.apk \
+              --out release-apks/Chatbox-release.apk \
               app/build/outputs/apk/release/app-release-unsigned.apk
             rm -f release.keystore
+            echo "Signed release APK from secrets."
           else
             cp app/build/outputs/apk/release/app-release-unsigned.apk release-apks/Chatbox-release-unsigned.apk
-            echo "Keystore secrets not configured; publishing unsigned release APK alongside installable debug APK."
+            echo "::warning::No release keystore available; published an unsigned release APK that cannot be installed."
           fi
 
       - name: Publish GitHub Release

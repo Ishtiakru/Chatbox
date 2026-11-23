@@ -3,6 +3,8 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.ai.AiFallbackProviderKind
+import com.example.data.ai.SairaAiClient
 import com.example.data.model.AiExchange
 import com.example.data.repository.AppPreferencesRepository
 import com.example.data.repository.SairaAiRepository
@@ -27,8 +29,16 @@ data class SairaAiUiState(
     val notificationRules: List<SairaNotificationRule> = emptyList(),
     val ruleContactDraft: String = "",
     val rulePlatformDraft: SairaPlatform = SairaPlatform.ANY,
-    val ruleGuidanceDraft: String = ""
-)
+    val ruleGuidanceDraft: String = "",
+    val aiFallbackKind: AiFallbackProviderKind = AiFallbackProviderKind.GROQ,
+    val aiFallbackApiKey: String = "",
+    val aiFallbackBaseUrl: String = "",
+    val aiFallbackModel: String = "",
+    val aiNotice: String = ""
+) {
+    val isBackupAiConfigured: Boolean
+        get() = aiFallbackApiKey.isNotBlank()
+}
 
 class SairaAiViewModel(
     private val repository: SairaAiRepository = SairaAiRepository(),
@@ -58,6 +68,28 @@ class SairaAiViewModel(
             viewModelScope.launch {
                 prefs.sairaChatboxOneMinEnabled.collect { enabled ->
                     _uiState.value = _uiState.value.copy(chatboxOneMinAutoReplyEnabled = enabled)
+                }
+            }
+            viewModelScope.launch {
+                prefs.aiFallbackProviderKind.collect { kindId ->
+                    _uiState.value = _uiState.value.copy(
+                        aiFallbackKind = AiFallbackProviderKind.fromId(kindId)
+                    )
+                }
+            }
+            viewModelScope.launch {
+                prefs.aiFallbackApiKey.collect { key ->
+                    _uiState.value = _uiState.value.copy(aiFallbackApiKey = key)
+                }
+            }
+            viewModelScope.launch {
+                prefs.aiFallbackBaseUrl.collect { url ->
+                    _uiState.value = _uiState.value.copy(aiFallbackBaseUrl = url)
+                }
+            }
+            viewModelScope.launch {
+                prefs.aiFallbackModel.collect { model ->
+                    _uiState.value = _uiState.value.copy(aiFallbackModel = model)
                 }
             }
         }
@@ -202,6 +234,50 @@ class SairaAiViewModel(
         viewModelScope.launch {
             preferencesRepository?.saveSairaNotificationRules(updated)
         }
+    }
+
+    fun updateFallbackKind(kind: AiFallbackProviderKind) {
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            aiFallbackKind = kind,
+            aiFallbackBaseUrl = current.aiFallbackBaseUrl.ifBlank { kind.defaultBaseUrl },
+            aiFallbackModel = current.aiFallbackModel.ifBlank { kind.defaultModel }
+        )
+    }
+
+    fun updateFallbackApiKey(value: String) {
+        _uiState.value = _uiState.value.copy(aiFallbackApiKey = value.take(200))
+    }
+
+    fun updateFallbackBaseUrl(value: String) {
+        _uiState.value = _uiState.value.copy(aiFallbackBaseUrl = value.take(300))
+    }
+
+    fun updateFallbackModel(value: String) {
+        _uiState.value = _uiState.value.copy(aiFallbackModel = value.take(120))
+    }
+
+    fun saveFallbackConfig() {
+        val current = _uiState.value
+        val baseUrl = current.aiFallbackBaseUrl.trim().ifBlank { current.aiFallbackKind.defaultBaseUrl }
+        val model = current.aiFallbackModel.trim().ifBlank { current.aiFallbackKind.defaultModel }
+        _uiState.value = current.copy(aiFallbackBaseUrl = baseUrl, aiFallbackModel = model)
+        viewModelScope.launch {
+            preferencesRepository?.saveAiFallbackConfig(
+                providerKindId = current.aiFallbackKind.id,
+                apiKey = current.aiFallbackApiKey,
+                baseUrl = baseUrl,
+                model = model
+            )
+            SairaAiClient.resetCooldowns()
+            _uiState.value = _uiState.value.copy(
+                aiNotice = "Backup AI saved. Saira switches to it automatically when Gemini's free quota ends."
+            )
+        }
+    }
+
+    fun clearAiNotice() {
+        _uiState.value = _uiState.value.copy(aiNotice = "")
     }
 
     private fun updateExchange(id: String, answer: String, isStreaming: Boolean) {

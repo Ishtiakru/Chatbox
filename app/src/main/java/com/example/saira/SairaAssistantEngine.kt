@@ -7,19 +7,17 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.example.data.ai.AiChatMessage
+import com.example.data.ai.SairaAiClient
 import com.example.data.model.AiExchange
 import com.example.data.repository.SairaKnowledge
-import com.google.firebase.Firebase
-import com.google.firebase.ai.Chat
-import com.google.firebase.ai.ai
-import com.google.firebase.ai.type.content
-import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import java.util.Calendar
+import java.util.Collections
 import java.util.UUID
 
 @Serializable
@@ -47,81 +45,50 @@ data class SairaCompanionMessage(
 
 object SairaAssistantEngine {
     private const val TAG = "SairaAssistant"
-    private const val MODEL_NAME = "gemini-3.8-flash"
-    private const val QUICK_AI_TIMEOUT_MS = 18_000L
+    private const val QUICK_AI_TIMEOUT_MS = 25_000L
+    private const val MAX_HISTORY_MESSAGES = 20
 
     val WHATSAPP_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
     val MESSENGER_PACKAGES = setOf("com.facebook.orca", "com.facebook.mlite")
 
-    private val chatModel by lazy {
-        Firebase.ai.generativeModel(
-            modelName = MODEL_NAME,
-            generationConfig = generationConfig {
-                maxOutputTokens = 1024
-            },
-            systemInstruction = content {
-                text(
-                    """
-                    You are Saira Assistant (সায়রা অ্যাসিস্ট্যান্ট), a friendly, intelligent, free and unlimited personal AI companion inside Chatbox.
+    private val CHAT_SYSTEM_PROMPT = """
+        You are Saira Assistant (সায়রা অ্যাসিস্ট্যান্ট), a friendly, intelligent, free and unlimited personal AI companion inside Chatbox.
 
-                    Core Behavior Rules:
-                    1. Never initiate a conversation before the user messages first. Only reply to messages sent to you.
-                    2. Always respond naturally in the exact language/style the user writes in (Bengali, Banglish, or English).
-                    3. Greeting Rule:
-                       - When the prompt marks this as the first message in a conversation, begin warmly with the provided time-of-day greeting (Good Morning, Good Afternoon, or Good Evening — or a natural bilingual greeting like "Good Evening!" alongside Bengali if the user writes in Bengali).
-                       - When the user is ending the conversation or saying goodbye/thank you/done at night (night flag = true), gracefully wish them "Good Night" (e.g., "Good Night! শুভ রাত্রি।") as a warm closing.
-                    4. Unlimited General Knowledge:
-                       - Answer ANY question or request the user brings (everyday help, study, technology, coding, writing, advice, general facts, or Chatbox app guidance) clearly, accurately, and warmly.
-                    5. Ground Chatbox-specific questions in this app summary when asked about Chatbox:
-                    ${SairaKnowledge.CURATED_TEXT}
-                    """.trimIndent()
-                )
-            }
-        )
-    }
+        Core Behavior Rules:
+        1. Never initiate a conversation before the user messages first. Only reply to messages sent to you.
+        2. Always respond naturally in the exact language/style the user writes in (Bengali, Banglish, or English).
+        3. Greeting Rule:
+           - When the prompt marks this as the first message in a conversation, begin warmly with the provided time-of-day greeting (Good Morning, Good Afternoon, or Good Evening — or a natural bilingual greeting like "Good Evening!" alongside Bengali if the user writes in Bengali).
+           - When the user is ending the conversation or saying goodbye/thank you/done at night (night flag = true), gracefully wish them "Good Night" (e.g., "Good Night! শুভ রাত্রি।") as a warm closing.
+        4. Unlimited General Knowledge:
+           - Answer ANY question or request the user brings (everyday help, study, technology, coding, writing, advice, general facts, or Chatbox app guidance) clearly, accurately, and warmly.
+        5. Ground Chatbox-specific questions in this app summary when asked about Chatbox:
+           ${SairaKnowledge.CURATED_TEXT}
+        """.trimIndent()
 
-    private val replyModel by lazy {
-        Firebase.ai.generativeModel(
-            modelName = MODEL_NAME,
-            generationConfig = generationConfig {
-                maxOutputTokens = 256
-            },
-            systemInstruction = content {
-                text(
-                    "You are Saira Assistant writing concise, natural auto-replies on the user's behalf. " +
-                        "Match the language of the incoming message (Bengali, Banglish, or English). " +
-                        "Keep replies warm, polite, 1 to 3 sentences, and follow the exact instruction/context provided."
-                )
-            }
-        )
-    }
+    private val REPLY_SYSTEM_PROMPT =
+        "You are Saira Assistant writing concise, natural auto-replies on the user's behalf. " +
+            "Match the language of the incoming message (Bengali, Banglish, or English). " +
+            "Keep replies warm, polite, 1 to 3 sentences, and follow the exact instruction/context provided."
 
-    @Volatile
-    private var activeChatSession: Chat? = null
+    private val chatHistory: MutableList<AiChatMessage> =
+        Collections.synchronizedList(ArrayList<AiChatMessage>())
 
     fun resetSession() {
-        activeChatSession = null
+        synchronized(chatHistory) { chatHistory.clear() }
     }
 
     fun restoreSession(exchanges: List<AiExchange>) {
-        if (exchanges.isEmpty()) {
-            activeChatSession = null
-            return
-        }
-        val history = exchanges.takeLast(20).flatMap { exchange ->
-            buildList {
+        synchronized(chatHistory) {
+            chatHistory.clear()
+            exchanges.takeLast(MAX_HISTORY_MESSAGES).forEach { exchange ->
                 if (exchange.question.isNotBlank()) {
-                    add(content(role = "user") { text(exchange.question) })
+                    chatHistory.add(AiChatMessage(role = "user", text = exchange.question))
                 }
                 if (exchange.answer.isNotBlank()) {
-                    add(content(role = "model") { text(exchange.answer) })
+                    chatHistory.add(AiChatMessage(role = "model", text = exchange.answer))
                 }
             }
-        }
-        activeChatSession = if (history.isNotEmpty()) {
-            chatModel.startChat(history = history)
-        } else {
-            null
         }
     }
 
@@ -142,7 +109,6 @@ object SairaAssistantEngine {
         require(trimmed.isNotEmpty() && trimmed.length <= 2000) {
             "Message must be between 1 and 2000 characters."
         }
-        val session = activeChatSession ?: chatModel.startChat().also { activeChatSession = it }
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val greeting = currentTimeGreeting(hour)
         val isNight = isNightTime(hour)
@@ -159,8 +125,26 @@ object SairaAssistantEngine {
             append(trimmed)
         }
 
-        return session.sendMessageStream(contextualPrompt)
-            .mapNotNull { chunk -> chunk.text }
+        val historySnapshot = synchronized(chatHistory) { chatHistory.toList() }
+
+        return flow {
+            val answer = StringBuilder()
+            SairaAiClient.stream(
+                systemInstruction = CHAT_SYSTEM_PROMPT,
+                history = historySnapshot,
+                prompt = contextualPrompt
+            ).collect { chunk ->
+                answer.append(chunk)
+                emit(chunk)
+            }
+            synchronized(chatHistory) {
+                chatHistory.add(AiChatMessage(role = "user", text = contextualPrompt))
+                chatHistory.add(AiChatMessage(role = "model", text = answer.toString()))
+                while (chatHistory.size > MAX_HISTORY_MESSAGES) {
+                    chatHistory.removeAt(0)
+                }
+            }
+        }
     }
 
     suspend fun askCompanionInThread(
@@ -180,7 +164,7 @@ object SairaAssistantEngine {
         """.trimIndent()
         return runCatching {
             withTimeout(QUICK_AI_TIMEOUT_MS) {
-                replyModel.generateContent(prompt).text?.trim().orEmpty()
+                SairaAiClient.complete(REPLY_SYSTEM_PROMPT, emptyList(), prompt)
             }
         }.onFailure { error ->
             if (error is CancellationException) throw error
@@ -227,7 +211,7 @@ object SairaAssistantEngine {
 
         val generated = runCatching {
             withTimeout(QUICK_AI_TIMEOUT_MS) {
-                replyModel.generateContent(prompt).text?.trim().orEmpty()
+                SairaAiClient.complete(REPLY_SYSTEM_PROMPT, emptyList(), prompt)
             }
         }.onFailure { error ->
             if (error is CancellationException) throw error
@@ -238,7 +222,7 @@ object SairaAssistantEngine {
 
         return if (isSenderWaitingOnPeer) {
             if (useBengali) {
-                "$greeting $cleanSender, কেমন আছো? $cleanPeer ১ মিনিট ধরে রিপ্লাই দেয়নি বা এখন অফলাইনে আছে। অপেক্ষা করার সময় আমি সায়রা অ্যাসিস্ট্যান্ট তোমাকে যেকোনো তথ্যে সাহায্য করতে পারি!"
+                "$greeting $cleanSender, কেমন আছো? $cleanPeer ১ মিনিট ধরে রিপ্লাই দেয়নি বা এখন অফলাইনে আছে। অপেক্ষা করার সময় আমি সায়রা অ্যাসিস্ট্যান্ট তোমাকে যেকোনো তথ্যে সাহায্য করতে পারি!"
             } else {
                 "$greeting $cleanSender, how are you? $cleanPeer hasn't replied for 1 minute and may be offline right now. I'm Saira Assistant — feel free to ask me anything while you wait!"
             }
@@ -300,7 +284,7 @@ object SairaAssistantEngine {
 
         val generated = runCatching {
             withTimeout(QUICK_AI_TIMEOUT_MS) {
-                replyModel.generateContent(prompt).text?.trim().orEmpty()
+                SairaAiClient.complete(REPLY_SYSTEM_PROMPT, emptyList(), prompt)
             }
         }.onFailure { error ->
             if (error is CancellationException) throw error
