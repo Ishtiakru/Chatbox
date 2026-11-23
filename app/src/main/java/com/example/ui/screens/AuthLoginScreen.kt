@@ -191,8 +191,8 @@ fun AuthLoginScreen(
             ) {
                 Surface(
                     modifier = Modifier
-                        .size(84.dp)
-                        .border(1.5.dp, ChatboxAccentViolet.copy(alpha = 0.35f), CircleShape),
+                        .size(88.dp)
+                        .border(1.5.dp, Color(0xFF10B981).copy(alpha = 0.35f), CircleShape),
                     shape = CircleShape,
                     color = Color.White,
                     shadowElevation = 2.dp
@@ -208,7 +208,7 @@ fun AuthLoginScreen(
                 Text(
                     text = stringResource(R.string.app_name),
                     style = MaterialTheme.typography.headlineMedium,
-                    color = ChatboxAccentViolet
+                    color = Color(0xFF0F766E)
                 )
 
                 Text(

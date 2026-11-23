@@ -26,10 +26,12 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 class SparkAdminRepository(private val context: Context) {
@@ -535,11 +537,25 @@ class SparkAdminRepository(private val context: Context) {
                 Download URL: $githubUrl
             """.trimIndent()
 
+            val menusArray = JSONArray().apply {
+                dynamicConfig.customMenus.forEach { m ->
+                    put(
+                        JSONObject().apply {
+                            put("id", m.id)
+                            put("label", m.label)
+                            put("icon", m.icon)
+                            put("title", m.title)
+                            put("body", m.body)
+                        }
+                    )
+                }
+            }
             val configSnapshot = JSONObject().apply {
                 put("appTitle", dynamicConfig.appTitle)
                 put("homeAnnouncement", dynamicConfig.homeAnnouncement)
                 put("theme", appearance.theme)
                 put("menu", appearance.menu)
+                put("customMenus", menusArray)
             }.toString(2)
 
             val entries = listOf(
@@ -578,11 +594,12 @@ class SparkAdminRepository(private val context: Context) {
         val latest = dir.listFiles()?.firstOrNull { it.extension.equals("zip", ignoreCase = true) }
             ?: return null
         val ver = latest.nameWithoutExtension.removePrefix("chatbox-qe-v")
+        val count = runCatching { ZipFile(latest).use { it.size() } }.getOrDefault(3)
         return QeLocalReleaseArchive(
             version = ver,
             filename = latest.name,
             sizeBytes = latest.length(),
-            fileCount = 3,
+            fileCount = count,
             note = "Stored release bundle (previous ZIPs auto-cleared)",
             downloadUrl = "${ChatboxConstants.GITHUB_RELEASES_BASE_URL}/tag/v$ver"
         )

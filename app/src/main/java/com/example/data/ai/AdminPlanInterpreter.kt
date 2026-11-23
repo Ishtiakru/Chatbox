@@ -118,6 +118,7 @@ object AdminPlanInterpreter {
             val model = Firebase.ai.generativeModel(
                 modelName = GeminiAiProvider.DEFAULT_MODEL,
                 generationConfig = generationConfig {
+                    temperature = 0.2f
                     responseMimeType = "application/json"
                     responseSchema = schema
                     maxOutputTokens = 1024
@@ -130,7 +131,7 @@ object AdminPlanInterpreter {
                 "$trimmed"
             """.trimIndent()
 
-            val responseText = withTimeout(60_000L) {
+            val responseText = withTimeout(20_000L) {
                 model.generateContent(prompt).text.orEmpty()
             }
             parseJsonPlan(responseText, trimmed)
@@ -197,7 +198,7 @@ object AdminPlanInterpreter {
         )
     }
 
-    private fun fallbackHeuristicPlan(instruction: String): AdminAiUpdatePlan {
+    internal fun fallbackHeuristicPlan(instruction: String): AdminAiUpdatePlan {
         val lower = instruction.lowercase()
         val theme = when {
             lower.contains("lavender") || instruction.contains("ল্যাভেন্ডার") -> "lavender"
@@ -209,19 +210,27 @@ object AdminPlanInterpreter {
             lower.contains("menu bottom") || instruction.contains("নিচে") -> "bottom"
             else -> null
         }
-        val wantsMenu = lower.contains("menu") || instruction.contains("মেনু")
+        val wantsMenu = lower.contains("menu") || lower.contains("menubar") ||
+            instruction.contains("মেনু") || lower.contains("nemu")
         val menu = if (wantsMenu) {
-            val slug = "menu-${(instruction.hashCode() ushr 1) % 900 + 100}"
+            val namedMatch = Regex(
+                """(?:নাম|name|title|label)\s*[:\-]?\s*["']?([^\n,।"']{2,20})["']?""",
+                RegexOption.IGNORE_CASE
+            ).find(instruction)
+            val extractedLabel = namedMatch?.groupValues?.getOrNull(1)?.trim()?.take(20)
             val label = when {
+                !extractedLabel.isNullOrBlank() -> extractedLabel
                 instruction.contains("নোটিশ") || lower.contains("notice") -> "Notice"
                 instruction.contains("নিয়ম") || lower.contains("rule") -> "Rules"
                 instruction.contains("অফার") || lower.contains("offer") -> "Offers"
-                else -> "Updates"
+                else -> "Menu"
             }
+            val asciiSlug = label.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(20)
+            val slug = if (asciiSlug.length >= 2) asciiSlug else "menu-${(instruction.hashCode() ushr 1) % 900 + 100}"
             SparkCustomMenu(
                 id = slug,
                 label = label,
-                icon = "bell",
+                icon = if (label.equals("Notice", true)) "bell" else "sparkles",
                 title = label,
                 body = instruction.take(900)
             )

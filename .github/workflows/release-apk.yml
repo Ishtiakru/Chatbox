@@ -139,7 +139,14 @@ jobs:
           fi
           cp "$APK_SOURCE" "chatbox-v${CLEAN_VER}.apk"
           BUILD_TOOLS_DIR=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
-          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_DIR}/apksigner" verify --print-certs "chatbox-v${CLEAN_VER}.apk"
+          APKSIGNER_OUT=$("${ANDROID_HOME}/build-tools/${BUILD_TOOLS_DIR}/apksigner" verify --print-certs "chatbox-v${CLEAN_VER}.apk")
+          echo "$APKSIGNER_OUT"
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "$APKSIGNER_OUT" | grep -qi "e2f4a86c4d29f3037f4916492053c82c9332582a" || {
+              echo "::error::APK SHA-1 mismatch! Expected fixed release.keystore fingerprint."
+              exit 1
+            }
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -177,6 +177,17 @@ fun AdminScreen(
         }
     }
 
+    suspend fun <T> executeAdminWrite(block: suspend () -> Result<T>): Result<T> {
+        authRepo.ensureRecentGoogleAuth(context).onFailure { return Result.failure(it) }
+        val first = block()
+        val firstErr = first.exceptionOrNull()
+        if (firstErr != null && firstErr.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true) {
+            authRepo.reauthenticateWithGoogle(context).onFailure { return Result.failure(it) }
+            return block()
+        }
+        return first
+    }
+
     LaunchedEffect(currentUserId, currentUserEmail) {
         runAccessCheck()
         currentZipInfo = sparkAdminRepo.getCurrentQeZipInfo()
@@ -533,15 +544,15 @@ fun AdminScreen(
                                                         scope.launch {
                                                             busy = true
                                                             feedback = null
-                                                            sparkAdminRepo.applyAdminAiUpdatePlan(currentUserId, dynamicConfig, plan)
-                                                                .onSuccess { summary ->
-                                                                    pendingPlan = null
-                                                                    promptDraft = ""
-                                                                    feedback = summary to false
-                                                                }
-                                                                .onFailure { err ->
-                                                                    feedback = friendlyFirestoreMessage(err) to true
-                                                                }
+                                                            executeAdminWrite {
+                                                                sparkAdminRepo.applyAdminAiUpdatePlan(currentUserId, dynamicConfig, plan)
+                                                            }.onSuccess { summary ->
+                                                                pendingPlan = null
+                                                                promptDraft = ""
+                                                                feedback = summary to false
+                                                            }.onFailure { err ->
+                                                                feedback = friendlyFirestoreMessage(err) to true
+                                                            }
                                                             busy = false
                                                         }
                                                     },
@@ -581,8 +592,9 @@ fun AdminScreen(
                                                     onClick = {
                                                         scope.launch {
                                                             busy = true
-                                                            sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetTheme(theme))
-                                                                .onSuccess { feedback = it to false }
+                                                            executeAdminWrite {
+                                                                sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetTheme(theme))
+                                                            }.onSuccess { feedback = it to false }
                                                                 .onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                             busy = false
                                                         }
@@ -607,8 +619,9 @@ fun AdminScreen(
                                                     onClick = {
                                                         scope.launch {
                                                             busy = true
-                                                            sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetMenu(pos))
-                                                                .onSuccess { feedback = it to false }
+                                                            executeAdminWrite {
+                                                                sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetMenu(pos))
+                                                            }.onSuccess { feedback = it to false }
                                                                 .onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                             busy = false
                                                         }
@@ -640,8 +653,9 @@ fun AdminScreen(
                                         onClick = {
                                             scope.launch {
                                                 busy = true
-                                                sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetWelcome(welcomeDraft))
-                                                    .onSuccess { feedback = it to false }
+                                                executeAdminWrite {
+                                                    sparkAdminRepo.applySparkProposal(currentUserId, SparkCommandProposal.SetWelcome(welcomeDraft))
+                                                }.onSuccess { feedback = it to false }
                                                     .onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                 busy = false
                                             }
@@ -693,10 +707,12 @@ fun AdminScreen(
                                                         scope.launch {
                                                             busy = true
                                                             val nextMenus = dynamicConfig.customMenus.filterNot { it.id == menu.id }
-                                                            sparkAdminRepo.saveSparkDynamicConfig(
-                                                                currentUserId,
-                                                                dynamicConfig.copy(customMenus = nextMenus)
-                                                            ).onSuccess {
+                                                            executeAdminWrite {
+                                                                sparkAdminRepo.saveSparkDynamicConfig(
+                                                                    currentUserId,
+                                                                    dynamicConfig.copy(customMenus = nextMenus)
+                                                                )
+                                                            }.onSuccess {
                                                                 feedback = "Removed custom menu \"${menu.label}\"." to false
                                                             }.onFailure {
                                                                 feedback = friendlyFirestoreMessage(it) to true
@@ -757,12 +773,12 @@ fun AdminScreen(
                                                 onClick = {
                                                     scope.launch {
                                                         busy = true
-                                                        sparkAdminRepo.inviteSparkDelegate(currentUserId, delegateEmailDraft)
-                                                            .onSuccess {
-                                                                delegateEmailDraft = ""
-                                                                feedback = "Admin invitation sent." to false
-                                                            }
-                                                            .onFailure { feedback = friendlyFirestoreMessage(it) to true }
+                                                        executeAdminWrite {
+                                                            sparkAdminRepo.inviteSparkDelegate(currentUserId, delegateEmailDraft)
+                                                        }.onSuccess {
+                                                            delegateEmailDraft = ""
+                                                            feedback = "Admin invitation sent." to false
+                                                        }.onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                         busy = false
                                                     }
                                                 }
@@ -781,8 +797,9 @@ fun AdminScreen(
                                                     TextButton(onClick = {
                                                         scope.launch {
                                                             busy = true
-                                                            sparkAdminRepo.revokeSparkDelegate(del.email)
-                                                                .onSuccess { feedback = "Revoked ${del.email}" to false }
+                                                            executeAdminWrite {
+                                                                sparkAdminRepo.revokeSparkDelegate(del.email)
+                                                            }.onSuccess { feedback = "Revoked ${del.email}" to false }
                                                                 .onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                             busy = false
                                                         }
@@ -950,15 +967,17 @@ fun AdminScreen(
                                                     currentZipFile = file
                                                     val cleanApkUrl = qeApkUrl.trim().takeIf { it.startsWith("https://") }
                                                         ?: info.downloadUrl
-                                                    sparkAdminRepo.applySparkProposal(
-                                                        currentUserId,
-                                                        SparkCommandProposal.SetAppUpdate(
-                                                            active = true,
-                                                            version = qeVersion.trim(),
-                                                            note = qeNote.trim().ifEmpty { "New release v${qeVersion.trim()} is available." },
-                                                            downloadUrl = cleanApkUrl
+                                                    executeAdminWrite {
+                                                        sparkAdminRepo.applySparkProposal(
+                                                            currentUserId,
+                                                            SparkCommandProposal.SetAppUpdate(
+                                                                active = true,
+                                                                version = qeVersion.trim(),
+                                                                note = qeNote.trim().ifEmpty { "New release v${qeVersion.trim()} is available." },
+                                                                downloadUrl = cleanApkUrl
+                                                            )
                                                         )
-                                                    ).onSuccess {
+                                                    }.onSuccess {
                                                         feedback = "Released v${info.version}! Old ZIP deleted, ${info.filename} packaged, and green Update button shown to all users." to false
                                                     }.onFailure { err ->
                                                         feedback = friendlyFirestoreMessage(err) to true
@@ -988,10 +1007,12 @@ fun AdminScreen(
                                             onClick = {
                                                 scope.launch {
                                                     busy = true
-                                                    sparkAdminRepo.applySparkProposal(
-                                                        currentUserId,
-                                                        SparkCommandProposal.SetAppUpdate(false, "", "", "")
-                                                    ).onSuccess { feedback = it to false }
+                                                    executeAdminWrite {
+                                                        sparkAdminRepo.applySparkProposal(
+                                                            currentUserId,
+                                                            SparkCommandProposal.SetAppUpdate(false, "", "", "")
+                                                        )
+                                                    }.onSuccess { feedback = it to false }
                                                         .onFailure { feedback = friendlyFirestoreMessage(it) to true }
                                                     busy = false
                                                 }

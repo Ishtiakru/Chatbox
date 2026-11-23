@@ -145,7 +145,7 @@ fun ChatboxLogoWithUpdateBadge(
         Surface(
             modifier = Modifier
                 .size(logoSize)
-                .border(1.dp, ChatboxAccentViolet.copy(alpha = 0.35f), CircleShape),
+                .border(1.dp, Color(0xFF10B981).copy(alpha = 0.35f), CircleShape),
             shape = CircleShape,
             color = Color.White,
             shadowElevation = 1.dp

@@ -126,6 +126,22 @@ class AuthRepository(private val context: Context) {
         }
     }
 
+    suspend fun ensureRecentGoogleAuth(
+        activityContext: Context,
+        maxAgeSeconds: Long = 240L
+    ): Result<Unit> {
+        val user = auth.currentUser
+            ?: return Result.failure(IllegalStateException("Sign in with Google first."))
+        val authTimestampSec = runCatching {
+            user.getIdToken(false).await().authTimestamp
+        }.getOrDefault(0L)
+        val nowSec = System.currentTimeMillis() / 1000L
+        if (authTimestampSec > 0L && (nowSec - authTimestampSec) in -60L..maxAgeSeconds) {
+            return Result.success(Unit)
+        }
+        return reauthenticateWithGoogle(activityContext)
+    }
+
     suspend fun sendPasswordReset(email: String): Result<Unit> {
         return try {
             auth.sendPasswordResetEmail(email.trim()).await()

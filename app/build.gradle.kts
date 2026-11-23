@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -28,10 +30,29 @@ android {
                 keyPassword = "android"
             }
         }
+        create("release") {
+            val propsFile = rootProject.file("keystore.properties")
+            val props = Properties()
+            if (propsFile.exists()) {
+                propsFile.inputStream().use { props.load(it) }
+            }
+            val storePath = props.getProperty("storeFile") ?: "release.keystore"
+            val ks = rootProject.file(storePath)
+            if (ks.exists()) {
+                storeFile = ks
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            val releaseKs = signingConfigs.findByName("release")
+            if (releaseKs?.storeFile?.exists() == true) {
+                signingConfig = releaseKs
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

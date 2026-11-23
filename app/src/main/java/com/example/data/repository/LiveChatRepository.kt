@@ -401,13 +401,14 @@ class LiveChatRepository(private val context: Context) {
         if (trimmed.isEmpty()) {
             return Result.failure(IllegalArgumentException("Enter a 6-digit Chatbox ID or phone number."))
         }
+        val compactShortCandidate = trimmed.removePrefix("#").replace(Regex("\\s+"), "")
 
         return try {
             var peerUid = ""
-            if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(trimmed)) {
-                val shortSnap = db.collection("shortIds").document(trimmed).get(Source.SERVER).await()
+            if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compactShortCandidate)) {
+                val shortSnap = db.collection("shortIds").document(compactShortCandidate).get(Source.SERVER).await()
                 if (!shortSnap.exists()) {
-                    return Result.failure(IllegalArgumentException("No user found with 6-digit ID \"$trimmed\"."))
+                    return Result.failure(IllegalArgumentException("No user found with 6-digit ID \"$compactShortCandidate\"."))
                 }
                 peerUid = shortSnap.getString("uid").orEmpty()
             } else {

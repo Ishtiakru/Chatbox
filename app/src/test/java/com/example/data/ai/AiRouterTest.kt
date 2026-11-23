@@ -160,6 +160,25 @@ class AiRouterTest {
     }
 
     @Test
+    fun `non quota stream failure without backup surfaces real error instead of quota message`() = runTest {
+        val primary = object : AiProvider {
+            override val id = "gemini"
+            override suspend fun generate(systemInstruction: String, history: List<AiChatMessage>, prompt: String) = ""
+            override fun stream(systemInstruction: String, history: List<AiChatMessage>, prompt: String) = flow<String> {
+                throw AiUnavailableException("Saira AI response timed out. Please try again.")
+            }
+        }
+        val router = newRouter(primary, null)
+
+        try {
+            router.stream("system", emptyList(), "hi").toList()
+            fail("expected AiUnavailableException")
+        } catch (e: AiUnavailableException) {
+            assertEquals("Saira AI response timed out. Please try again.", e.message)
+        }
+    }
+
+    @Test
     fun `stream quota before first chunk switches to backup`() = runTest {
         val primary = QuotaStreamingProvider("gemini", emitBeforeQuota = false)
         val backup = FakeProvider("backup") { "backup stream answer" }

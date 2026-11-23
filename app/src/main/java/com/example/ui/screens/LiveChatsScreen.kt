@@ -137,6 +137,7 @@ fun LiveChatsScreen(
     quickReaction: String,
     ownProfile: UserProfile?,
     homeAnnouncement: String,
+    appTitle: String = "Chatbox",
     liveChatRepo: LiveChatRepository,
     onQuickReactionChange: (String) -> Unit,
     onOpenProfile: () -> Unit,
@@ -219,6 +220,7 @@ fun LiveChatsScreen(
                     isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     homeAnnouncement = homeAnnouncement,
+                    appTitle = appTitle,
                     listSearch = listSearch,
                     onListSearchChange = { listSearch = it },
                     conversations = filteredConversations,
@@ -269,6 +271,7 @@ fun LiveChatsScreen(
                     isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     homeAnnouncement = homeAnnouncement,
+                    appTitle = appTitle,
                     listSearch = listSearch,
                     onListSearchChange = { listSearch = it },
                     conversations = filteredConversations,
@@ -401,6 +404,7 @@ private fun LiveConversationListPane(
     isOnline: Boolean,
     appUpdateActive: Boolean,
     homeAnnouncement: String,
+    appTitle: String,
     listSearch: String,
     onListSearchChange: (String) -> Unit,
     conversations: List<Conversation>,
@@ -440,7 +444,13 @@ private fun LiveConversationListPane(
                         logoSize = 34.dp
                     )
                     Column {
-                        Text("REAL-TIME FIRESTORE", style = MaterialTheme.typography.labelSmall, color = colors.inkSubtle)
+                        Text(
+                            text = "${appTitle.ifBlank { "Chatbox" }.uppercase()} · LIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.inkSubtle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Text("Live Chats", style = MaterialTheme.typography.titleMedium, color = colors.ink)
                     }
                 }

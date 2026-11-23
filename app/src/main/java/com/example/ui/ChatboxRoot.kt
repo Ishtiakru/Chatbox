@@ -6,12 +6,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +23,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
@@ -172,7 +177,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     Surface(
                         modifier = Modifier
                             .size(112.dp)
-                            .border(2.5.dp, ChatboxAccentViolet.copy(alpha = 0.45f), CircleShape),
+                            .border(2.dp, Color(0xFF10B981).copy(alpha = 0.40f), CircleShape),
                         shape = CircleShape,
                         color = Color.White,
                         shadowElevation = 8.dp
@@ -186,7 +191,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     }
                     Spacer(Modifier.height(18.dp))
                     Text(
-                        text = stringResource(R.string.app_name),
+                        text = dynamicConfig.appTitle.ifBlank { stringResource(R.string.app_name) },
                         style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
                         color = colors.ink
@@ -293,6 +298,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     quickReaction = quickReaction,
                                     ownProfile = ownProfile,
                                     homeAnnouncement = dynamicConfig.homeAnnouncement,
+                                    appTitle = dynamicConfig.appTitle,
                                     liveChatRepo = viewModel.liveChatRepo,
                                     onQuickReactionChange = viewModel::setQuickReaction,
                                     onOpenProfile = { viewModel.openProfileDialog(true) },
@@ -368,20 +374,25 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             }
                         ) {
                             Spacer(Modifier.height(8.dp))
-                            navItems.forEach { item ->
-                                val selected = isTabSelected(resolvedTab, item.tab)
-                                NavigationRailItem(
-                                    selected = selected,
-                                    onClick = { viewModel.selectTab(item.tab) },
-                                    icon = { Icon(item.icon, contentDescription = item.label) },
-                                    label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    colors = NavigationRailItemDefaults.colors(
-                                        selectedIconColor = ChatboxPrimary,
-                                        selectedTextColor = ChatboxPrimary,
-                                        indicatorColor = ChatboxSoftLavender
-                                    ),
-                                    modifier = Modifier.testTag("nav_${item.id}")
-                                )
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                navItems.forEach { item ->
+                                    val selected = isTabSelected(resolvedTab, item.tab)
+                                    NavigationRailItem(
+                                        selected = selected,
+                                        onClick = { viewModel.selectTab(item.tab) },
+                                        icon = { Icon(item.icon, contentDescription = item.label) },
+                                        label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        colors = NavigationRailItemDefaults.colors(
+                                            selectedIconColor = ChatboxPrimary,
+                                            selectedTextColor = ChatboxPrimary,
+                                            indicatorColor = ChatboxSoftLavender
+                                        ),
+                                        modifier = Modifier.testTag("nav_${item.id}")
+                                    )
+                                }
                             }
                         }
                         HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = colors.border)
@@ -389,21 +400,65 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     }
                 } else {
                     val navBar: @Composable () -> Unit = {
-                        NavigationBar(containerColor = colors.surface) {
-                            navItems.forEach { item ->
-                                val selected = isTabSelected(resolvedTab, item.tab)
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { viewModel.selectTab(item.tab) },
-                                    icon = { Icon(item.icon, contentDescription = item.label) },
-                                    label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = ChatboxPrimary,
-                                        selectedTextColor = ChatboxPrimary,
-                                        indicatorColor = ChatboxSoftLavender
-                                    ),
-                                    modifier = Modifier.testTag("nav_${item.id}")
-                                )
+                        if (navItems.size <= 5) {
+                            NavigationBar(containerColor = colors.surface) {
+                                navItems.forEach { item ->
+                                    val selected = isTabSelected(resolvedTab, item.tab)
+                                    NavigationBarItem(
+                                        selected = selected,
+                                        onClick = { viewModel.selectTab(item.tab) },
+                                        icon = { Icon(item.icon, contentDescription = item.label) },
+                                        label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = ChatboxPrimary,
+                                            selectedTextColor = ChatboxPrimary,
+                                            indicatorColor = ChatboxSoftLavender
+                                        ),
+                                        modifier = Modifier.testTag("nav_${item.id}")
+                                    )
+                                }
+                            }
+                        } else {
+                            Surface(color = colors.surface, shadowElevation = 2.dp) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    navItems.forEach { item ->
+                                        val selected = isTabSelected(resolvedTab, item.tab)
+                                        Surface(
+                                            onClick = { viewModel.selectTab(item.tab) },
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (selected) ChatboxSoftLavender else Color.Transparent,
+                                            modifier = Modifier
+                                                .defaultMinSize(minWidth = 64.dp, minHeight = 52.dp)
+                                                .testTag("nav_${item.id}")
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    item.icon,
+                                                    contentDescription = item.label,
+                                                    tint = if (selected) ChatboxPrimary else colors.inkMuted,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = item.label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (selected) ChatboxPrimary else colors.inkMuted,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

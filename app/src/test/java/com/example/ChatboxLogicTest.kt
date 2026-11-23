@@ -3,6 +3,7 @@ package com.example
 import com.example.data.DemoCatalog
 import com.example.data.SparkAdminCommands
 import com.example.data.SparkCommandProposal
+import com.example.data.ai.AdminPlanInterpreter
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.WorldLanguages
 import com.example.data.repository.LiveChatRepository
@@ -80,5 +81,21 @@ class ChatboxLogicTest {
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("অ্যাডমিন প্যানেল").contains("অ্যাডমিন"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("firebase").contains("Firebase"))
+    }
+
+    @Test
+    fun `admin plan heuristic extracts Bengali and Banglish custom menu bars cleanly`() {
+        val noticePlan = AdminPlanInterpreter.fallbackHeuristicPlan(
+            "একটা নতুন মেনু বার যোগ করো নাম Notice, প্রতিদিন রাত ১০টায় লাইভ আড্ডা"
+        )
+        assertEquals("Notice", noticePlan.addOrUpdateMenu?.label)
+        assertEquals("notice", noticePlan.addOrUpdateMenu?.id)
+        assertEquals("bell", noticePlan.addOrUpdateMenu?.icon)
+
+        val banglishMenuPlan = AdminPlanInterpreter.fallbackHeuristicPlan(
+            "ak nemu bar add koro name Rules"
+        )
+        assertEquals("Rules", banglishMenuPlan.addOrUpdateMenu?.label)
+        assertEquals("rules", banglishMenuPlan.addOrUpdateMenu?.id)
     }
 }
