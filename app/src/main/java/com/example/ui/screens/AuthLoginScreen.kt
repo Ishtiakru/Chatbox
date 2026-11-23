@@ -641,11 +641,8 @@ fun AuthLoginScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Surface(
-                    onClick = {
-                        if (authReady && !authLoading && !phoneAuthBusy && isOnline) {
-                            onGoogleSignIn()
-                        }
-                    },
+                    onClick = { onGoogleSignIn() },
+                    enabled = authReady && !authLoading && !phoneAuthBusy && isOnline,
                     shape = RoundedCornerShape(16.dp),
                     color = Color.White,
                     border = BorderStroke(1.dp, ChatboxLoginCardBorder),

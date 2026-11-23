@@ -72,7 +72,7 @@ jobs:
           if [ -f app/google-services.json ]; then
             echo "Using repository app/google-services.json."
           elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
+            echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 -d > app/google-services.json
             echo "Decoded app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
           elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
@@ -81,6 +81,7 @@ jobs:
             echo "::error::Missing app/google-services.json! AI Studio omits google-services.json when pushing to GitHub. Add a repository secret named GOOGLE_SERVICES_JSON (paste the contents of app/google-services.json) in GitHub -> Settings -> Secrets and variables -> Actions, then re-run this workflow."
             exit 1
           fi
+          python3 -m json.tool app/google-services.json > /dev/null
 
       - name: Build Debug & Release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
@@ -96,7 +97,7 @@ jobs:
           mkdir -p release-apks
           cp app/build/outputs/apk/debug/app-debug.apk release-apks/Chatbox-debug.apk
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > release.keystore
             APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             "$APKSIGNER" sign \
               --ks release.keystore \
