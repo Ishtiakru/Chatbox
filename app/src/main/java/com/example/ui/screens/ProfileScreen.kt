@@ -47,8 +47,8 @@ import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Phone
@@ -339,7 +339,7 @@ fun ProfileScreen(
                 id = "logout",
                 title = "Log out",
                 subtitle = userEmail ?: "Sign out of Google account",
-                icon = Icons.Rounded.Logout,
+                icon = Icons.AutoMirrored.Rounded.Logout,
                 tint = ChatboxErrorInk,
                 onClick = onSignOut
             )

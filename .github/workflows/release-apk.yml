@@ -65,8 +65,53 @@ jobs:
             exit 1
           fi
 
+      - name: Cache Robolectric Android SDK jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-sdk35-15-12650502-i7
+
+      - name: Pre-fetch Robolectric SDK 35 jar cleanly
+        run: |
+          DEST="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7"
+          mkdir -p "$DEST"
+          BASE_PATH="org/robolectric/android-all-instrumented/15-robolectric-12650502-i7"
+          FILES=(
+            "android-all-instrumented-15-robolectric-12650502-i7.jar"
+            "android-all-instrumented-15-robolectric-12650502-i7.jar.sha512"
+            "android-all-instrumented-15-robolectric-12650502-i7.pom"
+            "android-all-instrumented-15-robolectric-12650502-i7.pom.sha512"
+          )
+          MIRRORS=(
+            "https://repo.maven.apache.org/maven2"
+            "https://maven-central.storage-download.googleapis.com/maven2"
+            "https://repo1.maven.org/maven2"
+          )
+          for FILE in "${FILES[@]}"; do
+            TARGET="$DEST/$FILE"
+            if [ -s "$TARGET" ]; then
+              continue
+            fi
+            DOWNLOADED=false
+            for MIRROR in "${MIRRORS[@]}"; do
+              if curl -fSL --retry 4 --retry-delay 3 --retry-all-errors -A "Mozilla/5.0" "$MIRROR/$BASE_PATH/$FILE" -o "$TARGET.tmp"; then
+                mv "$TARGET.tmp" "$TARGET"
+                DOWNLOADED=true
+                break
+              fi
+            done
+            rm -f "$TARGET.tmp"
+            if [ "$DOWNLOADED" != "true" ]; then
+              echo "::error::Failed to download Robolectric artifact: $FILE"
+              exit 1
+            fi
+          done
+
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --no-daemon
+        run: |
+          gradle :app:testDebugUnitTest --no-daemon \
+            -Drobolectric.offline=true \
+            -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7"
 
       - name: Determine release version & tag
         id: meta

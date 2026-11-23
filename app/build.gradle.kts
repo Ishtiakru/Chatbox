@@ -74,6 +74,13 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            all {
+                listOf("robolectric.offline", "robolectric.dependency.dir").forEach { prop ->
+                    System.getProperty(prop)?.takeIf { it.isNotBlank() }?.let { value ->
+                        it.systemProperty(prop, value)
+                    }
+                }
+            }
         }
     }
 }
