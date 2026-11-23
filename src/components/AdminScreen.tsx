@@ -1,38 +1,60 @@
 import React, { useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  Download,
+  FileArchive,
+  LayoutDashboard,
   RefreshCw,
   Shield,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserPlus,
+  Wand2,
   XCircle,
 } from 'lucide-react';
-import { isValidSparkTarget, parseSparkCommand } from '../data/sparkAdminCommands';
+import { isValidSparkTarget } from '../data/sparkAdminCommands';
 import {
   acceptSparkDelegation,
+  applyAdminAiUpdatePlan,
   applySparkProposal,
+  buildAndReleaseQeZip,
   checkSparkAdminStatus,
   claimSparkOwnership,
+  fetchCurrentQeRelease,
+  interpretAdminUpdatePrompt,
   inviteSparkDelegate,
   observeSparkDelegations,
   reauthenticateWithGooglePopup,
   revokeSparkDelegate,
+  saveSparkDynamicConfig,
 } from '../services/sparkAdminService';
 import { friendlyFirestoreMessage } from '../firebase';
 import type {
+  AdminAiUpdatePlan,
   AdminAuthStatus,
+  QeReleaseInfo,
   SparkAppearance,
   SparkAppUpdate,
-  SparkCommandProposal,
   SparkDelegation,
+  SparkDynamicConfig,
 } from '../types/chatbox';
 import {
   MAX_UPDATE_NOTE_LENGTH,
-  MAX_UPDATE_URL_LENGTH,
   MAX_UPDATE_VERSION_LENGTH,
+  MAX_WELCOME_LENGTH,
 } from '../types/chatbox';
-import { ChatboxLogoWithUpdateBadge, NoticeBanner } from './Common';
+import {
+  ChatboxLogoWithUpdateBadge,
+  CustomMenuIcon,
+  NoticeBanner,
+} from './Common';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 export function AdminScreen({
   currentUserId,
@@ -41,6 +63,7 @@ export function AdminScreen({
   appearance,
   welcomeBanner,
   appUpdate,
+  dynamicConfig,
   onAppUpdateClick,
 }: {
   currentUserId: string;
@@ -49,22 +72,36 @@ export function AdminScreen({
   appearance: SparkAppearance;
   welcomeBanner: string;
   appUpdate: SparkAppUpdate;
+  dynamicConfig: SparkDynamicConfig;
   onAppUpdateClick: () => void;
 }) {
+  const [adminTab, setAdminTab] = useState<'dashboard' | 'qeCoder'>('dashboard');
   const [status, setStatus] = useState<AdminAuthStatus>('CHECKING');
   const [statusError, setStatusError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [commandDraft, setCommandDraft] = useState('');
-  const [proposal, setProposal] = useState<SparkCommandProposal | null>(null);
-
-  const [updateVersion, setUpdateVersion] = useState(appUpdate.version || '');
-  const [updateNote, setUpdateNote] = useState(appUpdate.note || '');
-  const [updateUrl, setUpdateUrl] = useState(appUpdate.downloadUrl || '');
-
-  const [targetEmail, setTargetEmail] = useState('');
-  const [targetConfirmed, setTargetConfirmed] = useState(false);
-  const [delegations, setDelegations] = useState<SparkDelegation[]>([]);
   const [feedback, setFeedback] = useState<{ text: string; isError: boolean } | null>(null);
+
+  // Dashboard AI Prompt & Quick Controls
+  const [promptDraft, setPromptDraft] = useState('');
+  const [pendingPlan, setPendingPlan] = useState<AdminAiUpdatePlan | null>(null);
+  const [welcomeDraft, setWelcomeDraft] = useState(welcomeBanner);
+
+  // QE Coder ZIP Release State
+  const [qeRelease, setQeRelease] = useState<QeReleaseInfo | null>(null);
+  const [qeVersion, setQeVersion] = useState(() => {
+    const cur = appUpdate.version || '1.0.0';
+    return cur;
+  });
+  const [qeNote, setQeNote] = useState(appUpdate.note || '');
+
+  // Optional Owner Gmail Delegation
+  const [showDelegates, setShowDelegates] = useState(false);
+  const [targetEmail, setTargetEmail] = useState('');
+  const [delegations, setDelegations] = useState<SparkDelegation[]>([]);
+
+  useEffect(() => {
+    setWelcomeDraft(welcomeBanner);
+  }, [welcomeBanner]);
 
   const runAccessCheck = async () => {
     setStatus('CHECKING');
@@ -92,6 +129,12 @@ export function AdminScreen({
     return () => unsub();
   }, [status]);
 
+  useEffect(() => {
+    if (adminTab === 'qeCoder') {
+      void fetchCurrentQeRelease().then(setQeRelease);
+    }
+  }, [adminTab]);
+
   const handleReauth = async () => {
     setBusy(true);
     setFeedback(null);
@@ -102,7 +145,7 @@ export function AdminScreen({
       }
       await runAccessCheck();
       setFeedback({
-        text: 'Google account verified! Recent authentication window refreshed for 5 minutes.',
+        text: 'Google verified! Admin control window refreshed.',
         isError: false,
       });
     } catch (err) {
@@ -112,26 +155,33 @@ export function AdminScreen({
     }
   };
 
-  const handlePreviewCommand = () => {
-    setFeedback(null);
-    const parsed = parseSparkCommand(commandDraft);
-    setProposal(parsed);
-    if (parsed.kind === 'unsupported') {
-      setFeedback({
-        text: 'Unrecognized command. Try "theme: lavender", "theme: default", "menu: top", "menu: bottom", "welcome: Hello!" or "update: 1.0.1 | Release note".',
-        isError: true,
-      });
-    }
-  };
-
-  const handleApplyProposal = async () => {
-    if (!proposal || proposal.kind === 'unsupported' || busy) return;
+  const handleInterpretAndPreview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const instruction = promptDraft.trim();
+    if (!instruction || busy || !isOnline) return;
     setBusy(true);
     setFeedback(null);
     try {
-      const msg = await applySparkProposal(currentUserId, proposal);
-      setProposal(null);
-      setCommandDraft('');
+      const plan = await interpretAdminUpdatePrompt(instruction, dynamicConfig.customMenus);
+      setPendingPlan(plan);
+    } catch (err) {
+      setFeedback({
+        text: err instanceof Error ? err.message : 'Unable to parse instruction.',
+        isError: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleApplyPlan = async () => {
+    if (!pendingPlan || busy || !isOnline) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const msg = await applyAdminAiUpdatePlan(currentUserId, dynamicConfig, pendingPlan);
+      setPendingPlan(null);
+      setPromptDraft('');
       setFeedback({ text: msg, isError: false });
     } catch (err) {
       setFeedback({ text: friendlyFirestoreMessage(err), isError: true });
@@ -140,38 +190,13 @@ export function AdminScreen({
     }
   };
 
-  const handlePreviewPublishUpdate = () => {
-    const version = updateVersion.trim().slice(0, MAX_UPDATE_VERSION_LENGTH);
-    const note = updateNote.trim().slice(0, MAX_UPDATE_NOTE_LENGTH);
-    const downloadUrl = updateUrl.trim().slice(0, MAX_UPDATE_URL_LENGTH);
-    if (!version) {
-      setFeedback({ text: 'Enter a target version (e.g., 1.1.0).', isError: true });
-      return;
-    }
-    if (downloadUrl && !downloadUrl.startsWith('https://')) {
-      setFeedback({ text: 'Download URL must start with https://', isError: true });
-      return;
-    }
-    setFeedback(null);
-    setProposal({
-      kind: 'setAppUpdate',
-      active: true,
-      version,
-      note,
-      downloadUrl,
-    });
-  };
-
-  const handleInviteDelegate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!targetConfirmed || !isValidSparkTarget(targetEmail) || busy) return;
+  const handleQuickAction = async (fn: () => Promise<string | void>, successMsg?: string) => {
+    if (busy || !isOnline) return;
     setBusy(true);
     setFeedback(null);
     try {
-      await inviteSparkDelegate(currentUserId, targetEmail);
-      setTargetEmail('');
-      setTargetConfirmed(false);
-      setFeedback({ text: 'Delegation invitation sent.', isError: false });
+      const msg = await fn();
+      setFeedback({ text: msg || successMsg || 'Updated!', isError: false });
     } catch (err) {
       setFeedback({ text: friendlyFirestoreMessage(err), isError: true });
     } finally {
@@ -179,13 +204,43 @@ export function AdminScreen({
     }
   };
 
-  const handleRevokeDelegate = async (email: string) => {
-    if (busy) return;
+  const handleBuildQeRelease = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const version = qeVersion.trim().slice(0, MAX_UPDATE_VERSION_LENGTH);
+    const note = qeNote.trim().slice(0, MAX_UPDATE_NOTE_LENGTH);
+    if (!version || busy || !isOnline) return;
     setBusy(true);
     setFeedback(null);
     try {
-      await revokeSparkDelegate(email);
-      setFeedback({ text: `Revoked delegation for ${email}.`, isError: false });
+      const release = await buildAndReleaseQeZip({
+        uid: currentUserId,
+        version,
+        note,
+      });
+      setQeRelease(release);
+      setFeedback({
+        text: `Released v${release.version}! Old ZIP deleted, ${release.filename} saved, and green Update button enabled on users' home screens.`,
+        isError: false,
+      });
+    } catch (err) {
+      setFeedback({
+        text: err instanceof Error ? err.message : friendlyFirestoreMessage(err),
+        isError: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleInviteDelegate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValidSparkTarget(targetEmail) || busy || !isOnline) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await inviteSparkDelegate(currentUserId, targetEmail);
+      setTargetEmail('');
+      setFeedback({ text: 'Admin invitation sent.', isError: false });
     } catch (err) {
       setFeedback({ text: friendlyFirestoreMessage(err), isError: true });
     } finally {
@@ -200,7 +255,7 @@ export function AdminScreen({
     try {
       await acceptSparkDelegation(currentUserId, currentUserEmail);
       await runAccessCheck();
-      setFeedback({ text: 'Delegation accepted! Spark Admin tools unlocked.', isError: false });
+      setFeedback({ text: 'Admin access unlocked!', isError: false });
     } catch (err) {
       setFeedback({ text: friendlyFirestoreMessage(err), isError: true });
     } finally {
@@ -208,43 +263,23 @@ export function AdminScreen({
     }
   };
 
-  const describeProposal = (p: SparkCommandProposal): string => {
-    switch (p.kind) {
-      case 'setTheme':
-        return `Set home appearance theme to "${p.value}"`;
-      case 'setMenu':
-        return `Set mobile navigation bar position to "${p.value}"`;
-      case 'setWelcome':
-        return `Set public welcome banner to "${p.value}"`;
-      case 'setAppUpdate':
-        return p.active
-          ? `Publish green update badge for v${p.version}${p.note ? ` — "${p.note}"` : ''}`
-          : 'Clear active app update badge notice';
-      default:
-        return '';
-    }
-  };
-
   return (
-    <div className="h-full overflow-y-auto bg-[var(--chatbox-bg)] px-4 py-5 flex justify-center">
-      <div className="w-full max-w-[820px] space-y-4 pb-8">
-        {/* Header */}
+    <div className="h-full overflow-y-auto bg-[var(--chatbox-bg)] px-4 py-4 flex justify-center">
+      <div className="w-full max-w-[760px] space-y-4 pb-8">
+        {/* Simple Header */}
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
             <ChatboxLogoWithUpdateBadge
               appUpdateActive={appUpdate.active}
               onUpdateClick={onAppUpdateClick}
-              size={36}
+              size={34}
             />
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
-                SPARK ADMIN STUDIO
-              </p>
-              <h1 className="font-display text-xl font-bold text-[var(--chatbox-ink)]">
-                Admin Controls
+              <h1 className="font-display text-lg font-bold text-[var(--chatbox-ink)]">
+                Admin Panel
               </h1>
               <p className="text-xs text-[#8f89a3] truncate">
-                {currentUserEmail || 'Not signed in with email'}
+                {currentUserEmail || 'Admin session'}
               </p>
             </div>
           </div>
@@ -253,298 +288,489 @@ export function AdminScreen({
             type="button"
             disabled={busy || !isOnline}
             onClick={handleReauth}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[var(--chatbox-border)] bg-[var(--chatbox-surface)] hover:bg-[#efeaf7] text-xs font-semibold text-[#5b4a8f] transition-colors cursor-pointer shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--chatbox-border)] bg-[var(--chatbox-surface)] hover:bg-[#efeaf7] text-xs font-semibold text-[#5b4a8f] cursor-pointer shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            Verify Google Again
+            Verify Google
           </button>
         </div>
 
         {!isOnline && (
-          <NoticeBanner
-            isError
-            text="Offline · Admin Studio actions require an active internet connection."
-          />
+          <NoticeBanner isError text="Offline · Admin controls require internet connection." />
         )}
         {feedback && <NoticeBanner isError={feedback.isError} text={feedback.text} />}
         {statusError && <NoticeBanner isError text={statusError} />}
 
-        {/* Status Gate */}
+        {/* Access Gate */}
         {status === 'CHECKING' && (
           <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-8 text-center text-sm text-[#8f89a3]">
-            Checking Spark Admin permissions…
+            Checking admin permission…
           </div>
         )}
 
         {status === 'DENIED' && (
-          <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-6 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-[#fff1ed] text-[#9b5145] mx-auto flex items-center justify-center">
-              <Shield className="w-6 h-6" />
-            </div>
-            <h2 className="font-display text-lg font-bold text-[var(--chatbox-ink)]">
-              Admin access locked
+          <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-6 text-center space-y-2.5">
+            <Shield className="w-8 h-8 text-[#9b5145] mx-auto" />
+            <h2 className="font-display text-base font-bold text-[var(--chatbox-ink)]">
+              Admin Only
             </h2>
-            <p className="text-sm text-[#6b657d] max-w-md mx-auto">
-              Spark Admin Studio is restricted by Firestore security rules to the owner or invited active Gmail delegates.
+            <p className="text-xs text-[#6b657d]">
+              Only the verified admin Gmail account can access this panel.
             </p>
-            <button
-              type="button"
-              onClick={runAccessCheck}
-              className="px-4 py-2 rounded-xl bg-[#efeaf7] text-[#5b4a8f] text-xs font-semibold cursor-pointer"
-            >
-              Re-check Access
-            </button>
           </div>
         )}
 
         {status === 'UNCLAIMED_OWNER' && (
           <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-6 text-center space-y-3">
             <ShieldCheck className="w-8 h-8 text-[#5b4a8f] mx-auto" />
-            <h2 className="font-display text-lg font-bold text-[var(--chatbox-ink)]">
-              Fresh authentication needed to claim ownership
+            <h2 className="font-display text-base font-bold text-[var(--chatbox-ink)]">
+              Verify Google to unlock Admin Dashboard
             </h2>
-            <p className="text-sm text-[#6b657d]">
-              Click “Verify Google Again” to refresh your 5-minute Google auth window and register Spark Admin ownership.
-            </p>
+            <button
+              type="button"
+              onClick={handleReauth}
+              disabled={busy}
+              className="px-5 py-2.5 rounded-xl bg-[#6250a0] text-white text-xs font-semibold cursor-pointer"
+            >
+              Verify Google Now
+            </button>
           </div>
         )}
 
         {status === 'INVITED_DELEGATE' && (
           <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-6 text-center space-y-3">
             <ShieldCheck className="w-8 h-8 text-[#5b4a8f] mx-auto" />
-            <h2 className="font-display text-lg font-bold text-[var(--chatbox-ink)]">
-              You have a Spark Admin invitation
+            <h2 className="font-display text-base font-bold text-[var(--chatbox-ink)]">
+              Admin Invitation Ready
             </h2>
-            <p className="text-sm text-[#6b657d]">
-              Accept this invitation with your verified Gmail account ({currentUserEmail}) to manage Chatbox public settings.
-            </p>
             <button
               type="button"
               disabled={busy || !isOnline}
               onClick={handleAcceptDelegation}
-              className="px-5 py-2.5 rounded-xl bg-[#6250a0] hover:bg-[#463a76] text-white text-sm font-semibold cursor-pointer"
+              className="px-5 py-2.5 rounded-xl bg-[#6250a0] text-white text-xs font-semibold cursor-pointer"
             >
-              Accept Delegation
+              Accept Admin Access
             </button>
           </div>
         )}
 
         {(status === 'OWNER' || status === 'DELEGATE') && (
           <>
-            {/* Live Snapshot */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-3.5">
-                <p className="text-[11px] uppercase tracking-wider text-[#8f89a3] font-semibold">
-                  Role
-                </p>
-                <p className="font-display text-sm font-bold text-[#5b4a8f] mt-1">
-                  {status === 'OWNER' ? 'Spark Owner' : 'Active Delegate'}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-3.5">
-                <p className="text-[11px] uppercase tracking-wider text-[#8f89a3] font-semibold">
-                  Theme / Menu
-                </p>
-                <p className="font-display text-sm font-bold text-[var(--chatbox-ink)] mt-1">
-                  {appearance.theme} · {appearance.menu}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-3.5">
-                <p className="text-[11px] uppercase tracking-wider text-[#8f89a3] font-semibold">
-                  Welcome Banner
-                </p>
-                <p className="text-xs text-[var(--chatbox-ink)] mt-1 truncate">
-                  {welcomeBanner || '(Default — none set)'}
-                </p>
-              </div>
+            {/* Simple 2-Tab Bar: Dashboard & QE Coder */}
+            <div className="grid grid-cols-2 p-1 rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)]">
+              <button
+                type="button"
+                onClick={() => setAdminTab('dashboard')}
+                className={`py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                  adminTab === 'dashboard'
+                    ? 'bg-[#efeaf7] text-[#5b4a8f]'
+                    : 'text-[#6b657d] hover:text-[var(--chatbox-ink)]'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                Dashboard
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminTab('qeCoder')}
+                className={`py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                  adminTab === 'qeCoder'
+                    ? 'bg-[#efeaf7] text-[#5b4a8f]'
+                    : 'text-[#6b657d] hover:text-[var(--chatbox-ink)]'
+                }`}
+              >
+                <FileArchive className="w-4 h-4" />
+                QE Coder
+              </button>
             </div>
 
-            {/* Command Console */}
-            <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#5b4a8f]" />
-                <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
-                  Deterministic Command Console (Bangla & English)
-                </h2>
-              </div>
-              <p className="text-xs text-[#6b657d]">
-                Examples: <code className="bg-[#f7f5fb] px-1.5 py-0.5 rounded">theme: lavender</code>,{' '}
-                <code className="bg-[#f7f5fb] px-1.5 py-0.5 rounded">theme: default</code>,{' '}
-                <code className="bg-[#f7f5fb] px-1.5 py-0.5 rounded">menu: top</code>,{' '}
-                <code className="bg-[#f7f5fb] px-1.5 py-0.5 rounded">welcome: Stay close ✨</code>
-              </p>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={commandDraft}
-                  onChange={(e) => setCommandDraft(e.target.value)}
-                  placeholder="Type a Spark command to preview…"
-                  className="flex-1 h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
-                />
-                <button
-                  type="button"
-                  onClick={handlePreviewCommand}
-                  disabled={!commandDraft.trim() || busy}
-                  className="px-4 h-10 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] text-xs font-semibold cursor-pointer"
+            {adminTab === 'dashboard' ? (
+              <div className="space-y-4">
+                {/* 1. Natural-Language App Control & Custom Menu Builder */}
+                <form
+                  onSubmit={handleInterpretAndPreview}
+                  className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3"
                 >
-                  Preview
-                </button>
-              </div>
-
-              {proposal && proposal.kind !== 'unsupported' && (
-                <div className="rounded-xl bg-[#f7f5fb] border border-[#5b4a8f]/30 p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase text-[#5b4a8f]">
-                      Proposal Ready
-                    </p>
-                    <p className="text-sm text-[var(--chatbox-ink)] font-medium">
-                      {describeProposal(proposal)}
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <Wand2 className="w-4 h-4 text-[#5b4a8f]" />
+                    <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
+                      App Control & Live Builder
+                    </h2>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setProposal(null)}
-                      className="px-3 py-1.5 rounded-lg border border-[var(--chatbox-border)] bg-white text-xs text-[#6b657d] cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy || !isOnline}
-                      onClick={handleApplyProposal}
-                      className="px-3.5 py-1.5 rounded-lg bg-[#6250a0] hover:bg-[#463a76] text-white text-xs font-semibold cursor-pointer"
-                    >
-                      {busy ? 'Applying…' : 'Confirm & Apply'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* App Update Badge Studio */}
-            <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3">
-              <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
-                App Update Badge Notice
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <input
-                  type="text"
-                  value={updateVersion}
-                  onChange={(e) => setUpdateVersion(e.target.value.slice(0, MAX_UPDATE_VERSION_LENGTH))}
-                  placeholder="Target version (e.g., 1.2.0)"
-                  className="h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
-                />
-                <input
-                  type="url"
-                  value={updateUrl}
-                  onChange={(e) => setUpdateUrl(e.target.value.slice(0, MAX_UPDATE_URL_LENGTH))}
-                  placeholder="Optional HTTPS release link"
-                  className="h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
-                />
-              </div>
-              <input
-                type="text"
-                value={updateNote}
-                onChange={(e) => setUpdateNote(e.target.value.slice(0, MAX_UPDATE_NOTE_LENGTH))}
-                placeholder="Short summary of what is new…"
-                className="w-full h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
-              />
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handlePreviewPublishUpdate}
-                  className="px-4 py-2 rounded-xl bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold cursor-pointer"
-                >
-                  Preview Update Badge
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    setProposal({
-                      kind: 'setAppUpdate',
-                      active: false,
-                      version: '',
-                      note: '',
-                      downloadUrl: '',
-                    })
-                  }
-                  className="px-4 py-2 rounded-xl border border-[var(--chatbox-border)] bg-white hover:bg-[#f7f5fb] text-xs font-semibold text-[#5a5468] cursor-pointer"
-                >
-                  Preview Clear Badge
-                </button>
-              </div>
-            </div>
-
-            {/* Owner Delegation Console */}
-            {status === 'OWNER' && (
-              <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <UserPlus className="w-4 h-4 text-[#5b4a8f]" />
-                  <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
-                    Gmail Admin Delegations
-                  </h2>
-                </div>
-                <form onSubmit={handleInviteDelegate} className="space-y-2.5">
-                  <input
-                    type="email"
-                    value={targetEmail}
-                    onChange={(e) => setTargetEmail(e.target.value)}
-                    placeholder="colleague@gmail.com"
-                    className="w-full h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
+                  <p className="text-xs text-[#6b657d] leading-relaxed">
+                    অ্যাপে যা যোগ বা পরিবর্তন করতে চান বিস্তারিত লিখুন (যেমন: মেনু বার যোগ, থিম পরিবর্তন, বা নোটিশ) এবং Submit করুন:
+                  </p>
+                  <textarea
+                    rows={3}
+                    value={promptDraft}
+                    disabled={busy || !isOnline}
+                    onChange={(e) => setPromptDraft(e.target.value.slice(0, 1500))}
+                    placeholder="যেমন: একটা নতুন মেনু বার যোগ করো নাম Notice, সেখানে লেখা থাকবে প্রতিদিন রাত ১০টায় লাইভ আড্ডা হবে..."
+                    className="w-full p-3 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm text-[var(--chatbox-ink)] placeholder:text-[#8f89a3] focus:outline-none focus:border-[#5b4a8f]"
                   />
-                  <label className="flex items-center gap-2 text-xs text-[#6b657d] cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={targetConfirmed}
-                      onChange={(e) => setTargetConfirmed(e.target.checked)}
-                      className="accent-[#6250a0] w-4 h-4"
-                    />
-                    Confirm granting Spark Admin settings delegation to this Gmail
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={!targetConfirmed || !isValidSparkTarget(targetEmail) || busy || !isOnline}
-                    className="px-4 py-2 rounded-xl bg-[#6250a0] hover:bg-[#463a76] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
-                  >
-                    Invite Gmail Delegate
-                  </button>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={!promptDraft.trim() || busy || !isOnline}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#6250a0] hover:bg-[#463a76] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {busy ? 'Preparing…' : 'Preview & Submit'}
+                    </button>
+                  </div>
+
+                  {pendingPlan && (
+                    <div className="rounded-xl bg-[#f7f5fb] border border-[#5b4a8f]/35 p-3.5 space-y-2.5">
+                      <p className="text-xs font-bold text-[#5b4a8f]">
+                        Ready to update live app:
+                      </p>
+                      <p className="text-sm text-[var(--chatbox-ink)]">{pendingPlan.summary}</p>
+                      {pendingPlan.addOrUpdateMenu && (
+                        <div className="text-xs text-[#5a5468] bg-white rounded-lg p-2.5 border border-[#ece9f3]">
+                          <strong>New Menu:</strong> {pendingPlan.addOrUpdateMenu.label} —{' '}
+                          {pendingPlan.addOrUpdateMenu.title}
+                        </div>
+                      )}
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPendingPlan(null)}
+                          className="px-3 py-1.5 rounded-lg border border-[var(--chatbox-border)] bg-white text-xs text-[#6b657d] cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || !isOnline}
+                          onClick={() => void handleApplyPlan()}
+                          className="px-4 py-1.5 rounded-lg bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold cursor-pointer"
+                        >
+                          {busy ? 'Updating…' : 'Apply Update Now'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </form>
 
-                {delegations.length > 0 && (
-                  <div className="divide-y divide-[var(--chatbox-border)] pt-2">
-                    {delegations.map((del) => (
-                      <div key={del.email} className="py-2.5 flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-[var(--chatbox-ink)] truncate">
-                            {del.email}
-                          </p>
-                          <p className="text-[11px] text-[#8f89a3] uppercase font-semibold">
-                            Status: {del.status}
-                          </p>
-                        </div>
-                        {del.status !== 'revoked' ? (
+                {/* 2. Quick Controls */}
+                <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-4">
+                  <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
+                    Quick App Controls
+                  </h2>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
+                        App Theme
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(['default', 'lavender'] as const).map((t) => (
                           <button
+                            key={t}
                             type="button"
-                            disabled={busy}
-                            onClick={() => handleRevokeDelegate(del.email)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#fff1ed] text-[#9b5145] text-xs font-semibold cursor-pointer"
+                            disabled={busy || !isOnline}
+                            onClick={() =>
+                              void handleQuickAction(() =>
+                                applySparkProposal(currentUserId, { kind: 'setTheme', value: t })
+                              )
+                            }
+                            className={`py-2 rounded-xl text-xs font-semibold capitalize border cursor-pointer ${
+                              appearance.theme === t
+                                ? 'bg-[#efeaf7] border-[#5b4a8f] text-[#5b4a8f]'
+                                : 'bg-white border-[var(--chatbox-border)] text-[#6b657d]'
+                            }`}
                           >
-                            <XCircle className="w-3.5 h-3.5" />
-                            Revoke
+                            {t}
                           </button>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs text-[#8f89a3]">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Revoked
-                          </span>
-                        )}
+                        ))}
                       </div>
-                    ))}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
+                        Mobile Menu Position
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(['bottom', 'top'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            disabled={busy || !isOnline}
+                            onClick={() =>
+                              void handleQuickAction(() =>
+                                applySparkProposal(currentUserId, { kind: 'setMenu', value: m })
+                              )
+                            }
+                            className={`py-2 rounded-xl text-xs font-semibold capitalize border cursor-pointer ${
+                              appearance.menu === m
+                                ? 'bg-[#efeaf7] border-[#5b4a8f] text-[#5b4a8f]'
+                                : 'bg-white border-[var(--chatbox-border)] text-[#6b657d]'
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Welcome Banner */}
+                  <div className="space-y-1.5 pt-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
+                      Welcome Banner
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={welcomeDraft}
+                        maxLength={MAX_WELCOME_LENGTH}
+                        onChange={(e) => setWelcomeDraft(e.target.value)}
+                        placeholder="Welcome message for users…"
+                        className="flex-1 h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || !welcomeDraft.trim() || !isOnline}
+                        onClick={() =>
+                          void handleQuickAction(() =>
+                            applySparkProposal(currentUserId, {
+                              kind: 'setWelcome',
+                              value: welcomeDraft,
+                            })
+                          )
+                        }
+                        className="px-4 h-10 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] text-xs font-semibold cursor-pointer"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Active Custom Menu Bars */}
+                  {dynamicConfig.customMenus.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-[var(--chatbox-border)]">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
+                        Custom Menu Bars ({dynamicConfig.customMenus.length}/5)
+                      </p>
+                      <div className="space-y-1.5">
+                        {dynamicConfig.customMenus.map((menu) => (
+                          <div
+                            key={menu.id}
+                            className="flex items-center justify-between gap-2 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <CustomMenuIcon name={menu.icon} className="w-4 h-4 text-[#5b4a8f]" />
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-[var(--chatbox-ink)] truncate">
+                                  {menu.label} · {menu.title}
+                                </p>
+                                <p className="text-[11px] text-[#6b657d] truncate">{menu.body}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleQuickAction(
+                                  () =>
+                                    saveSparkDynamicConfig(currentUserId, {
+                                      ...dynamicConfig,
+                                      customMenus: dynamicConfig.customMenus.filter(
+                                        (m) => m.id !== menu.id
+                                      ),
+                                    }),
+                                  `Removed custom menu "${menu.label}".`
+                                )
+                              }
+                              className="p-1.5 rounded-lg hover:bg-[#fff1ed] text-[#9b5145] cursor-pointer shrink-0"
+                              aria-label="Remove custom menu"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Compact Delegate Toggle for Owner */}
+                {status === 'OWNER' && (
+                  <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowDelegates((v) => !v)}
+                      className="w-full flex items-center justify-between text-xs font-semibold text-[#5b4a8f] cursor-pointer"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <UserPlus className="w-4 h-4" />
+                        Admin Gmail Access ({delegations.filter((d) => d.status === 'active').length} delegates)
+                      </span>
+                      <span>{showDelegates ? 'Hide' : 'Manage'}</span>
+                    </button>
+
+                    {showDelegates && (
+                      <div className="space-y-3 pt-2 border-t border-[var(--chatbox-border)]">
+                        <form onSubmit={handleInviteDelegate} className="flex gap-2">
+                          <input
+                            type="email"
+                            value={targetEmail}
+                            onChange={(e) => setTargetEmail(e.target.value)}
+                            placeholder="partner@gmail.com"
+                            className="flex-1 h-10 px-3 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!isValidSparkTarget(targetEmail) || busy || !isOnline}
+                            className="px-4 h-10 rounded-xl bg-[#6250a0] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+                          >
+                            Invite
+                          </button>
+                        </form>
+                        {delegations.map((del) => (
+                          <div
+                            key={del.email}
+                            className="flex items-center justify-between gap-2 text-xs py-1"
+                          >
+                            <span className="truncate text-[var(--chatbox-ink)]">
+                              {del.email} ({del.status})
+                            </span>
+                            {del.status !== 'revoked' ? (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void handleQuickAction(
+                                    () => revokeSparkDelegate(del.email),
+                                    `Revoked ${del.email}`
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 text-[#9b5145] font-semibold cursor-pointer"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                Revoke
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[#8f89a3]">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                Revoked
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
+              </div>
+            ) : (
+              /* QE Coder ZIP Vault & Live Release Publisher */
+              <div className="space-y-4">
+                <div className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <FileArchive className="w-5 h-5 text-[#5b4a8f]" />
+                      <div>
+                        <h2 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
+                          QE Coder · Latest Coding ZIP
+                        </h2>
+                        <p className="text-[11px] text-[#8f89a3]">
+                          Only the newest release ZIP is kept; previous ZIP files are automatically deleted.
+                        </p>
+                      </div>
+                    </div>
+                    {appUpdate.active && (
+                      <span className="px-2 py-0.5 rounded-full bg-[#dcfce7] text-[#15803d] text-[10px] font-bold uppercase">
+                        Live v{appUpdate.version}
+                      </span>
+                    )}
+                  </div>
+
+                  {qeRelease ? (
+                    <div className="rounded-xl bg-[#f7f5fb] border border-[#e2dcf2] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="font-mono text-xs font-bold text-[#2a2340] truncate">
+                          {qeRelease.filename}
+                        </p>
+                        <p className="text-[11px] text-[#6b657d] tabular-nums">
+                          v{qeRelease.version} · {formatBytes(qeRelease.sizeBytes)} ·{' '}
+                          {qeRelease.fileCount} source files
+                        </p>
+                        {qeRelease.note && (
+                          <p className="text-xs text-[#5a5468] truncate">{qeRelease.note}</p>
+                        )}
+                      </div>
+                      <a
+                        href={qeRelease.downloadUrl}
+                        download={qeRelease.filename}
+                        className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#6250a0] hover:bg-[#463a76] text-white text-xs font-semibold shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download ZIP
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl bg-[#f7f5fb] border border-dashed border-[#d8d0ec] p-4 text-center text-xs text-[#8f89a3]">
+                      No coding ZIP packaged yet. Release a version below to package the full codebase.
+                    </div>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={handleBuildQeRelease}
+                  className="rounded-2xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-4 space-y-3"
+                >
+                  <h3 className="font-display text-sm font-bold text-[var(--chatbox-ink)]">
+                    Release New App Update & Package Coding ZIP
+                  </h3>
+                  <div className="space-y-2.5">
+                    <input
+                      type="text"
+                      value={qeVersion}
+                      maxLength={MAX_UPDATE_VERSION_LENGTH}
+                      onChange={(e) => setQeVersion(e.target.value)}
+                      placeholder="New version (e.g., 1.1.0)"
+                      className="w-full h-10 px-3.5 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
+                    />
+                    <textarea
+                      rows={2}
+                      value={qeNote}
+                      maxLength={MAX_UPDATE_NOTE_LENGTH}
+                      onChange={(e) => setQeNote(e.target.value)}
+                      placeholder="What changed in this update?"
+                      className="w-full p-3 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm focus:outline-none focus:border-[#5b4a8f]"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={busy || !qeVersion.trim() || !isOnline}
+                      className="px-4 py-2.5 rounded-xl bg-[#16a34a] hover:bg-[#15803d] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      {busy ? 'Packaging ZIP…' : 'Build New ZIP & Show Green Update Button'}
+                    </button>
+                    {appUpdate.active && (
+                      <button
+                        type="button"
+                        disabled={busy || !isOnline}
+                        onClick={() =>
+                          void handleQuickAction(() =>
+                            applySparkProposal(currentUserId, {
+                              kind: 'setAppUpdate',
+                              active: false,
+                              version: '',
+                              note: '',
+                              downloadUrl: '',
+                            })
+                          )
+                        }
+                        className="px-4 py-2.5 rounded-xl border border-[var(--chatbox-border)] bg-white hover:bg-[#f7f5fb] text-xs font-semibold text-[#5a5468] cursor-pointer"
+                      >
+                        Hide Update Button
+                      </button>
+                    )}
+                  </div>
+                </form>
               </div>
             )}
           </>

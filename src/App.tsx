@@ -1,10 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  type User,
-} from 'firebase/auth';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   HelpCircle,
   MessageCircle,
@@ -14,11 +8,21 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
 import {
+  BOOTSTRAPPED_OWNER_EMAILS,
+  DEFAULT_SPARK_DYNAMIC_CONFIG,
+  checkSparkAdminStatus,
   observePublicWelcome,
-  observeSparkAppearance,
   observeSparkAppUpdate,
+  observeSparkAppearance,
+  observeSparkDynamicConfig,
 } from './services/sparkAdminService';
 import {
   getStoredLoginLanguage,
@@ -31,9 +35,12 @@ import { useNetworkStatus } from './hooks/useNetworkStatus';
 import { isBengaliLanguage } from './data/worldLanguages';
 import type {
   AppTab,
+  CustomMenuIconName,
   DemoModal,
   SparkAppearance,
   SparkAppUpdate,
+  SparkDynamicConfig,
+  UserProfile,
 } from './types/chatbox';
 import { AdminScreen } from './components/AdminScreen';
 import { AuthLoginScreen } from './components/AuthLoginScreen';
@@ -41,23 +48,29 @@ import { CallsScreen } from './components/CallsScreen';
 import {
   AppUpdateDetailsDialog,
   ChatboxLogoWithUpdateBadge,
+  CustomMenuIcon,
+  GreenUpdateButton,
   MessengerAvatar,
+  NoticeBanner,
 } from './components/Common';
 import { DemoChatsScreen } from './components/DemoChatsScreen';
 import { LiveChatsScreen } from './components/LiveChatsScreen';
+import { ProfileModal } from './components/ProfileModal';
 import { SairaAiScreen } from './components/SairaAiScreen';
 
-const NAV_TABS: Array<{
+interface NavTabItem {
   id: AppTab;
   label: string;
   shortLabel: string;
-  icon: React.ComponentType<{ className?: string }>;
-}> = [
+  icon?: React.ComponentType<{ className?: string }>;
+  customIcon?: CustomMenuIconName;
+}
+
+const CORE_NAV_TABS: NavTabItem[] = [
   { id: 'demo', label: 'Demo', shortLabel: 'Demo', icon: MessageCircle },
   { id: 'live', label: 'Live chats', shortLabel: 'Live', icon: Users },
   { id: 'saira', label: 'Saira AI', shortLabel: 'Saira', icon: Sparkles },
   { id: 'calls', label: 'Calls', shortLabel: 'Calls', icon: Phone },
-  { id: 'admin', label: 'Admin', shortLabel: 'Admin', icon: Shield },
 ];
 
 export function App() {
@@ -69,6 +82,10 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const signInInFlightRef = useRef(false);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [ownProfile, setOwnProfile] = useState<UserProfile | null>(null);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   const [loginLanguage, setLoginLanguage] = useState(() => getStoredLoginLanguage());
   const [rememberState, setRememberState] = useState(() => getStoredRememberMe());
@@ -91,6 +108,9 @@ export function App() {
     note: '',
     downloadUrl: '',
   });
+  const [dynamicConfig, setDynamicConfig] = useState<SparkDynamicConfig>(
+    DEFAULT_SPARK_DYNAMIC_CONFIG
+  );
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
 
   useEffect(() => {
@@ -102,6 +122,11 @@ export function App() {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
       setAuthReady(true);
+      if (!user) {
+        setIsAdmin(false);
+        setOwnProfile(null);
+        setProfileModalOpen(false);
+      }
     });
     const fallbackTimer = window.setTimeout(() => setAuthReady(true), 1500);
     return () => {
@@ -111,14 +136,46 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!currentUser) {
+      setIsAdmin(false);
+      return;
+    }
+    const normalizedEmail = (currentUser.email ?? '').trim().toLowerCase();
+    const isBootstrappedOwner = (BOOTSTRAPPED_OWNER_EMAILS as readonly string[]).includes(
+      normalizedEmail
+    );
+    setIsAdmin(isBootstrappedOwner);
+
+    let active = true;
+    checkSparkAdminStatus(currentUser.uid, currentUser.email)
+      .then((status) => {
+        if (!active) return;
+        const allowed =
+          status === 'OWNER' ||
+          status === 'DELEGATE' ||
+          status === 'INVITED_DELEGATE' ||
+          status === 'UNCLAIMED_OWNER';
+        setIsAdmin(allowed);
+      })
+      .catch(() => {
+        if (active) setIsAdmin(isBootstrappedOwner);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
     if (!currentUser) return;
     const unsubWelcome = observePublicWelcome(setWelcomeBanner);
     const unsubAppearance = observeSparkAppearance(setAppearance);
     const unsubUpdate = observeSparkAppUpdate(setAppUpdate);
+    const unsubDynamic = observeSparkDynamicConfig(setDynamicConfig);
     return () => {
       unsubWelcome();
       unsubAppearance();
       unsubUpdate();
+      unsubDynamic();
     };
   }, [currentUser]);
 
@@ -128,6 +185,37 @@ export function App() {
       appearance.theme === 'lavender' ? 'lavender' : 'default'
     );
   }, [appearance.theme]);
+
+  useEffect(() => {
+    if (activeTab === 'admin' && !isAdmin) {
+      setActiveTab('live');
+    } else if (activeTab.startsWith('custom:')) {
+      const id = activeTab.slice('custom:'.length);
+      if (!dynamicConfig.customMenus.some((m) => m.id === id)) {
+        setActiveTab('live');
+      }
+    }
+  }, [activeTab, isAdmin, dynamicConfig.customMenus]);
+
+  const effectiveNavTabs = useMemo<NavTabItem[]>(() => {
+    const customTabs: NavTabItem[] = dynamicConfig.customMenus.map((menu) => ({
+      id: `custom:${menu.id}`,
+      label: menu.label,
+      shortLabel: menu.label.slice(0, 8),
+      customIcon: menu.icon,
+    }));
+    const tabs = [...CORE_NAV_TABS, ...customTabs];
+    if (isAdmin) {
+      tabs.push({ id: 'admin', label: 'Admin', shortLabel: 'Admin', icon: Shield });
+    }
+    return tabs;
+  }, [dynamicConfig.customMenus, isAdmin]);
+
+  const activeCustomMenu = useMemo(() => {
+    if (!activeTab.startsWith('custom:')) return null;
+    const id = activeTab.slice('custom:'.length);
+    return dynamicConfig.customMenus.find((m) => m.id === id) ?? null;
+  }, [activeTab, dynamicConfig.customMenus]);
 
   const handleGoogleSignIn = async () => {
     if (signInInFlightRef.current || authLoading) return;
@@ -213,6 +301,8 @@ export function App() {
     );
   }
 
+  const effectiveDisplayName = ownProfile?.displayName || currentUser?.displayName || 'User';
+
   return (
     <>
       {authError && (
@@ -267,6 +357,19 @@ export function App() {
         />
       )}
 
+      {currentUser && (
+        <ProfileModal
+          open={profileModalOpen}
+          uid={currentUser.uid}
+          email={currentUser.email}
+          fallbackDisplayName={effectiveDisplayName}
+          isOnline={isOnline}
+          onClose={() => setProfileModalOpen(false)}
+          onProfileUpdated={(profile) => setOwnProfile(profile)}
+          onSignOut={() => void handleSignOut()}
+        />
+      )}
+
       {!currentUser ? (
         <AuthLoginScreen
           language={loginLanguage}
@@ -300,8 +403,8 @@ export function App() {
               />
             </div>
 
-            <div className="flex-1 flex flex-col items-center gap-1.5 w-full">
-              {NAV_TABS.map((tab) => {
+            <div className="flex-1 flex flex-col items-center gap-1.5 w-full overflow-y-auto">
+              {effectiveNavTabs.map((tab) => {
                 const Icon = tab.icon;
                 const selected = activeTab === tab.id;
                 return (
@@ -309,13 +412,17 @@ export function App() {
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`w-full py-2.5 px-1 rounded-2xl flex flex-col items-center gap-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                    className={`w-full py-2.5 px-1 rounded-2xl flex flex-col items-center gap-1 text-[11px] font-medium transition-colors cursor-pointer shrink-0 ${
                       selected
                         ? 'bg-[var(--chatbox-selected-bg)] text-[#5b4a8f] font-semibold'
                         : 'text-[#6b657d] hover:bg-white/60'
                     }`}
                   >
-                    <Icon className="w-5 h-5" />
+                    {tab.customIcon ? (
+                      <CustomMenuIcon name={tab.customIcon} className="w-5 h-5" />
+                    ) : Icon ? (
+                      <Icon className="w-5 h-5" />
+                    ) : null}
                     <span className="truncate max-w-full">{tab.label}</span>
                   </button>
                 );
@@ -334,21 +441,66 @@ export function App() {
               >
                 <HelpCircle className="w-5 h-5" />
               </button>
-              <MessengerAvatar label={currentUser.displayName || 'Y'} size={34} />
+              <button
+                type="button"
+                onClick={() => setProfileModalOpen(true)}
+                title="Your WhatsApp Profile & 6-Digit ID"
+                className="rounded-full ring-2 ring-transparent hover:ring-[#8b5cf6]/40 transition cursor-pointer"
+              >
+                <MessengerAvatar label={effectiveDisplayName} size={34} />
+              </button>
             </div>
           </nav>
 
-          {/* Mobile Top Navigation Bar (when Spark Admin sets menu=top) */}
+          {/* Mobile Phone Top Home Strip: App Name + Small Green Update Button + 6-digit ID Profile */}
+          <div className="md:hidden flex items-center justify-between gap-2 px-3.5 py-2 bg-[var(--chatbox-surface)] border-b border-[var(--chatbox-border)] shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full overflow-hidden border border-[#8b5cf6]/30 bg-white shrink-0">
+                <img
+                  src="/assets/chatbox_logo_lavender.jpg"
+                  alt="Chatbox"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <span className="font-display text-sm font-bold text-[var(--chatbox-ink)] truncate">
+                {dynamicConfig.appTitle || 'Chatbox'}
+              </span>
+              <GreenUpdateButton
+                appUpdateActive={appUpdate.active}
+                version={appUpdate.version}
+                onClick={() => setShowUpdateDialog(true)}
+                compact
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setProfileModalOpen(true)}
+              className="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-[#f7f5fb] border border-[var(--chatbox-border)] cursor-pointer shrink-0"
+            >
+              <MessengerAvatar label={effectiveDisplayName} size={22} />
+              <span className="text-[11px] font-mono font-bold text-[#5b4a8f]">
+                {ownProfile?.shortId ? `#${ownProfile.shortId}` : 'Profile'}
+              </span>
+            </button>
+          </div>
+
+          {/* Mobile Top Navigation Bar (when Admin sets menu=top) */}
           {appearance.menu === 'top' && (
-            <MobileNavBar activeTab={activeTab} onSelect={setActiveTab} position="top" />
+            <MobileNavBar
+              tabs={effectiveNavTabs}
+              activeTab={activeTab}
+              onSelect={setActiveTab}
+              position="top"
+            />
           )}
 
           {/* Main Content Area */}
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
             {activeTab === 'demo' && (
               <DemoChatsScreen
-                publicWelcomeBanner={welcomeBanner}
-                userDisplayName={currentUser.displayName}
+                publicWelcomeBanner={dynamicConfig.homeAnnouncement || welcomeBanner}
+                userDisplayName={effectiveDisplayName}
                 userEmail={currentUser.email}
                 isOnline={isOnline}
                 appUpdateActive={appUpdate.active}
@@ -365,17 +517,22 @@ export function App() {
             {activeTab === 'live' && (
               <LiveChatsScreen
                 currentUserId={currentUser.uid}
-                displayName={currentUser.displayName || currentUser.phoneNumber}
+                displayName={effectiveDisplayName}
                 isOnline={isOnline}
                 appUpdateActive={appUpdate.active}
                 onAppUpdateClick={() => setShowUpdateDialog(true)}
                 oneMinAutoReplyEnabled={oneMinAutoReplyEnabled}
                 onOpenCalls={() => setActiveTab('calls')}
+                ownProfile={ownProfile}
+                onProfileLoaded={(p) => setOwnProfile(p)}
+                onOpenProfile={() => setProfileModalOpen(true)}
+                homeAnnouncement={dynamicConfig.homeAnnouncement || welcomeBanner}
               />
             )}
 
             {activeTab === 'saira' && (
               <SairaAiScreen
+                currentUserId={currentUser.uid}
                 isOnline={isOnline}
                 appUpdateActive={appUpdate.active}
                 onAppUpdateClick={() => setShowUpdateDialog(true)}
@@ -391,7 +548,42 @@ export function App() {
               />
             )}
 
-            {activeTab === 'admin' && (
+            {activeCustomMenu && (
+              <div className="h-full overflow-y-auto bg-[var(--chatbox-bg)] px-5 py-6">
+                <div className="max-w-2xl mx-auto space-y-4">
+                  <div className="rounded-3xl bg-[var(--chatbox-surface)] border border-[var(--chatbox-border)] p-6 space-y-4 shadow-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-2xl bg-[#efeaf7] text-[#5b4a8f] flex items-center justify-center shrink-0">
+                          <CustomMenuIcon name={activeCustomMenu.icon} className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8f89a3]">
+                            {activeCustomMenu.label}
+                          </p>
+                          <h1 className="font-display text-xl font-bold text-[var(--chatbox-ink)]">
+                            {activeCustomMenu.title}
+                          </h1>
+                        </div>
+                      </div>
+                      <GreenUpdateButton
+                        appUpdateActive={appUpdate.active}
+                        version={appUpdate.version}
+                        onClick={() => setShowUpdateDialog(true)}
+                      />
+                    </div>
+                    {dynamicConfig.homeAnnouncement && (
+                      <NoticeBanner text={dynamicConfig.homeAnnouncement} />
+                    )}
+                    <p className="text-sm text-[#3a3347] leading-relaxed whitespace-pre-wrap">
+                      {activeCustomMenu.body}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'admin' && isAdmin && (
               <AdminScreen
                 currentUserId={currentUser.uid}
                 currentUserEmail={currentUser.email}
@@ -399,6 +591,7 @@ export function App() {
                 appearance={appearance}
                 welcomeBanner={welcomeBanner}
                 appUpdate={appUpdate}
+                dynamicConfig={dynamicConfig}
                 onAppUpdateClick={() => setShowUpdateDialog(true)}
               />
             )}
@@ -406,7 +599,12 @@ export function App() {
 
           {/* Mobile Bottom Navigation Bar (default) */}
           {appearance.menu !== 'top' && (
-            <MobileNavBar activeTab={activeTab} onSelect={setActiveTab} position="bottom" />
+            <MobileNavBar
+              tabs={effectiveNavTabs}
+              activeTab={activeTab}
+              onSelect={setActiveTab}
+              position="bottom"
+            />
           )}
         </div>
       )}
@@ -415,10 +613,12 @@ export function App() {
 }
 
 function MobileNavBar({
+  tabs,
   activeTab,
   onSelect,
   position,
 }: {
+  tabs: NavTabItem[];
   activeTab: AppTab;
   onSelect: (tab: AppTab) => void;
   position: 'top' | 'bottom';
@@ -426,13 +626,13 @@ function MobileNavBar({
   return (
     <nav
       aria-label="Mobile navigation"
-      className={`md:hidden grid grid-cols-5 h-16 shrink-0 bg-[var(--chatbox-rail-bg)] ${
+      className={`md:hidden flex items-center justify-around overflow-x-auto h-16 shrink-0 bg-[var(--chatbox-rail-bg)] px-1 ${
         position === 'top'
           ? 'border-b border-[var(--chatbox-border)]'
           : 'border-t border-[var(--chatbox-border)]'
       }`}
     >
-      {NAV_TABS.map((tab) => {
+      {tabs.map((tab) => {
         const Icon = tab.icon;
         const selected = activeTab === tab.id;
         return (
@@ -440,12 +640,16 @@ function MobileNavBar({
             key={tab.id}
             type="button"
             onClick={() => onSelect(tab.id)}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer ${
+            className={`flex-1 min-w-[58px] h-full flex flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium cursor-pointer ${
               selected ? 'text-[#5b4a8f] font-bold' : 'text-[#6b657d]'
             }`}
           >
-            <Icon className="w-5 h-5" />
-            <span>{tab.shortLabel}</span>
+            {tab.customIcon ? (
+              <CustomMenuIcon name={tab.customIcon} className="w-5 h-5" />
+            ) : Icon ? (
+              <Icon className="w-5 h-5" />
+            ) : null}
+            <span className="truncate max-w-[64px]">{tab.shortLabel}</span>
           </button>
         );
       })}
@@ -454,3 +658,4 @@ function MobileNavBar({
 }
 
 export default App;
+

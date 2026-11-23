@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public Chatbox user lookup profile containing UID and display name (no PII/email).",
+      "description": "Public Chatbox user lookup profile containing UID, display name, 6-digit Chatbox ID, and WhatsApp-style About status (no PII/email/phone).",
       "type": "object",
       "properties": {
         "uid": {
@@ -12,9 +12,67 @@
         "displayName": {
           "type": "string",
           "description": "Unverified user display name (1..80 chars)."
+        },
+        "shortId": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$",
+          "description": "Unique 6-digit Chatbox numeric ID code for adding friends."
+        },
+        "about": {
+          "type": "string",
+          "description": "WhatsApp-style short profile bio/status (0..140 chars)."
         }
       },
       "required": ["uid", "displayName"]
+    },
+    "ShortIdLookup": {
+      "title": "ShortIdLookup",
+      "description": "Exact 6-digit Chatbox ID index mapping 6-digit code to user UID and displayName (no listing allowed).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name (1..80 chars)."
+        }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "PhoneDirectoryEntry": {
+      "title": "PhoneDirectoryEntry",
+      "description": "Exact phone-number digits lookup index mapping normalized phone digits to UID and displayName (get-only, listing forbidden).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name (1..80 chars)."
+        }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Owner-private profile settings storing the user's phone number.",
+      "type": "object",
+      "properties": {
+        "phoneNumber": {
+          "type": "string",
+          "description": "User phone number string (0..24 chars)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["phoneNumber", "updatedAt"]
     },
     "UserBlock": {
       "title": "UserBlock",
@@ -200,6 +258,35 @@
       },
       "required": ["value", "updatedBy", "updatedAt"]
     },
+    "SparkDynamicConfig": {
+      "title": "SparkDynamicConfig",
+      "description": "Live dynamic app settings & custom menu bars controlled from Admin Dashboard.",
+      "type": "object",
+      "properties": {
+        "appTitle": {
+          "type": "string",
+          "description": "Display brand title (1..40 chars)."
+        },
+        "homeAnnouncement": {
+          "type": "string",
+          "description": "Optional live announcement bar text (0..240 chars)."
+        },
+        "customMenus": {
+          "type": "array",
+          "description": "Up to 5 admin-created dynamic navigation menu items."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the admin/delegate who updated the dynamic config."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["appTitle", "homeAnnouncement", "customMenus", "updatedBy", "updatedAt"]
+    },
     "SparkAppUpdate": {
       "title": "SparkAppUpdate",
       "description": "App update notice published from Spark Admin or backend so users see a green update badge next to the logo.",
@@ -244,7 +331,7 @@
         },
         "platform": {
           "type": "string",
-          "enum": ["android"],
+          "enum": ["android", "web"],
           "description": "Client platform identifier."
         },
         "updatedAt": {
@@ -314,7 +401,19 @@
   "firestore": {
     "/profiles/{uid}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Direct UID lookup profile for starting live conversations."
+      "description": "Public Chatbox user lookup profile with 6-digit ID and WhatsApp-style About."
+    },
+    "/shortIds/{shortId}": {
+      "schema": { "$ref": "#/entities/ShortIdLookup" },
+      "description": "Exact 6-digit Chatbox ID lookup table (get-only)."
+    },
+    "/phoneDirectory/{phoneKey}": {
+      "schema": { "$ref": "#/entities/PhoneDirectoryEntry" },
+      "description": "Exact phone digits lookup table (get-only)."
+    },
+    "/users/{userId}/private/profile": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Owner-private profile PII (phone number)."
     },
     "/userBlocks/{ownerId}/blocked/{blockedId}": {
       "schema": { "$ref": "#/entities/UserBlock" },
@@ -347,6 +446,10 @@
     "/settings/sparkPublic": {
       "schema": { "$ref": "#/entities/SparkPublicWelcome" },
       "description": "Public welcome message managed by Spark Admin."
+    },
+    "/settings/sparkConfig": {
+      "schema": { "$ref": "#/entities/SparkDynamicConfig" },
+      "description": "Dynamic app configuration and custom menu bars managed by Spark Admin."
     },
     "/settings/{appearance}": {
       "schema": { "$ref": "#/entities/SparkAppearanceSetting" },

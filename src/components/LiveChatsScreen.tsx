@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Smile,
   Sparkles,
+  User as UserIcon,
   UserPlus,
   Video,
   X,
@@ -98,6 +99,10 @@ export function LiveChatsScreen({
   onAppUpdateClick,
   oneMinAutoReplyEnabled,
   onOpenCalls,
+  ownProfile: externalOwnProfile,
+  onProfileLoaded,
+  onOpenProfile,
+  homeAnnouncement,
 }: {
   currentUserId: string;
   displayName: string | null;
@@ -106,8 +111,13 @@ export function LiveChatsScreen({
   onAppUpdateClick: () => void;
   oneMinAutoReplyEnabled: boolean;
   onOpenCalls: () => void;
+  ownProfile?: UserProfile | null;
+  onProfileLoaded?: (profile: UserProfile) => void;
+  onOpenProfile?: () => void;
+  homeAnnouncement?: string;
 }) {
   const [profileReady, setProfileReady] = useState(false);
+  const [localOwnProfile, setLocalOwnProfile] = useState<UserProfile | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [convError, setConvError] = useState<string | null>(null);
@@ -199,12 +209,18 @@ export function LiveChatsScreen({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Ensure user's own lookup profile exists
+  const onProfileLoadedRef = useRef(onProfileLoaded);
+  onProfileLoadedRef.current = onProfileLoaded;
+
+  // Ensure user's own lookup profile & 6-digit ID exist
   useEffect(() => {
     let active = true;
     ensureOwnProfile(currentUserId, displayName)
-      .then(() => {
-        if (active) setProfileReady(true);
+      .then((profile) => {
+        if (!active) return;
+        setLocalOwnProfile(profile);
+        setProfileReady(true);
+        onProfileLoadedRef.current?.(profile);
       })
       .catch((err) => {
         if (active) setConvError(friendlyFirestoreMessage(err));
@@ -213,6 +229,9 @@ export function LiveChatsScreen({
       active = false;
     };
   }, [currentUserId, displayName]);
+
+  const effectiveOwnProfile = externalOwnProfile ?? localOwnProfile;
+  const ownShortId = effectiveOwnProfile?.shortId ?? '';
 
   // Subscribe to conversations & blocked IDs
   useEffect(() => {
@@ -440,7 +459,8 @@ export function LiveChatsScreen({
 
   const handleCopyId = async () => {
     try {
-      await navigator.clipboard.writeText(currentUserId);
+      const valueToCopy = ownShortId || currentUserId;
+      await navigator.clipboard.writeText(valueToCopy);
       setCopiedId(true);
       window.setTimeout(() => setCopiedId(false), 2000);
     } catch {
@@ -802,34 +822,55 @@ export function LiveChatsScreen({
                 </h2>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowNewConversation((v) => !v)}
-              title="Start new conversation"
-              className="w-9 h-9 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] flex items-center justify-center cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onOpenProfile && (
+                <button
+                  type="button"
+                  onClick={onOpenProfile}
+                  title="WhatsApp-style Profile & 6-digit ID"
+                  className="w-9 h-9 rounded-xl bg-[#f7f5fb] hover:bg-[#efeaf7] text-[#5b4a8f] flex items-center justify-center cursor-pointer border border-[var(--chatbox-border)]"
+                >
+                  <UserIcon className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowNewConversation((v) => !v)}
+                title="Add friend by 6-digit ID or phone number"
+                className="w-9 h-9 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] flex items-center justify-center cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Copyable Chatbox ID pill */}
+          {/* Copyable 6-Digit Chatbox ID pill */}
           <div className="rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] px-3 py-2 flex items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-[#8f89a3]">
-                Your Chatbox ID {profileReady ? '· Ready' : '· Syncing…'}
+                Your 6-Digit ID {profileReady ? '· Share to connect' : '· Syncing…'}
               </p>
-              <p className="text-xs font-mono text-[var(--chatbox-ink)] truncate">
-                {currentUserId}
-              </p>
+              <div className="flex items-center gap-2 min-w-0">
+                <p className="text-sm font-mono font-bold tracking-widest text-[#5b4a8f] truncate">
+                  {ownShortId || '••••••'}
+                </p>
+                {effectiveOwnProfile?.displayName && (
+                  <span className="text-[11px] text-[#8f89a3] truncate">
+                    · {effectiveOwnProfile.displayName}
+                  </span>
+                )}
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={handleCopyId}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-[var(--chatbox-border)] text-xs font-medium text-[#5b4a8f] hover:bg-[#efeaf7] shrink-0 cursor-pointer"
-            >
-              {copiedId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedId ? 'Copied' : 'Copy'}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyId}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-[var(--chatbox-border)] text-xs font-medium text-[#5b4a8f] hover:bg-[#efeaf7] cursor-pointer"
+              >
+                {copiedId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedId ? 'Copied' : 'Copy'}
+              </button>
+            </div>
           </div>
 
           {showNewConversation && (
@@ -838,14 +879,14 @@ export function LiveChatsScreen({
               className="rounded-xl bg-[var(--chatbox-field-bg)] border border-[#5b4a8f]/30 p-3 space-y-2"
             >
               <p className="text-xs font-semibold text-[var(--chatbox-ink)]">
-                Start conversation by Chatbox ID
+                Add friend by 6-digit ID or phone number
               </p>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={peerDraft}
                   onChange={(e) => setPeerDraft(e.target.value)}
-                  placeholder="Paste friend's Chatbox ID…"
+                  placeholder="Enter 6-digit ID (482910) or phone (+8801…)"
                   className="flex-1 h-9 px-3 rounded-lg bg-white border border-[var(--chatbox-border)] text-xs focus:outline-none focus:border-[#5b4a8f]"
                 />
                 <button
@@ -854,7 +895,7 @@ export function LiveChatsScreen({
                   className="px-3 h-9 rounded-lg bg-[#6250a0] hover:bg-[#463a76] disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
-                  Send
+                  Add
                 </button>
               </div>
             </form>
@@ -879,6 +920,7 @@ export function LiveChatsScreen({
             )}
           </div>
 
+          {homeAnnouncement && <NoticeBanner text={homeAnnouncement} />}
           {!isOnline && (
             <NoticeBanner
               isError
@@ -1572,7 +1614,17 @@ export function LiveChatsScreen({
             <h4 className="font-display text-base font-bold text-[var(--chatbox-ink)]">
               {selectedPeerName}
             </h4>
-            <p className="text-[11px] font-mono text-[#8f89a3] break-all px-2">
+            {peerProfiles[selectedPeerUid]?.shortId && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#efeaf7] text-[#5b4a8f] text-xs font-mono font-bold tracking-wider">
+                ID: {peerProfiles[selectedPeerUid].shortId}
+              </span>
+            )}
+            {peerProfiles[selectedPeerUid]?.about && (
+              <p className="text-xs text-[#6b657d] px-2 leading-relaxed">
+                {peerProfiles[selectedPeerUid].about}
+              </p>
+            )}
+            <p className="text-[10px] font-mono text-[#8f89a3] break-all px-2">
               {selectedPeerUid}
             </p>
           </div>

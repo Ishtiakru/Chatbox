@@ -1,9 +1,22 @@
-import type { AiExchange } from '../types/chatbox';
+import {
+  collection,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  writeBatch,
+  type Unsubscribe,
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import type { AiExchange, SairaChatSession } from '../types/chatbox';
 
-export async function streamSairaChat(params: {
+async function streamSairaChatOnce(params: {
   question: string;
   history: AiExchange[];
   isFirstTurn: boolean;
+  isContinuation?: boolean;
   onChunk: (accumulatedText: string) => void;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -13,11 +26,12 @@ export async function streamSairaChat(params: {
     signal: params.signal,
     body: JSON.stringify({
       question: params.question,
-      history: params.history.slice(-20).map((ex) => ({
+      history: params.history.slice(-16).map((ex) => ({
         question: ex.question,
         answer: ex.answer,
       })),
       isFirstTurn: params.isFirstTurn,
+      isContinuation: Boolean(params.isContinuation),
       hourOfDay: new Date().getHours(),
     }),
   });
@@ -80,6 +94,28 @@ export async function streamSairaChat(params: {
   return accumulated.trim();
 }
 
+export async function streamSairaChat(params: {
+  question: string;
+  history: AiExchange[];
+  isFirstTurn: boolean;
+  isContinuation?: boolean;
+  onChunk: (accumulatedText: string) => void;
+  signal?: AbortSignal;
+}): Promise<string> {
+  try {
+    return await streamSairaChatOnce(params);
+  } catch (err) {
+    if (params.signal?.aborted) {
+      throw err;
+    }
+    // Automatic silent recovery retry once with trimmed context so Saira never gets stuck
+    return await streamSairaChatOnce({
+      ...params,
+      history: params.history.slice(-6),
+    });
+  }
+}
+
 export async function askSairaCompanion(params: {
   userName: string;
   peerName: string;
@@ -126,4 +162,106 @@ export async function generateOneMinuteAutoReply(params: {
   }
   const data = (await response.json()) as { reply?: string };
   return data.reply?.trim() || '';
+}
+
+export function observeSairaSessions(
+  uid: string,
+  onSessions: (sessions: SairaChatSession[]) => void
+): Unsubscribe {
+  const path = `users/${uid}/sairaSessions`;
+  const q = query(collection(db, 'users', uid, 'sairaSessions'), orderBy('updatedAt', 'desc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: SairaChatSession[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          title: String(data.title ?? 'Saira Chat'),
+          lastPreview: String(data.lastPreview ?? ''),
+          exchangeCount: Number(data.exchangeCount ?? 0),
+          createdAt: data.createdAt ?? null,
+          updatedAt: data.updatedAt ?? null,
+        };
+      });
+      onSessions(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path, false);
+    }
+  );
+}
+
+export async function loadSairaSessionExchanges(
+  uid: string,
+  sessionId: string
+): Promise<AiExchange[]> {
+  const path = `users/${uid}/sairaSessions/${sessionId}/exchanges`;
+  try {
+    const q = query(
+      collection(db, 'users', uid, 'sairaSessions', sessionId, 'exchanges'),
+      orderBy('sequence', 'asc')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        question: String(data.question ?? ''),
+        answer: String(data.answer ?? ''),
+        isStreaming: false,
+      };
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path, false);
+    return [];
+  }
+}
+
+export async function persistSairaExchange(params: {
+  uid: string;
+  sessionId: string;
+  isNewSession: boolean;
+  title: string;
+  question: string;
+  answer: string;
+  sequence: number;
+}): Promise<void> {
+  const sessionPath = `users/${params.uid}/sairaSessions/${params.sessionId}`;
+  try {
+    const batch = writeBatch(db);
+    const sessionRef = doc(db, 'users', params.uid, 'sairaSessions', params.sessionId);
+    const cleanTitle = params.title.trim().slice(0, 120) || 'Saira Chat';
+    const preview = params.answer.trim().slice(0, 240);
+
+    if (params.isNewSession) {
+      batch.set(sessionRef, {
+        title: cleanTitle,
+        lastPreview: preview,
+        exchangeCount: params.sequence + 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      batch.update(sessionRef, {
+        title: cleanTitle,
+        lastPreview: preview,
+        exchangeCount: params.sequence + 1,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    const exId = `ex_${params.sequence}_${Date.now()}`;
+    const exRef = doc(db, 'users', params.uid, 'sairaSessions', params.sessionId, 'exchanges', exId);
+    batch.set(exRef, {
+      question: params.question.trim().slice(0, 2000),
+      answer: params.answer.trim().slice(0, 12000),
+      sequence: params.sequence,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, sessionPath, false);
+  }
 }

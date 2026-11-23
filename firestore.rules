@@ -21,6 +21,14 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidShortId(shortId) {
+      return shortId is string && shortId.size() == 6 && shortId.matches('^[0-9]{6}$');
+    }
+
+    function isValidPhoneKey(phoneKey) {
+      return phoneKey is string && phoneKey.size() >= 7 && phoneKey.size() <= 15 && phoneKey.matches('^[0-9]{7,15}$');
+    }
+
     function member(conversationId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/conversations/$(conversationId))
@@ -60,14 +68,37 @@ service cloud.firestore {
 
     function isValidProfile(data, uid) {
       return data.keys().hasAll(['uid', 'displayName'])
-        && data.keys().hasOnly(['uid', 'displayName'])
+        && data.keys().hasOnly(['uid', 'displayName', 'shortId', 'about'])
         && data.uid is string
         && data.uid == uid
         && data.uid.size() > 0
         && data.uid.size() <= 128
         && data.displayName is string
         && data.displayName.size() > 0
+        && data.displayName.size() <= 80
+        && (!('shortId' in data) || isValidShortId(data.shortId))
+        && (!('about' in data) || (data.about is string && data.about.size() <= 140));
+    }
+
+    function isValidDirectoryEntry(data) {
+      return data.keys().hasAll(['uid', 'displayName'])
+        && data.keys().hasOnly(['uid', 'displayName'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid.size() > 0
+        && data.uid.size() <= 128
+        && data.displayName is string
+        && data.displayName.size() > 0
         && data.displayName.size() <= 80;
+    }
+
+    function isValidPrivateProfile(data) {
+      return data.keys().hasAll(['phoneNumber', 'updatedAt'])
+        && data.keys().hasOnly(['phoneNumber', 'updatedAt'])
+        && data.phoneNumber is string
+        && data.phoneNumber.size() <= 24
+        && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
     }
 
     function isValidConversation(data) {
@@ -209,6 +240,28 @@ service cloud.firestore {
         && data.updatedAt is timestamp && data.updatedAt == request.time;
     }
 
+    function isValidCustomMenuItem(item) {
+      return item is map
+        && item.keys().hasAll(['id', 'label', 'icon', 'title', 'body'])
+        && item.keys().hasOnly(['id', 'label', 'icon', 'title', 'body'])
+        && item.id is string && item.id.size() > 0 && item.id.size() <= 32
+        && item.label is string && item.label.size() > 0 && item.label.size() <= 24
+        && item.icon is string && item.icon in ['sparkles', 'bell', 'megaphone', 'book', 'star', 'info', 'grid']
+        && item.title is string && item.title.size() > 0 && item.title.size() <= 80
+        && item.body is string && item.body.size() > 0 && item.body.size() <= 1000;
+    }
+
+    function isValidSparkDynamicConfig(data) {
+      return data.keys().hasAll(['appTitle', 'homeAnnouncement', 'customMenus', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['appTitle', 'homeAnnouncement', 'customMenus', 'updatedBy', 'updatedAt'])
+        && data.appTitle is string && data.appTitle.size() > 0 && data.appTitle.size() <= 40
+        && data.homeAnnouncement is string && data.homeAnnouncement.size() <= 240
+        && data.customMenus is list && data.customMenus.size() <= 5
+        && (data.customMenus.size() == 0 || isValidCustomMenuItem(data.customMenus[0]))
+        && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
+        && data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
     function isValidSparkUpdate(data) {
       return data.keys().hasAll(['active', 'version', 'note', 'downloadUrl', 'updatedAt', 'updatedBy'])
         && data.keys().hasOnly(['active', 'version', 'note', 'downloadUrl', 'updatedAt', 'updatedBy'])
@@ -243,11 +296,61 @@ service cloud.firestore {
     match /profiles/{uid} {
       allow get: if isSignedIn() && isValidId(uid);
       allow list: if false;
-      allow create, update: if isSignedIn()
+      allow create: if isSignedIn()
         && isValidId(uid)
         && request.auth.uid == uid
         && isValidProfile(incoming(), uid);
+      allow update: if isSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidProfile(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'shortId', 'about']);
       allow delete: if false;
+    }
+
+    match /shortIds/{shortId} {
+      allow get: if isSignedIn() && isValidShortId(shortId);
+      allow list: if false;
+      allow create: if isSignedIn()
+        && isValidShortId(shortId)
+        && isValidDirectoryEntry(incoming());
+      allow update: if isSignedIn()
+        && isValidShortId(shortId)
+        && isValidDirectoryEntry(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+      allow delete: if isSignedIn() && isValidShortId(shortId) && existing().uid == request.auth.uid;
+    }
+
+    match /phoneDirectory/{phoneKey} {
+      allow get: if isSignedIn() && isValidPhoneKey(phoneKey);
+      allow list: if false;
+      allow create: if isSignedIn()
+        && isValidPhoneKey(phoneKey)
+        && isValidDirectoryEntry(incoming());
+      allow update: if isSignedIn()
+        && isValidPhoneKey(phoneKey)
+        && isValidDirectoryEntry(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+      allow delete: if isSignedIn() && isValidPhoneKey(phoneKey) && existing().uid == request.auth.uid;
+    }
+
+    match /users/{userId}/private/profile {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidPrivateProfile(incoming());
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidPrivateProfile(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['phoneNumber', 'updatedAt']);
+      allow list, delete: if false;
     }
 
     match /userBlocks/{ownerId}/blocked/{blockedId} {
@@ -428,6 +531,20 @@ service cloud.firestore {
         && recentlyAuthenticated()
         && isValidSparkPublic(incoming())
         && incoming().updatedBy == request.auth.uid;
+    }
+
+    match /settings/sparkConfig {
+      allow get: if isSignedIn();
+      allow list, delete: if false;
+      allow create: if isSparkAdmin()
+        && recentlyAuthenticated()
+        && isValidSparkDynamicConfig(incoming())
+        && incoming().updatedBy == request.auth.uid;
+      allow update: if isSparkAdmin()
+        && recentlyAuthenticated()
+        && isValidSparkDynamicConfig(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['appTitle', 'homeAnnouncement', 'customMenus', 'updatedBy', 'updatedAt']);
     }
 
     match /settings/sparkUpdate {
