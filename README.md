@@ -11,6 +11,19 @@ A native Android rewrite of **Chatbox** (`Saira / Chatbox`) built with Kotlin, J
 - **Calls (Planned)**: Orbital calling preview screen linking back to active conversations.
 - **Spark Admin Studio**: Owner/delegate controls secured by Firestore security rules and recent Google re-authentication (`welcome:`, `theme: lavender/default`, `menu: top/bottom`, and Gmail delegation).
 
+## Firebase Authentication setup
+
+Phone and Google sign-in need two one-time Firebase Console steps:
+
+1. **Enable Phone sign-in:** Firebase Console → Build → Authentication → Sign-in method → **Phone** → Enable. Optionally add a test phone number with a fixed code.
+2. **Add the debug signing certificate SHA-1** to the Android app `com.aistudio.chatbox.kxmpzq`: Firebase Console → Project settings → Your apps → Android app → **Add fingerprint**.
+   ```
+   F9:9C:68:B7:8F:28:34:54:39:71:48:83:59:25:DD:B3:0A:5C:07:20
+   ```
+   This is the SHA-1 of the committed `debug.keystore` used by CI debug builds. Without it, Google Sign-In fails with `DEVELOPER_ERROR`.
+
+After changing either setting, install a freshly built debug APK.
+
 ## Backend Push Dispatch Setup (Firebase Console)
 
 Because Cloud Functions / FCM server triggers cannot be provisioned automatically from this environment, deploy a Cloud Function (using Firebase Admin SDK) in your Firebase project triggered on new documents in `conversations/{conversationId}/messages/{messageId}` (on the named Firestore database) to look up recipient device tokens in `userFcmTokens/{recipientUid}/devices` and send FCM messages containing `conversationId`, `senderId`, `senderName`, and `body`.
