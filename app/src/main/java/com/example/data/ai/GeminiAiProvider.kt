@@ -39,7 +39,7 @@ class GeminiAiProvider(
         prompt: String
     ): String {
         val chat: Chat = model(systemInstruction).startChat(history = historyContent(history))
-        return chat.generateContent(prompt).text?.trim().orEmpty()
+        return chat.sendMessage(prompt).text?.trim().orEmpty()
     }
 
     override fun stream(
