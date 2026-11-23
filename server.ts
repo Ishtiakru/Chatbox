@@ -89,24 +89,45 @@ Available live changes you can return:
 Only include fields the admin asked to change. Keep all text clean, safe, and ready to display live to users.
 `.trim();
 
+const keyCooldownUntil = new Map<string, number>();
+let keyRoundRobinCursor = 0;
+
 function getConfiguredApiKeys(): string[] {
   const keys: string[] = [];
-  const primary = process.env.GEMINI_API_KEY?.trim();
-  if (primary && primary !== 'your_gemini_api_key_here') {
-    keys.push(primary);
-  }
-  const backup = process.env.GEMINI_BACKUP_API_KEY?.trim();
-  if (backup && backup !== 'your_gemini_api_key_here' && !keys.includes(backup)) {
-    keys.push(backup);
-  }
-  const pool = process.env.GEMINI_API_KEYS?.split(',') ?? [];
-  for (const raw of pool) {
-    const trimmed = raw.trim();
+  const pushKey = (raw: string | undefined) => {
+    const trimmed = (raw ?? '').trim().replace(/^['"]|['"]$/g, '');
     if (trimmed && trimmed !== 'your_gemini_api_key_here' && !keys.includes(trimmed)) {
       keys.push(trimmed);
     }
+  };
+
+  pushKey(process.env.GEMINI_API_KEY);
+  pushKey(process.env.GEMINI_BACKUP_API_KEY);
+  for (let i = 1; i <= 30; i += 1) {
+    pushKey(process.env[`GEMINI_API_KEY_${i}`]);
+    pushKey(process.env[`GEMINI_KEY_${i}`]);
+  }
+  const pool = (process.env.GEMINI_API_KEYS ?? '').split(/[,;\n]+/);
+  for (const item of pool) {
+    pushKey(item);
   }
   return keys;
+}
+
+function getOrderedActiveApiKeys(): string[] {
+  const all = getConfiguredApiKeys();
+  if (all.length <= 1) return all;
+  const now = Date.now();
+  const rotated = [...all.slice(keyRoundRobinCursor % all.length), ...all.slice(0, keyRoundRobinCursor % all.length)];
+  keyRoundRobinCursor = (keyRoundRobinCursor + 1) % all.length;
+
+  const healthy = rotated.filter((k) => (keyCooldownUntil.get(k) ?? 0) <= now);
+  const cooling = rotated.filter((k) => (keyCooldownUntil.get(k) ?? 0) > now);
+  return [...healthy, ...cooling];
+}
+
+function markKeyCooldown(apiKey: string, durationMs = 120_000): void {
+  keyCooldownUntil.set(apiKey, Date.now() + durationMs);
 }
 
 function createAiClient(apiKey: string): GoogleGenAI {
@@ -121,7 +142,7 @@ function createAiClient(apiKey: string): GoogleGenAI {
 }
 
 function getAiClient(): GoogleGenAI | null {
-  const keys = getConfiguredApiKeys();
+  const keys = getOrderedActiveApiKeys();
   return keys.length > 0 ? createAiClient(keys[0]) : null;
 }
 
@@ -226,7 +247,7 @@ async function generateTextWithFallback(
   contents: string | Content[],
   systemInstruction: string
 ): Promise<string> {
-  const apiKeys = getConfiguredApiKeys();
+  const apiKeys = getOrderedActiveApiKeys();
   if (apiKeys.length === 0) {
     throw new Error('GEMINI_API_KEY missing');
   }
@@ -234,7 +255,7 @@ async function generateTextWithFallback(
   const models = [MODEL_NAME, FALLBACK_MODEL_NAME];
   let lastError: unknown;
 
-  for (const key of apiKeys) {
+  for (const key of apiKeys.slice(0, 6)) {
     const ai = createAiClient(key);
     for (const model of models) {
       try {
@@ -247,13 +268,18 @@ async function generateTextWithFallback(
               ...getModelThinkingConfig(model),
             },
           }),
-          8000,
+          7000,
           model
         );
         const text = response.text?.trim();
         if (text) return text;
       } catch (error) {
         lastError = error;
+        const raw = extractRawErrorText(error).toLowerCase();
+        if (raw.includes('429') || raw.includes('quota') || raw.includes('resource_exhausted') || raw.includes('api_key_invalid')) {
+          markKeyCooldown(key);
+          break;
+        }
         if (!isTransientGeminiError(error)) {
           throw error;
         }
@@ -268,17 +294,17 @@ async function streamTextWithFallback(
   systemInstruction: string,
   onText: (text: string) => void
 ): Promise<boolean> {
-  const apiKeys = getConfiguredApiKeys();
+  const apiKeys = getOrderedActiveApiKeys();
   if (apiKeys.length === 0) {
     throw new Error('GEMINI_API_KEY missing');
   }
 
   const attempts: Array<{ apiKey: string; model: string; delayMs: number; firstChunkTimeoutMs: number }> = [];
-  for (let i = 0; i < apiKeys.length; i += 1) {
-    attempts.push({ apiKey: apiKeys[i], model: MODEL_NAME, delayMs: i === 0 ? 0 : 120, firstChunkTimeoutMs: 7000 });
-    attempts.push({ apiKey: apiKeys[i], model: FALLBACK_MODEL_NAME, delayMs: 100, firstChunkTimeoutMs: 7000 });
+  attempts.push({ apiKey: apiKeys[0], model: MODEL_NAME, delayMs: 0, firstChunkTimeoutMs: 6500 });
+  attempts.push({ apiKey: apiKeys[0], model: FALLBACK_MODEL_NAME, delayMs: 80, firstChunkTimeoutMs: 6500 });
+  for (let i = 1; i < Math.min(apiKeys.length, 8); i += 1) {
+    attempts.push({ apiKey: apiKeys[i], model: FALLBACK_MODEL_NAME, delayMs: 80, firstChunkTimeoutMs: 5500 });
   }
-  attempts.push({ apiKey: apiKeys[0], model: FALLBACK_MODEL_NAME, delayMs: 250, firstChunkTimeoutMs: 9000 });
 
   let lastError: unknown;
   for (const attempt of attempts) {
@@ -317,6 +343,11 @@ async function streamTextWithFallback(
       }
     } catch (error) {
       lastError = error;
+      const raw = extractRawErrorText(error).toLowerCase();
+      if (raw.includes('429') || raw.includes('quota') || raw.includes('resource_exhausted') || raw.includes('api_key_invalid')) {
+        markKeyCooldown(attempt.apiKey);
+        continue;
+      }
       if (emittedAny || !isTransientGeminiError(error)) {
         throw error;
       }
@@ -478,12 +509,37 @@ async function startServer() {
   });
   app.use(express.json({ limit: '1mb' }));
 
+  function getSafeAndroidPackageName(): string {
+    const raw = (process.env.ANDROID_PACKAGE_NAME || '').trim();
+    return /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(raw)
+      ? raw
+      : 'com.chatbox.saira';
+  }
+
+  function parseAndroidSha256Fingerprints(): string[] {
+    const raw = (process.env.ANDROID_SHA256_FINGERPRINT || '').trim();
+    if (!raw) return [];
+    const results: string[] = [];
+    for (const part of raw.split(/[,;\n]+/)) {
+      const stripped = part
+        .trim()
+        .replace(/^['"]|['"]$/g, '')
+        .replace(/^SHA-?256\s*:\s*/i, '')
+        .replace(/[^0-9A-Fa-f]/g, '')
+        .toUpperCase();
+      if (/^[0-9A-F]{64}$/.test(stripped)) {
+        const colonFormatted = stripped.match(/.{2}/g)!.join(':');
+        if (!results.includes(colonFormatted)) {
+          results.push(colonFormatted);
+        }
+      }
+    }
+    return results;
+  }
+
   app.get('/.well-known/assetlinks.json', (_req, res) => {
-    const packageName = (process.env.ANDROID_PACKAGE_NAME || 'com.chatbox.saira').trim();
-    const rawFingerprints = (process.env.ANDROID_SHA256_FINGERPRINT || '')
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter((s) => /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/.test(s));
+    const packageName = getSafeAndroidPackageName();
+    const rawFingerprints = parseAndroidSha256Fingerprints();
 
     if (rawFingerprints.length === 0) {
       res.json([]);
@@ -503,7 +559,17 @@ async function startServer() {
   });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
+    const configuredKeys = getConfiguredApiKeys();
+    const fingerprints = parseAndroidSha256Fingerprints();
+    res.json({
+      ok: true,
+      configuredGeminiKeyCount: configuredKeys.length,
+      androidAssetLinksConfigured: fingerprints.length > 0,
+      androidPackageNameValid: /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(
+        (process.env.ANDROID_PACKAGE_NAME || '').trim()
+      ),
+      androidPackageName: getSafeAndroidPackageName(),
+    });
   });
 
   app.post('/api/saira/chat', async (req, res) => {
