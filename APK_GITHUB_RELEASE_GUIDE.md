@@ -14,7 +14,8 @@
    - Add SHA-1 and SHA-256 in **Firebase Console → Project Settings → Your Android App (`com.aistudio.chatbox.kxmpzq`)**.
    - As long as every release APK is signed with this same keystore, SHA-1 and SHA-256 never change across unlimited app updates.
 3. **Add GitHub Repository Secrets** (`Settings → Secrets and variables → Actions`):
-   - `ANDROID_KEYSTORE_BASE64` — base64 output of your `.jks` keystore
+   - `GOOGLE_SERVICES_JSON` — full contents of `app/google-services.json` (required when `app/google-services.json` is not committed to GitHub)
+   - `ANDROID_KEYSTORE_BASE64` — base64 output of your `.jks` keystore (optional if using repo `release.keystore`)
    - `ANDROID_KEYSTORE_PASSWORD` — keystore password
    - `ANDROID_KEY_ALIAS` — `chatbox`
    - `ANDROID_KEY_PASSWORD` — key password

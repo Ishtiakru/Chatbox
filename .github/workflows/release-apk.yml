@@ -47,6 +47,24 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Resolve google-services.json (repo or GitHub Secret)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -f "app/google-services.json" ]; then
+            echo "Using app/google-services.json from repository."
+          elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Restored app/google-services.json from GOOGLE_SERVICES_JSON secret."
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 -d > app/google-services.json
+            echo "Restored app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
+          else
+            echo "::error::app/google-services.json is missing. Add a GitHub Actions secret named GOOGLE_SERVICES_JSON (contents of app/google-services.json) or GOOGLE_SERVICES_JSON_BASE64 in Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --no-daemon
 
@@ -120,7 +138,8 @@ jobs:
             exit 1
           fi
           cp "$APK_SOURCE" "chatbox-v${CLEAN_VER}.apk"
-          "${ANDROID_HOME}/build-tools/"$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "chatbox-v${CLEAN_VER}.apk"
+          BUILD_TOOLS_DIR=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
+          "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_DIR}/apksigner" verify --print-certs "chatbox-v${CLEAN_VER}.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
