@@ -39,9 +39,11 @@ class SairaNotificationListenerService : NotificationListenerService() {
     internal suspend fun processNotification(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
         val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
-        if (isGroupSummary) return
 
         val extras = notification.extras ?: return
+        val isGroupConversation = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
+        if (isGroupSummary || isGroupConversation) return
+
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val bodyText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()

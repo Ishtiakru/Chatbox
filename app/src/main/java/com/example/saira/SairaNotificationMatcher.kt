@@ -36,7 +36,8 @@ object SairaNotificationMatcher {
      * 1. Master toggle (`notifAutoReplyEnabled == true`).
      * 2. Supported package (WhatsApp or Messenger only).
      * 3. Non-group-summary, non-empty sender title and message body.
-     * 4. An explicitly enabled [SairaNotificationRule] matching platform & contact name.
+     * 4. An explicitly enabled [SairaNotificationRule] with an explicit contact name that
+     *    matches the notification sender on this platform (a designated message is required).
      * 5. Location sharing only when master `liveLocationEnabled == true`, OS permission is
      *    granted, the matched contact rule has `allowLocationShare == true`, and incoming
      *    text asks for location.
@@ -60,6 +61,7 @@ object SairaNotificationMatcher {
 
         val matchedRule = rules.firstOrNull { rule ->
             rule.enabled &&
+                rule.contactName.isNotBlank() &&
                 rule.taughtReplyGuidance.isNotBlank() &&
                 (rule.platform == SairaPlatform.ANY || rule.platform == platform) &&
                 namesMatch(rule.contactName, cleanSender)
