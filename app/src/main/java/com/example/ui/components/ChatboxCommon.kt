@@ -137,54 +137,46 @@ fun ChatboxLogoWithUpdateBadge(
     modifier: Modifier = Modifier,
     logoSize: Dp = 36.dp
 ) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    ChatboxUpdateBadge(
+        appUpdateActive = appUpdateActive,
+        onUpdateClick = onUpdateClick,
+        modifier = modifier
+    )
+}
+
+@Composable
+fun ChatboxUpdateBadge(
+    appUpdateActive: Boolean,
+    onUpdateClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (appUpdateActive) {
         Surface(
-            modifier = Modifier
-                .size(logoSize)
-                .border(1.dp, Color(0xFF10B981).copy(alpha = 0.35f), CircleShape),
+            onClick = onUpdateClick,
             shape = CircleShape,
-            color = Color.White,
-            shadowElevation = 1.dp
+            color = ChatboxUpdateGreen,
+            shadowElevation = 2.dp,
+            modifier = modifier
+                .defaultMinSize(minHeight = 32.dp)
+                .testTag("green_update_badge")
         ) {
-            Image(
-                painter = painterResource(R.drawable.chatbox_logo_lavender),
-                contentDescription = stringResource(R.string.app_name),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        if (appUpdateActive) {
-            Surface(
-                onClick = onUpdateClick,
-                shape = CircleShape,
-                color = ChatboxUpdateGreen,
-                shadowElevation = 2.dp,
-                modifier = Modifier
-                    .defaultMinSize(minHeight = 32.dp)
-                    .testTag("green_update_badge")
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Download,
-                        contentDescription = stringResource(R.string.update_badge),
-                        tint = Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = stringResource(R.string.update_badge),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        maxLines = 1
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = stringResource(R.string.update_badge),
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = stringResource(R.string.update_badge),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1
+                )
             }
         }
     }

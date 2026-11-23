@@ -356,11 +356,6 @@ fun SairaAiScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    ChatboxLogoWithUpdateBadge(
-                        appUpdateActive = appUpdateActive,
-                        onUpdateClick = onAppUpdateClick,
-                        logoSize = 30.dp
-                    )
                     SairaMetaOrb(size = 30.dp, animate = isBusy)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -384,6 +379,10 @@ fun SairaAiScreen(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ChatboxUpdateBadge(
+                        appUpdateActive = appUpdateActive,
+                        onUpdateClick = onAppUpdateClick
+                    )
                     Surface(
                         color = colors.fieldBg,
                         shape = RoundedCornerShape(12.dp),
@@ -484,14 +483,14 @@ fun SairaAiScreen(
                     SairaMetaOrb(size = 64.dp, animate = isBusy)
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "${currentTimeInfo.bengaliGreeting}! সায়রাকে জিজ্ঞেস করুন",
+                        text = "${currentTimeInfo.bengaliGreeting}! সায়রাকে জিজ্ঞেস করুন",
                         style = MaterialTheme.typography.headlineMedium,
                         color = colors.ink,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "দিন-রাতের সময় বুঝে সম্ভাষণ ও ফ্রি AI-এর মাধ্যমে দ্রুত উত্তর, চ্যাটবক্সে ১ মিনিটের অপেক্ষা সঙ্গী, এবং অনুমতিসাপেক্ষে WhatsApp ও Messenger অটো-রিপ্লাই / লোকেশন শেয়ারিং।",
+                        text = "দিন-রাতের সময় বুঝে সম্ভাষণ ও ফ্রি AI-এর মাধ্যমে দ্রুত উত্তর, চ্যাটবক্সে ১ মিনিটের অপেক্ষা সঙ্গী, এবং অনুমতিসাপেক্ষে WhatsApp ও Messenger অটো-রিপ্লাই / লোকেশন শেয়ারিং।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted,
                         textAlign = TextAlign.Center,
