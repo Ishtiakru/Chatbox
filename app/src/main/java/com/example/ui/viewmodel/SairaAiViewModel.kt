@@ -3,7 +3,8 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.ai.AiFallbackProviderKind
+import com.example.data.ai.AiBackupProvider
+import com.example.data.ai.AiBackupProviderKind
 import com.example.data.ai.SairaAiClient
 import com.example.data.model.AiExchange
 import com.example.data.repository.AppPreferencesRepository
@@ -30,14 +31,11 @@ data class SairaAiUiState(
     val ruleContactDraft: String = "",
     val rulePlatformDraft: SairaPlatform = SairaPlatform.ANY,
     val ruleGuidanceDraft: String = "",
-    val aiFallbackKind: AiFallbackProviderKind = AiFallbackProviderKind.GROQ,
-    val aiFallbackApiKey: String = "",
-    val aiFallbackBaseUrl: String = "",
-    val aiFallbackModel: String = "",
+    val backupProviders: List<AiBackupProvider> = emptyList(),
     val aiNotice: String = ""
 ) {
-    val isBackupAiConfigured: Boolean
-        get() = aiFallbackApiKey.isNotBlank()
+    val configuredBackupCount: Int
+        get() = backupProviders.count { it.enabled && it.isConfigured }
 }
 
 class SairaAiViewModel(
@@ -71,25 +69,8 @@ class SairaAiViewModel(
                 }
             }
             viewModelScope.launch {
-                prefs.aiFallbackProviderKind.collect { kindId ->
-                    _uiState.value = _uiState.value.copy(
-                        aiFallbackKind = AiFallbackProviderKind.fromId(kindId)
-                    )
-                }
-            }
-            viewModelScope.launch {
-                prefs.aiFallbackApiKey.collect { key ->
-                    _uiState.value = _uiState.value.copy(aiFallbackApiKey = key)
-                }
-            }
-            viewModelScope.launch {
-                prefs.aiFallbackBaseUrl.collect { url ->
-                    _uiState.value = _uiState.value.copy(aiFallbackBaseUrl = url)
-                }
-            }
-            viewModelScope.launch {
-                prefs.aiFallbackModel.collect { model ->
-                    _uiState.value = _uiState.value.copy(aiFallbackModel = model)
+                prefs.aiBackupProviders.collect { providers ->
+                    _uiState.value = _uiState.value.copy(backupProviders = providers)
                 }
             }
         }
@@ -236,42 +217,81 @@ class SairaAiViewModel(
         }
     }
 
-    fun updateFallbackKind(kind: AiFallbackProviderKind) {
-        val current = _uiState.value
-        _uiState.value = current.copy(
-            aiFallbackKind = kind,
-            aiFallbackBaseUrl = current.aiFallbackBaseUrl.ifBlank { kind.defaultBaseUrl },
-            aiFallbackModel = current.aiFallbackModel.ifBlank { kind.defaultModel }
+    fun addBackupProvider() {
+        _uiState.value = _uiState.value.copy(
+            backupProviders = _uiState.value.backupProviders + AiBackupProvider()
         )
     }
 
-    fun updateFallbackApiKey(value: String) {
-        _uiState.value = _uiState.value.copy(aiFallbackApiKey = value.take(200))
+    fun updateBackupProvider(providerId: String, update: (AiBackupProvider) -> AiBackupProvider) {
+        _uiState.value = _uiState.value.copy(
+            backupProviders = _uiState.value.backupProviders.map { provider ->
+                if (provider.id == providerId) update(provider) else provider
+            }
+        )
     }
 
-    fun updateFallbackBaseUrl(value: String) {
-        _uiState.value = _uiState.value.copy(aiFallbackBaseUrl = value.take(300))
-    }
-
-    fun updateFallbackModel(value: String) {
-        _uiState.value = _uiState.value.copy(aiFallbackModel = value.take(120))
-    }
-
-    fun saveFallbackConfig() {
-        val current = _uiState.value
-        val baseUrl = current.aiFallbackBaseUrl.trim().ifBlank { current.aiFallbackKind.defaultBaseUrl }
-        val model = current.aiFallbackModel.trim().ifBlank { current.aiFallbackKind.defaultModel }
-        _uiState.value = current.copy(aiFallbackBaseUrl = baseUrl, aiFallbackModel = model)
-        viewModelScope.launch {
-            preferencesRepository?.saveAiFallbackConfig(
-                providerKindId = current.aiFallbackKind.id,
-                apiKey = current.aiFallbackApiKey,
-                baseUrl = baseUrl,
-                model = model
+    fun setBackupKind(providerId: String, kind: AiBackupProviderKind) {
+        updateBackupProvider(providerId) { provider ->
+            provider.copy(
+                kindId = kind.id,
+                baseUrl = if (provider.baseUrl.isBlank() || provider.baseUrl == provider.kind.defaultBaseUrl) {
+                    ""
+                } else {
+                    provider.baseUrl
+                },
+                model = if (provider.model.isBlank() || provider.model == provider.kind.defaultModel) {
+                    ""
+                } else {
+                    provider.model
+                }
             )
+        }
+    }
+
+    fun setBackupApiKey(providerId: String, value: String) {
+        updateBackupProvider(providerId) { provider -> provider.copy(apiKey = value.take(300)) }
+    }
+
+    fun setBackupModel(providerId: String, value: String) {
+        updateBackupProvider(providerId) { provider -> provider.copy(model = value.take(120)) }
+    }
+
+    fun setBackupBaseUrl(providerId: String, value: String) {
+        updateBackupProvider(providerId) { provider -> provider.copy(baseUrl = value.take(300)) }
+    }
+
+    fun toggleBackupProvider(providerId: String, enabled: Boolean) {
+        updateBackupProvider(providerId) { provider -> provider.copy(enabled = enabled) }
+    }
+
+    fun removeBackupProvider(providerId: String) {
+        _uiState.value = _uiState.value.copy(
+            backupProviders = _uiState.value.backupProviders.filterNot { it.id == providerId }
+        )
+    }
+
+    fun moveBackupProvider(providerId: String, moveUp: Boolean) {
+        val current = _uiState.value.backupProviders
+        val index = current.indexOfFirst { it.id == providerId }
+        val target = if (moveUp) index - 1 else index + 1
+        if (index == -1 || target < 0 || target >= current.size) return
+        val updated = current.toMutableList().apply {
+            val item = removeAt(index)
+            add(target, item)
+        }
+        _uiState.value = _uiState.value.copy(backupProviders = updated)
+    }
+
+    fun saveBackupProviders() {
+        val current = _uiState.value
+        _uiState.value = current.copy(aiNotice = "")
+        viewModelScope.launch {
+            preferencesRepository?.saveAiBackupProviders(current.backupProviders)
             SairaAiClient.resetCooldowns()
             _uiState.value = _uiState.value.copy(
-                aiNotice = "Backup AI saved. Saira switches to it automatically when Gemini's free quota ends."
+                aiNotice = "Backup chain saved (${current.configuredBackupCount} ready). " +
+                    "Saira switches automatically when Gemini's free quota ends."
             )
         }
     }

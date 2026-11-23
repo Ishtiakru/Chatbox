@@ -5,7 +5,7 @@ import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
-/** Default Saira wiring: Gemini free tier first, user-configured backup second. */
+/** Default Saira wiring: Gemini free tier first, then the user's backup chain. */
 object SairaAiClient {
 
     private val preferencesRepository by lazy {
@@ -17,7 +17,7 @@ object SairaAiClient {
     private val router: AiRouter by lazy {
         AiRouter(
             primary = GeminiAiProvider(),
-            fallback = { currentBackupProvider() },
+            fallbacks = { currentBackupProviders() },
             cooldowns = AiCooldownStore()
         )
     }
@@ -38,14 +38,10 @@ object SairaAiClient {
         router.resetCooldowns()
     }
 
-    private suspend fun currentBackupProvider(): AiProvider? {
-        val prefs = preferencesRepository ?: return null
-        val kind = AiFallbackProviderKind.fromId(prefs.aiFallbackProviderKind.first())
-        return AiFallbackConfig(
-            kind = kind,
-            apiKey = prefs.aiFallbackApiKey.first(),
-            baseUrl = prefs.aiFallbackBaseUrl.first().ifBlank { kind.defaultBaseUrl },
-            model = prefs.aiFallbackModel.first().ifBlank { kind.defaultModel }
-        ).toProvider()
+    private suspend fun currentBackupProviders(): List<AiProvider> {
+        val prefs = preferencesRepository ?: return emptyList()
+        return prefs.aiBackupProviders.first()
+            .filter { it.enabled && it.isConfigured }
+            .mapNotNull { it.toProvider() }
     }
 }

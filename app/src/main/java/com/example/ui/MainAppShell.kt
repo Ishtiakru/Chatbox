@@ -484,19 +484,29 @@ private fun AuthenticatedAppShell(
                     onDeleteNotificationRule = { ruleId ->
                         sairaAiViewModel.deleteNotificationRule(ruleId)
                     },
-                    onFallbackKindChange = { kind ->
-                        sairaAiViewModel.updateFallbackKind(kind)
+                    onAddBackupProvider = { sairaAiViewModel.addBackupProvider() },
+                    onBackupKindChange = { providerId, kind ->
+                        sairaAiViewModel.setBackupKind(providerId, kind)
                     },
-                    onFallbackApiKeyChange = { key ->
-                        sairaAiViewModel.updateFallbackApiKey(key)
+                    onBackupApiKeyChange = { providerId, key ->
+                        sairaAiViewModel.setBackupApiKey(providerId, key)
                     },
-                    onFallbackBaseUrlChange = { url ->
-                        sairaAiViewModel.updateFallbackBaseUrl(url)
+                    onBackupModelChange = { providerId, model ->
+                        sairaAiViewModel.setBackupModel(providerId, model)
                     },
-                    onFallbackModelChange = { model ->
-                        sairaAiViewModel.updateFallbackModel(model)
+                    onBackupBaseUrlChange = { providerId, url ->
+                        sairaAiViewModel.setBackupBaseUrl(providerId, url)
                     },
-                    onSaveFallbackConfig = { sairaAiViewModel.saveFallbackConfig() },
+                    onBackupToggle = { providerId, enabled ->
+                        sairaAiViewModel.toggleBackupProvider(providerId, enabled)
+                    },
+                    onBackupRemove = { providerId ->
+                        sairaAiViewModel.removeBackupProvider(providerId)
+                    },
+                    onBackupMove = { providerId, moveUp ->
+                        sairaAiViewModel.moveBackupProvider(providerId, moveUp)
+                    },
+                    onSaveBackupProviders = { sairaAiViewModel.saveBackupProviders() },
                     onClearAiNotice = { sairaAiViewModel.clearAiNotice() }
                 )
             }

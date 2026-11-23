@@ -7,7 +7,7 @@ A native Android rewrite of **Chatbox** (`Saira / Chatbox`) built with Kotlin, J
 - **Lavender Login & Bilingual Greeting**: `বাংলা (BD)` / `English (US)` toggle and Google Sign-In via Jetpack Credential Manager.
 - **Live Chats (Firestore)**: Real-time 1:1 conversations (`profiles`, `conversations`, `messages`, `userBlocks`) with Chatbox ID sharing, consent-based message requests (`pending` / `active` / `closed`), server pagination (`Load earlier messages`), per-conversation in-memory drafts, and peer blocking.
 - **Push Notifications (FCM)**: Android client registers device FCM tokens in owner-private `userFcmTokens/{ownerId}/devices/{deviceId}`, requests `POST_NOTIFICATIONS` on Android 13+, suppresses foreground banners for the active open thread, and deep-links tapped notifications into the conversation.
-- **Saira AI (Firebase AI Logic)**: Streaming Q&A grounded in curated Chatbox app knowledge using `gemini-3.8-flash` and Firebase App Check. When the free Gemini quota runs out, Saira automatically switches to a user-configured backup provider (Groq / OpenRouter / any OpenAI-compatible endpoint) and cools the exhausted provider down for 5 minutes.
+- **Saira AI (Firebase AI Logic)**: Streaming Q&A grounded in curated Chatbox app knowledge using `gemini-3.8-flash` and Firebase App Check. When the free Gemini quota runs out, Saira automatically walks a user-configured **backup chain** — Google AI Studio, Groq, OpenRouter, Cerebras, Mistral, GitHub Models or any OpenAI-compatible endpoint — in order, skipping whoever is in a 5-minute quota cooldown.
 - **Signed release builds**: the release APK is signed with the committed `release.keystore` (`keystore.properties`), so it is installable and not debuggable.
 - **Calls (Planned)**: Orbital calling preview screen linking back to active conversations.
 - **Spark Admin Studio**: Owner/delegate controls secured by Firestore security rules and recent Google re-authentication (`welcome:`, `theme: lavender/default`, `menu: top/bottom`, and Gmail delegation).
@@ -33,17 +33,22 @@ After changing either setting, install a freshly built APK.
 
 ## Backup AI setup (optional, recommended)
 
-Gemini's free tier is rate limited, so Saira can automatically fail over to a second free provider:
+Gemini's free tier is rate limited, so Saira can automatically fail over to a chain of free providers:
 
-1. Create a free API key — Groq: `console.groq.com/keys` · OpenRouter: `openrouter.ai/keys`.
-2. In the app open **Saira → Auto-Reply → Backup AI**, pick the provider, paste the key, then **Save Backup AI**.
-3. Nothing else to do: when Gemini answers with a quota error, the next message goes to the backup provider automatically. Exhausted providers are skipped for 5 minutes.
+1. Create one or more free API keys — every provider has a free tier:
+   - **Google AI Studio** → `aistudio.google.com/apikey` (uses the OpenAI-compatible Gemini endpoint, separate quota from Firebase AI Logic)
+   - **Groq** → `console.groq.com/keys`
+   - **OpenRouter** → `openrouter.ai/keys` (free models such as `meta-llama/llama-3.3-70b-instruct:free`)
+   - **Cerebras** → `cloud.cerebras.ai` · **Mistral** → `console.mistral.ai` · **GitHub Models** → `github.com/settings/tokens`
+2. In the app open **Saira → Auto-Reply → Backup AI**, tap **Add Backup Provider** per provider, paste the key, then **Save Backup Chain**.
+3. Nothing else to do: Gemini first, then the chain in the listed order. Use ↑/↓ to reorder, the switch to enable/disable, and 🗑 to remove. Exhausted providers are skipped for 5 minutes.
 
-Provider defaults: Groq `llama-3.3-70b-versatile`, OpenRouter `meta-llama/llama-3.3-70b-instruct:free`. Model names change over time — edit the **Model** field if the provider retires a default. `Custom` accepts any OpenAI-compatible base URL (for example a self-hosted gateway).
+Model names change over time — edit the **Model** field if a provider retires its default. `Custom` accepts any OpenAI-compatible base URL (for example a self-hosted gateway).
 
 Notes:
 
-- The key is stored only in the app's private DataStore on the device. Anyone with the APK can still extract it, so use a free-tier key — never a paid one.
+- Keys are stored only in the app's private DataStore on the device. Anyone with the APK can still extract them, so use free-tier keys — never paid ones.
+- Rotating several keys of the *same* provider to dodge its quota is a terms-of-service violation and is intentionally not supported; the chain is for different providers.
 - Streaming is Gemini-only; backup answers arrive as one block.
 
 ## Release builds

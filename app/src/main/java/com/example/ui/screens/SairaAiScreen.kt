@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -73,7 +74,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
-import com.example.data.ai.AiFallbackProviderKind
+import com.example.data.ai.AiBackupProvider
+import com.example.data.ai.AiBackupProviderKind
 import com.example.data.model.AiExchange
 import com.example.notifications.SairaNotificationListenerService
 import com.example.saira.SairaNotificationRule
@@ -107,11 +109,15 @@ fun SairaAiScreen(
     onAddNotificationRule: () -> Unit = {},
     onToggleNotificationRule: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteNotificationRule: (String) -> Unit = {},
-    onFallbackKindChange: (AiFallbackProviderKind) -> Unit = {},
-    onFallbackApiKeyChange: (String) -> Unit = {},
-    onFallbackBaseUrlChange: (String) -> Unit = {},
-    onFallbackModelChange: (String) -> Unit = {},
-    onSaveFallbackConfig: () -> Unit = {},
+    onAddBackupProvider: () -> Unit = {},
+    onBackupKindChange: (String, AiBackupProviderKind) -> Unit = { _, _ -> },
+    onBackupApiKeyChange: (String, String) -> Unit = { _, _ -> },
+    onBackupModelChange: (String, String) -> Unit = { _, _ -> },
+    onBackupBaseUrlChange: (String, String) -> Unit = { _, _ -> },
+    onBackupToggle: (String, Boolean) -> Unit = { _, _ -> },
+    onBackupRemove: (String) -> Unit = {},
+    onBackupMove: (String, Boolean) -> Unit = { _, _ -> },
+    onSaveBackupProviders: () -> Unit = {},
     onClearAiNotice: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -293,11 +299,15 @@ fun SairaAiScreen(
                         onAddNotificationRule = onAddNotificationRule,
                         onToggleNotificationRule = onToggleNotificationRule,
                         onDeleteNotificationRule = onDeleteNotificationRule,
-                        onFallbackKindChange = onFallbackKindChange,
-                        onFallbackApiKeyChange = onFallbackApiKeyChange,
-                        onFallbackBaseUrlChange = onFallbackBaseUrlChange,
-                        onFallbackModelChange = onFallbackModelChange,
-                        onSaveFallbackConfig = onSaveFallbackConfig,
+                        onAddBackupProvider = onAddBackupProvider,
+                        onBackupKindChange = onBackupKindChange,
+                        onBackupApiKeyChange = onBackupApiKeyChange,
+                        onBackupModelChange = onBackupModelChange,
+                        onBackupBaseUrlChange = onBackupBaseUrlChange,
+                        onBackupToggle = onBackupToggle,
+                        onBackupRemove = onBackupRemove,
+                        onBackupMove = onBackupMove,
+                        onSaveBackupProviders = onSaveBackupProviders,
                         onClearAiNotice = onClearAiNotice,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
@@ -488,11 +498,15 @@ private fun SairaAutoReplyTab(
     onAddNotificationRule: () -> Unit,
     onToggleNotificationRule: (String, Boolean) -> Unit,
     onDeleteNotificationRule: (String) -> Unit,
-    onFallbackKindChange: (AiFallbackProviderKind) -> Unit,
-    onFallbackApiKeyChange: (String) -> Unit,
-    onFallbackBaseUrlChange: (String) -> Unit,
-    onFallbackModelChange: (String) -> Unit,
-    onSaveFallbackConfig: () -> Unit,
+    onAddBackupProvider: () -> Unit,
+    onBackupKindChange: (String, AiBackupProviderKind) -> Unit,
+    onBackupApiKeyChange: (String, String) -> Unit,
+    onBackupModelChange: (String, String) -> Unit,
+    onBackupBaseUrlChange: (String, String) -> Unit,
+    onBackupToggle: (String, Boolean) -> Unit,
+    onBackupRemove: (String) -> Unit,
+    onBackupMove: (String, Boolean) -> Unit,
+    onSaveBackupProviders: () -> Unit,
     onClearAiNotice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -709,73 +723,54 @@ private fun SairaAutoReplyTab(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "When Gemini's free quota ends, Saira automatically switches to this provider — no tap needed.",
+                            text = "When Gemini's free quota ends, Saira walks down this chain automatically — no tap needed.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                val effectiveModel = uiState.aiFallbackModel.ifBlank { uiState.aiFallbackKind.defaultModel }
                 ChatboxNoticeBanner(
-                    text = if (uiState.isBackupAiConfigured) {
-                        "Backup AI ready · ${uiState.aiFallbackKind.label} · $effectiveModel"
+                    text = if (uiState.configuredBackupCount > 0) {
+                        "${uiState.configuredBackupCount} backup AI ready. Saira tries them in order when Gemini's free quota ends."
                     } else {
-                        "Add a free API key: Groq → console.groq.com/keys · OpenRouter → openrouter.ai/keys"
+                        "Add one or more free API keys below. When Gemini's free quota ends, Saira moves down this chain automatically."
                     },
                     isError = false
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    AiFallbackProviderKind.entries.forEach { kind ->
-                        FilterChip(
-                            selected = uiState.aiFallbackKind == kind,
-                            onClick = { onFallbackKindChange(kind) },
-                            label = { Text(kind.label) }
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = uiState.aiFallbackApiKey,
-                    onValueChange = onFallbackApiKeyChange,
-                    label = { Text("Backup AI API key") },
-                    placeholder = { Text("gsk_...") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("saira_fallback_key_input")
-                )
-
-                OutlinedTextField(
-                    value = uiState.aiFallbackModel,
-                    onValueChange = onFallbackModelChange,
-                    label = { Text("Model (edit if the default is retired)") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("saira_fallback_model_input")
-                )
-
-                if (uiState.aiFallbackKind == AiFallbackProviderKind.CUSTOM) {
-                    OutlinedTextField(
-                        value = uiState.aiFallbackBaseUrl,
-                        onValueChange = onFallbackBaseUrlChange,
-                        label = { Text("Base URL (OpenAI-compatible, /v1)") },
-                        placeholder = { Text("https://your-host/v1") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                uiState.backupProviders.forEachIndexed { index, provider ->
+                    SairaBackupProviderCard(
+                        index = index,
+                        provider = provider,
+                        isFirst = index == 0,
+                        isLast = index == uiState.backupProviders.lastIndex,
+                        onKindChange = { onBackupKindChange(provider.id, it) },
+                        onApiKeyChange = { onBackupApiKeyChange(provider.id, it) },
+                        onModelChange = { onBackupModelChange(provider.id, it) },
+                        onBaseUrlChange = { onBackupBaseUrlChange(provider.id, it) },
+                        onToggle = { onBackupToggle(provider.id, it) },
+                        onRemove = { onBackupRemove(provider.id) },
+                        onMoveUp = { onBackupMove(provider.id, true) },
+                        onMoveDown = { onBackupMove(provider.id, false) }
                     )
                 }
 
+                OutlinedButton(
+                    onClick = onAddBackupProvider,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("saira_add_backup_provider_button")
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text("Add Backup Provider")
+                }
+
                 Button(
-                    onClick = onSaveFallbackConfig,
-                    enabled = uiState.aiFallbackApiKey.isNotBlank(),
+                    onClick = onSaveBackupProviders,
+                    enabled = uiState.backupProviders.isNotEmpty(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .minimumInteractiveComponentSize()
@@ -783,7 +778,7 @@ private fun SairaAutoReplyTab(
                 ) {
                     Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Save Backup AI")
+                    Text("Save Backup Chain")
                 }
 
                 if (uiState.aiNotice.isNotBlank()) {
@@ -901,6 +896,147 @@ private fun SairaExchangeCard(exchange: AiExchange) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = ChatboxIncomingText,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun SairaBackupProviderCard(
+    index: Int,
+    provider: AiBackupProvider,
+    isFirst: Boolean,
+    isLast: Boolean,
+    onKindChange: (AiBackupProviderKind) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onModelChange: (String) -> Unit,
+    onBaseUrlChange: (String) -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onRemove: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("saira_backup_provider_card_$index")
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "${index + 1}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = provider.kind.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = !isFirst,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ArrowUpward,
+                        contentDescription = "Move up",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = !isLast,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.ArrowDropDown,
+                        contentDescription = "Move down",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteOutline,
+                        contentDescription = "Remove",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Switch(
+                    checked = provider.enabled,
+                    onCheckedChange = onToggle,
+                    modifier = Modifier.testTag("saira_backup_switch_$index")
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AiBackupProviderKind.entries.forEach { kind ->
+                    FilterChip(
+                        selected = provider.kind == kind,
+                        onClick = { onKindChange(kind) },
+                        label = { Text(kind.label) }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = provider.apiKey,
+                onValueChange = onApiKeyChange,
+                label = { Text("API key · ${provider.kind.keyHint}") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("saira_backup_key_$index")
+            )
+
+            OutlinedTextField(
+                value = provider.model,
+                onValueChange = onModelChange,
+                label = { Text("Model (default: ${provider.effectiveModel})") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("saira_backup_model_$index")
+            )
+
+            if (provider.kind == AiBackupProviderKind.CUSTOM) {
+                OutlinedTextField(
+                    value = provider.baseUrl,
+                    onValueChange = onBaseUrlChange,
+                    label = { Text("Base URL (OpenAI-compatible)") },
+                    placeholder = { Text("https://your-host/v1") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            if (!provider.isConfigured) {
+                Text(
+                    text = "Needs an API key before it can be used.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

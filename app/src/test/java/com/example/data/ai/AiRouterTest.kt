@@ -54,10 +54,10 @@ class AiRouterTest {
 
     private fun newRouter(
         primary: AiProvider,
-        backup: AiProvider?
+        vararg backups: AiProvider
     ) = AiRouter(
         primary = primary,
-        fallback = { backup },
+        fallbacks = { backups.toList() },
         cooldowns = AiCooldownStore(InMemoryAiCooldownBackend()),
         now = { nowMs },
         cooldownMs = 60_000L
@@ -77,23 +77,40 @@ class AiRouterTest {
     }
 
     @Test
-    fun `quota error on primary switches to the backup provider`() = runTest {
+    fun `quota error on primary switches to the first backup`() = runTest {
         val primary = FakeProvider("gemini") { throw AiQuotaExhaustedException("429") }
-        val backup = FakeProvider("backup") { "hello from backup" }
-        val router = newRouter(primary, backup)
+        val first = FakeProvider("backup-1") { "hello from backup 1" }
+        val second = FakeProvider("backup-2") { "hello from backup 2" }
+        val router = newRouter(primary, first, second)
 
         val answer = router.complete("system", emptyList(), "hi")
 
-        assertEquals("hello from backup", answer)
+        assertEquals("hello from backup 1", answer)
         assertEquals(1, primary.calls)
-        assertEquals(1, backup.calls)
+        assertEquals(1, first.calls)
+        assertEquals(0, second.calls)
         assertTrue(router.cooldownRemainingMs("gemini") > 0L)
     }
 
     @Test
-    fun `quota error without a backup explains that no backup is configured`() = runTest {
+    fun `quota error on the first backup moves to the second backup`() = runTest {
         val primary = FakeProvider("gemini") { throw AiQuotaExhaustedException("429") }
-        val router = newRouter(primary, null)
+        val first = FakeProvider("backup-1") { throw AiQuotaExhaustedException("429") }
+        val second = FakeProvider("backup-2") { "hello from backup 2" }
+        val router = newRouter(primary, first, second)
+
+        val answer = router.complete("system", emptyList(), "hi")
+
+        assertEquals("hello from backup 2", answer)
+        assertEquals(1, first.calls)
+        assertEquals(1, second.calls)
+        assertTrue(router.cooldownRemainingMs("backup-1") > 0L)
+    }
+
+    @Test
+    fun `quota error without any backup explains that nothing is configured`() = runTest {
+        val primary = FakeProvider("gemini") { throw AiQuotaExhaustedException("429") }
+        val router = newRouter(primary)
 
         try {
             router.complete("system", emptyList(), "hi")
@@ -104,7 +121,7 @@ class AiRouterTest {
     }
 
     @Test
-    fun `both providers exhausted cools down both and fails fast afterwards`() = runTest {
+    fun `everything exhausted cools down every provider and fails fast afterwards`() = runTest {
         val primary = FakeProvider("gemini") { throw AiQuotaExhaustedException("429") }
         val backup = FakeProvider("backup") { throw AiQuotaExhaustedException("429") }
         val router = newRouter(primary, backup)
@@ -149,18 +166,29 @@ class AiRouterTest {
     }
 
     @Test
-    fun `non quota primary failure also falls back`() = runTest {
+    fun `non quota primary failure also falls back without cooling down`() = runTest {
         val primary = FakeProvider("gemini") { throw IllegalStateException("network down") }
         val backup = FakeProvider("backup") { "backup answer" }
         val router = newRouter(primary, backup)
 
         assertEquals("backup answer", router.complete("system", emptyList(), "hi"))
-        // Transient failures must not put the primary into cooldown.
         assertEquals(0L, router.cooldownRemainingMs("gemini"))
     }
 
     @Test
-    fun `stream quota before first chunk switches to backup`() = runTest {
+    fun `a broken backup is skipped in favour of the next one`() = runTest {
+        val primary = FakeProvider("gemini") { throw AiQuotaExhaustedException("429") }
+        val broken = FakeProvider("backup-1") { throw AiUnavailableException("HTTP 401") }
+        val working = FakeProvider("backup-2") { "working answer" }
+        val router = newRouter(primary, broken, working)
+
+        assertEquals("working answer", router.complete("system", emptyList(), "hi"))
+        assertEquals(1, broken.calls)
+        assertEquals(1, working.calls)
+    }
+
+    @Test
+    fun `stream quota before first chunk switches to the backup chain`() = runTest {
         val primary = QuotaStreamingProvider("gemini", emitBeforeQuota = false)
         val backup = FakeProvider("backup") { "backup stream answer" }
         val router = newRouter(primary, backup)
@@ -193,9 +221,9 @@ class AiRouterTest {
     }
 
     @Test
-    fun `backup config requires a key before it is usable`() {
-        val missingKey = AiFallbackConfig(
-            kind = AiFallbackProviderKind.GROQ,
+    fun `backup provider requires a key and keeps its kind defaults`() {
+        val missingKey = AiBackupProvider(
+            kindId = AiBackupProviderKind.GROQ.id,
             apiKey = "",
             baseUrl = "",
             model = ""
@@ -203,9 +231,21 @@ class AiRouterTest {
         val withKey = missingKey.copy(apiKey = "gsk_test")
 
         assertTrue(!missingKey.isConfigured)
-        assertTrue(missingKey.toProvider() == null)
+        assertEquals(null, missingKey.toProvider())
         assertTrue(withKey.isConfigured)
-        assertEquals("fallback-groq", withKey.toProvider()?.id)
-        assertEquals(AiFallbackProviderKind.GROQ.defaultModel, withKey.toProvider()?.model)
+        assertEquals("backup-${withKey.id}", withKey.toProvider()?.id)
+        assertEquals(AiBackupProviderKind.GROQ.defaultModel, withKey.toProvider()?.model)
+    }
+
+    @Test
+    fun `every kind has usable defaults except custom`() {
+        AiBackupProviderKind.entries.forEach { kind ->
+            if (kind == AiBackupProviderKind.CUSTOM) {
+                assertTrue(kind.defaultBaseUrl.isBlank())
+            } else {
+                assertTrue(kind.defaultBaseUrl.startsWith("https://"))
+                assertTrue(kind.defaultModel.isNotBlank())
+            }
+        }
     }
 }

@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.data.ai.AiBackupProvider
+import com.example.data.ai.AiBackupProviderKind
 import com.example.saira.SairaNotificationRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,6 +30,7 @@ class AppPreferencesRepository(private val context: Context) {
     private val aiFallbackApiKeyKey = stringPreferencesKey("ai_fallback_api_key_v1")
     private val aiFallbackBaseUrlKey = stringPreferencesKey("ai_fallback_base_url_v1")
     private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
+    private val aiBackupProvidersKey = stringPreferencesKey("ai_backup_providers_v2")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
@@ -94,6 +97,32 @@ class AppPreferencesRepository(private val context: Context) {
             prefs[aiFallbackModelKey].orEmpty()
         }
 
+    /** Ordered backup chain. Falls back to the old single-provider keys once. */
+    val aiBackupProviders: Flow<List<AiBackupProvider>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[aiBackupProvidersKey]
+            if (!raw.isNullOrBlank()) {
+                runCatching {
+                    json.decodeFromString<List<AiBackupProvider>>(raw)
+                }.getOrDefault(emptyList())
+            } else {
+                val legacyKey = prefs[aiFallbackApiKeyKey]?.trim().orEmpty()
+                if (legacyKey.isNotBlank()) {
+                    val kind = AiBackupProviderKind.fromId(prefs[aiFallbackProviderKindKey])
+                    listOf(
+                        AiBackupProvider(
+                            kindId = kind.id,
+                            apiKey = legacyKey,
+                            baseUrl = prefs[aiFallbackBaseUrlKey].orEmpty(),
+                            model = prefs[aiFallbackModelKey].orEmpty()
+                        )
+                    )
+                } else {
+                    emptyList()
+                }
+            }
+        }
+
     suspend fun setLoginLanguage(languageCode: String) {
         val normalized = com.example.data.model.WorldLanguages.normalizeCode(languageCode)
         context.appDataStore.edit { prefs ->
@@ -138,6 +167,18 @@ class AppPreferencesRepository(private val context: Context) {
             prefs[aiFallbackApiKeyKey] = apiKey.trim()
             prefs[aiFallbackBaseUrlKey] = baseUrl.trim()
             prefs[aiFallbackModelKey] = model.trim()
+        }
+    }
+
+    suspend fun saveAiBackupProviders(providers: List<AiBackupProvider>) {
+        val encoded = json.encodeToString(providers)
+        context.appDataStore.edit { prefs ->
+            prefs[aiBackupProvidersKey] = encoded
+            // Drop the legacy single-provider keys so they cannot resurrect.
+            prefs.remove(aiFallbackProviderKindKey)
+            prefs.remove(aiFallbackApiKeyKey)
+            prefs.remove(aiFallbackBaseUrlKey)
+            prefs.remove(aiFallbackModelKey)
         }
     }
 
