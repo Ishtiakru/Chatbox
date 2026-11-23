@@ -55,6 +55,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val notifEnabled = prefs.sairaNotifReplyEnabled.first()
         val locationEnabled = prefs.sairaLiveLocationEnabled.first()
         val rules = prefs.sairaNotificationRules.first()
+        val chatboxUsers = prefs.sairaUserDirectory.first()
         val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
 
         val match = SairaNotificationMatcher.match(
@@ -89,6 +90,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     incomingMessage = bodyText.orEmpty(),
                     taughtGuidance = match.rule.taughtReplyGuidance,
                     locationText = locationSnapshot?.toShareText(),
+                    chatboxUsers = chatboxUsers,
                     hourOfDay = hour
                 )
                 SairaAiClient.complete(SairaPrompts.autoReplySystemInstruction, emptyList(), prompt)

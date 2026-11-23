@@ -33,7 +33,10 @@ object SairaPrompts {
     val autoReplySystemInstruction: String =
         "You are Saira Assistant writing concise, natural auto-replies on the user's behalf. " +
             "Match the language of the incoming message (Bengali, Banglish, or English). " +
-            "Address the sender warmly with the provided time-of-day greeting, stay in 1 to 3 sentences, and follow the user's taught instruction strictly."
+            "Address the sender warmly with the provided time-of-day greeting, stay in 1 to 3 sentences, and follow the user's taught instruction strictly. " +
+            "If the sender asks about a known Chatbox user, answer briefly and naturally using only the provided Chatbox user list (name, ID, about) and keep the conversation flowing like a normal assistant. " +
+            "Never invent or guess any user detail, and never share phone numbers, emails or other private contact information. " +
+            "If the Chatbox user list is empty, do not mention or reference it at all."
 
     fun buildTurnPrompt(
         question: String,
@@ -82,6 +85,7 @@ object SairaPrompts {
         incomingMessage: String,
         taughtGuidance: String,
         locationText: String?,
+        chatboxUsers: List<com.example.saira.SairaDirectoryUser> = emptyList(),
         hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
@@ -95,6 +99,28 @@ object SairaPrompts {
             } else {
                 appendLine("Live Location sharing is NOT permitted for this reply — do not invent or share any address or coordinates.")
             }
+            val selfEntry = chatboxUsers.firstOrNull { it.isSelf }
+            if (selfEntry != null) {
+                appendLine(
+                    "You are replying on behalf of ${selfEntry.name} " +
+                        "(Chatbox ID ${selfEntry.shortId}, about ${selfEntry.about.ifBlank { "not set" }})."
+                )
+            }
+            if (chatboxUsers.isNotEmpty()) {
+                appendLine("Known Chatbox users (use only these, never invent anyone):")
+                chatboxUsers.forEach { user ->
+                    appendLine(
+                        "- ${user.name} — ID ${user.shortId} — about ${user.about.ifBlank { "not set" }}"
+                    )
+                }
+            } else {
+                appendLine("Known Chatbox users: none available.")
+            }
+            appendLine(
+                "Use ONLY the known Chatbox user list above when answering questions about Chatbox users. " +
+                    "If someone asks about a user who is not in the list, say you do not have that information — never make up names, IDs or details. " +
+                    "Never share any phone number, email or other private contact information of any user."
+            )
             appendLine("Incoming message from $senderName: \"${incomingMessage.take(300)}\"")
             append("Write the final 1-3 sentence auto-reply now.")
         }
