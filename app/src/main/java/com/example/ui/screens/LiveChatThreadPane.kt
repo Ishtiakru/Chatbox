@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BrokenImage
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Close
@@ -153,6 +154,9 @@ internal fun LiveThreadPane(
     onSendMessage: () -> Unit,
     onSendQuickReaction: (String) -> Unit,
     onUnblockPeer: () -> Unit,
+    onSairaCompanionDraftChange: (String) -> Unit = {},
+    onSendSairaCompanionMessage: () -> Unit = {},
+    onDismissSairaCompanion: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -624,6 +628,21 @@ internal fun LiveThreadPane(
             ChatboxNoticeBanner(
                 text = activeBannerError,
                 isError = true,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = threadState.isOnline && threadState.sairaCompanionMessages.isNotEmpty()
+        ) {
+            SairaThreadCompanionCard(
+                peerName = peerName,
+                messages = threadState.sairaCompanionMessages,
+                draft = threadState.sairaCompanionDraft,
+                busy = threadState.sairaCompanionBusy,
+                onDraftChange = onSairaCompanionDraftChange,
+                onSend = onSendSairaCompanionMessage,
+                onDismiss = onDismissSairaCompanion,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
             )
         }
@@ -1301,6 +1320,151 @@ private fun ImageViewerDialog(
                         color = Color.White,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SairaThreadCompanionCard(
+    peerName: String,
+    messages: List<com.example.saira.SairaCompanionMessage>,
+    draft: String,
+    busy: Boolean,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("live_saira_companion_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Saira Assistant · $peerName hasn't replied yet",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("live_saira_companion_dismiss")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = stringResource(id = R.string.cd_saira_dismiss_assist),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                messages.takeLast(4).forEach { msg ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (msg.isFromUser) Arrangement.End else Arrangement.Start
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (msg.isFromUser) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                            modifier = Modifier.widthIn(max = 280.dp)
+                        ) {
+                            Text(
+                                text = msg.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (msg.isFromUser) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    enabled = !busy,
+                    placeholder = { Text("Ask Saira while waiting…") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("live_saira_companion_input")
+                )
+                Surface(
+                    onClick = onSend,
+                    enabled = !busy && draft.trim().isNotEmpty(),
+                    shape = CircleShape,
+                    color = if (!busy && draft.trim().isNotEmpty()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    modifier = Modifier
+                        .size(44.dp)
+                        .testTag("live_saira_companion_send")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (busy) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.ArrowUpward,
+                                contentDescription = stringResource(id = R.string.cd_send),
+                                tint = if (draft.trim().isNotEmpty()) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

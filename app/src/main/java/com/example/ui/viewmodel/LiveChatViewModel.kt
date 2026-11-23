@@ -11,13 +11,17 @@ import com.example.data.model.UserProfile
 import com.example.data.repository.AlwaysOnlineConnectivityProvider
 import com.example.data.repository.ChatMediaStorageRepository
 import com.example.data.repository.ConnectivityStatusProvider
+import com.example.data.repository.DemoPreferencesRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.friendlyFirestoreMessage
 import com.example.media.VoiceNotePlayer
 import com.example.media.VoiceNoteRecorder
 import com.example.media.VoicePlaybackState
+import com.example.saira.SairaAssistantEngine
+import com.example.saira.SairaCompanionMessage
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestoreException
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -62,7 +66,11 @@ data class LiveThreadState(
     val busy: Boolean = false,
     val pendingNotice: Boolean = false,
     val error: String = "",
-    val idCopiedNotice: Boolean = false
+    val idCopiedNotice: Boolean = false,
+    val sairaOneMinuteEnabled: Boolean = true,
+    val sairaCompanionMessages: List<SairaCompanionMessage> = emptyList(),
+    val sairaCompanionDraft: String = "",
+    val sairaCompanionBusy: Boolean = false
 ) {
     val isUploadingMedia: Boolean
         get() = uploadingImage || uploadingVoice
@@ -81,7 +89,8 @@ class LiveChatViewModel(
     displayName: String?,
     private val mediaRepository: ChatMediaStorageRepository? = null,
     private val voiceRecorder: VoiceNoteRecorder? = null,
-    private val connectivityObserver: ConnectivityStatusProvider = AlwaysOnlineConnectivityProvider
+    private val connectivityObserver: ConnectivityStatusProvider = AlwaysOnlineConnectivityProvider,
+    private val preferencesRepository: DemoPreferencesRepository? = null
 ) : ViewModel() {
 
     private companion object {
@@ -93,16 +102,22 @@ class LiveChatViewModel(
         const val PAGE_SIZE = 100L
         const val MAX_VOICE_DURATION_MS = 60_000L
         const val RECORD_TICK_MS = 150L
+        const val SAIRA_INACTIVITY_DELAY_MS = 60_000L
+        const val SAIRA_RECENT_WINDOW_MS = 10 * 60_000L
     }
 
+    private val currentUserDisplayName = displayName?.trim().orEmpty().ifEmpty { "Friend" }
     private val draftsByConversation = mutableMapOf<String, String>()
     private val pendingImagesByConversation = mutableMapOf<String, String>()
     private val pendingVoicesByConversation = mutableMapOf<String, Pair<String, Long>>()
     private val errorsByConversation = mutableMapOf<String, String>()
+    private val companionByConversation = mutableMapOf<String, List<SairaCompanionMessage>>()
+    private val triggeredInactivityForMessageId = mutableSetOf<String>()
     private val profileJobs = mutableMapOf<String, Job>()
     private val listMessageJobs = mutableMapOf<String, Job>()
     private var messageObserverJob: Job? = null
     private var recordingTickerJob: Job? = null
+    private var sairaOneMinuteJob: Job? = null
     private var oldestCursor: DocumentSnapshot? = null
 
     private val voicePlayer = VoiceNotePlayer(viewModelScope)
@@ -181,13 +196,37 @@ class LiveChatViewModel(
         _threadState.value = _threadState.value.copy(isOnline = connectivityObserver.isCurrentlyOnline())
         viewModelScope.launch {
             connectivityObserver.isOnline.collect { online ->
-                if (!online && _threadState.value.isRecordingVoice) {
-                    cancelVoiceRecording()
+                if (!online) {
+                    if (_threadState.value.isRecordingVoice) {
+                        cancelVoiceRecording()
+                    }
+                    sairaOneMinuteJob?.cancel()
                 }
                 _threadState.value = _threadState.value.copy(
                     isOnline = online,
                     newConversationOpen = if (online) _threadState.value.newConversationOpen else false
                 )
+                if (online) {
+                    val selectedId = _threadState.value.selectedId
+                    if (selectedId != null) {
+                        scheduleSairaInactivityCheck(selectedId, _threadState.value.messages)
+                    }
+                }
+            }
+        }
+        preferencesRepository?.let { prefs ->
+            viewModelScope.launch {
+                prefs.sairaChatboxOneMinEnabled.collect { enabled ->
+                    _threadState.value = _threadState.value.copy(sairaOneMinuteEnabled = enabled)
+                    if (!enabled) {
+                        sairaOneMinuteJob?.cancel()
+                    } else {
+                        val selectedId = _threadState.value.selectedId
+                        if (selectedId != null) {
+                            scheduleSairaInactivityCheck(selectedId, _threadState.value.messages)
+                        }
+                    }
+                }
             }
         }
         viewModelScope.launch {
@@ -283,6 +322,7 @@ class LiveChatViewModel(
 
     fun selectConversation(conversationId: String) {
         messageObserverJob?.cancel()
+        sairaOneMinuteJob?.cancel()
         cancelVoiceRecording()
         voicePlayer.stopAndRelease()
         oldestCursor = null
@@ -290,6 +330,7 @@ class LiveChatViewModel(
         val savedPendingImage = pendingImagesByConversation[conversationId]
         val savedPendingVoice = pendingVoicesByConversation[conversationId]
         val savedError = errorsByConversation[conversationId].orEmpty()
+        val savedCompanion = companionByConversation[conversationId].orEmpty()
         val cachedMessages = _recentMessagesByConversation.value[conversationId].orEmpty()
         val cachedOlder = _olderMessagesByConversation.value[conversationId].orEmpty()
         _threadState.value = _threadState.value.copy(
@@ -313,8 +354,12 @@ class LiveChatViewModel(
             hasOlder = cachedOlder.isNotEmpty() || cachedMessages.size >= PAGE_SIZE.toInt(),
             loadingOlder = false,
             messagesFromCache = !connectivityObserver.isCurrentlyOnline() || cachedMessages.isEmpty(),
-            error = savedError
+            error = savedError,
+            sairaCompanionMessages = savedCompanion,
+            sairaCompanionDraft = "",
+            sairaCompanionBusy = false
         )
+        scheduleSairaInactivityCheck(conversationId, cachedMessages)
         messageObserverJob = viewModelScope.launch {
             repository.observeRecentMessages(conversationId, PAGE_SIZE)
                 .catch { error ->
@@ -344,6 +389,12 @@ class LiveChatViewModel(
                         messagesFromCache = snap.fromCache,
                         hasOlder = currentOlder.isNotEmpty() || snap.messages.size >= PAGE_SIZE.toInt()
                     )
+                    val latest = snap.messages.lastOrNull()
+                    if (latest != null && latest.senderId != currentUserId && companionByConversation[conversationId]?.isNotEmpty() == true) {
+                        companionByConversation.remove(conversationId)
+                        _threadState.value = _threadState.value.copy(sairaCompanionMessages = emptyList())
+                    }
+                    scheduleSairaInactivityCheck(conversationId, snap.messages)
                 }
         }
     }
@@ -894,8 +945,144 @@ class LiveChatViewModel(
         }
     }
 
+    fun updateSairaCompanionDraft(text: String) {
+        _threadState.value = _threadState.value.copy(sairaCompanionDraft = text.take(1000))
+    }
+
+    fun dismissSairaCompanion() {
+        val id = _threadState.value.selectedId ?: return
+        companionByConversation.remove(id)
+        _threadState.value = _threadState.value.copy(
+            sairaCompanionMessages = emptyList(),
+            sairaCompanionDraft = "",
+            sairaCompanionBusy = false
+        )
+    }
+
+    fun sendSairaCompanionMessage() {
+        val state = _threadState.value
+        val conversationId = state.selectedId ?: return
+        val question = state.sairaCompanionDraft.trim()
+        if (question.isEmpty() || state.sairaCompanionBusy || !connectivityObserver.isCurrentlyOnline()) return
+
+        val conversation = (conversationsState.value as? UiState.Success)?.data
+            ?.firstOrNull { it.id == conversationId }
+        val peerUid = conversation?.peerUid(currentUserId).orEmpty()
+        val peerName = _peerProfiles.value[peerUid]?.displayName?.trim().orEmpty().ifEmpty { "your friend" }
+
+        val userMsg = SairaCompanionMessage(text = question, isFromUser = true)
+        val updatedWithUser = state.sairaCompanionMessages + userMsg
+        companionByConversation[conversationId] = updatedWithUser
+        _threadState.value = state.copy(
+            sairaCompanionMessages = updatedWithUser,
+            sairaCompanionDraft = "",
+            sairaCompanionBusy = true
+        )
+
+        viewModelScope.launch {
+            try {
+                val reply = SairaAssistantEngine.askCompanionInThread(
+                    userName = currentUserDisplayName,
+                    peerName = peerName,
+                    userQuestion = question
+                )
+                val botMsg = SairaCompanionMessage(text = reply, isFromUser = false)
+                val currentList = companionByConversation[conversationId].orEmpty() + botMsg
+                companionByConversation[conversationId] = currentList
+                if (_threadState.value.selectedId == conversationId) {
+                    _threadState.value = _threadState.value.copy(
+                        sairaCompanionMessages = currentList,
+                        sairaCompanionBusy = false
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Saira companion reply failed", e)
+                if (_threadState.value.selectedId == conversationId) {
+                    _threadState.value = _threadState.value.copy(sairaCompanionBusy = false)
+                }
+            }
+        }
+    }
+
+    private fun scheduleSairaInactivityCheck(conversationId: String, messages: List<LiveMessage>) {
+        sairaOneMinuteJob?.cancel()
+        val state = _threadState.value
+        if (!state.sairaOneMinuteEnabled || !connectivityObserver.isCurrentlyOnline()) return
+        val conversation = (conversationsState.value as? UiState.Success)?.data
+            ?.firstOrNull { it.id == conversationId } ?: return
+        if (conversation.status != "active") return
+        val peerUid = conversation.peerUid(currentUserId)
+        if (peerUid in blockedIdsState.value) return
+
+        val latestMsg = messages.lastOrNull() ?: return
+        if (latestMsg.body.startsWith("[Saira Assistant]")) return
+        if (latestMsg.id in triggeredInactivityForMessageId) return
+
+        val sentMillis = latestMsg.sentAt?.toDate()?.time ?: System.currentTimeMillis()
+        val ageMs = (System.currentTimeMillis() - sentMillis).coerceAtLeast(0L)
+        if (ageMs > SAIRA_RECENT_WINDOW_MS) return
+
+        val remainingDelayMs = (SAIRA_INACTIVITY_DELAY_MS - ageMs).coerceIn(0L, SAIRA_INACTIVITY_DELAY_MS)
+        sairaOneMinuteJob = viewModelScope.launch {
+            if (remainingDelayMs > 0L) {
+                delay(remainingDelayMs)
+            }
+            val currentState = _threadState.value
+            if (currentState.selectedId != conversationId ||
+                !currentState.sairaOneMinuteEnabled ||
+                !connectivityObserver.isCurrentlyOnline()
+            ) {
+                return@launch
+            }
+            val stillLatest = currentState.messages.lastOrNull() ?: return@launch
+            if (stillLatest.id != latestMsg.id || stillLatest.id in triggeredInactivityForMessageId) {
+                return@launch
+            }
+            triggeredInactivityForMessageId.add(latestMsg.id)
+
+            val peerName = _peerProfiles.value[peerUid]?.displayName?.trim().orEmpty().ifEmpty { "your friend" }
+            val isSenderWaitingOnPeer = stillLatest.senderId == currentUserId
+
+            if (isSenderWaitingOnPeer) {
+                val assistText = SairaAssistantEngine.generateChatboxOneMinuteReply(
+                    senderName = currentUserDisplayName,
+                    peerName = peerName,
+                    lastMessageText = stillLatest.body.ifBlank { "a message" },
+                    isSenderWaitingOnPeer = true
+                )
+                val assistMsg = SairaCompanionMessage(text = assistText, isFromUser = false)
+                val updatedList = companionByConversation[conversationId].orEmpty() + assistMsg
+                companionByConversation[conversationId] = updatedList
+                if (_threadState.value.selectedId == conversationId) {
+                    _threadState.value = _threadState.value.copy(sairaCompanionMessages = updatedList)
+                }
+            } else {
+                val autoReplyText = SairaAssistantEngine.generateChatboxOneMinuteReply(
+                    senderName = peerName,
+                    peerName = currentUserDisplayName,
+                    lastMessageText = stillLatest.body.ifBlank { "a message" },
+                    isSenderWaitingOnPeer = false
+                )
+                val formatted = if (autoReplyText.startsWith("[Saira Assistant]")) {
+                    autoReplyText
+                } else {
+                    "[Saira Assistant] $autoReplyText"
+                }
+                repository.sendMessage(
+                    conversationId = conversationId,
+                    uid = currentUserId,
+                    rawBody = formatted,
+                    isOnline = connectivityObserver.isCurrentlyOnline()
+                )
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
+        sairaOneMinuteJob?.cancel()
         recordingTickerJob?.cancel()
         voiceRecorder?.release()
         voicePlayer.stopAndRelease()

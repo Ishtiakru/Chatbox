@@ -165,19 +165,34 @@ fun ChatboxAppRoot(
     var authError by rememberSaveable { mutableStateOf<String?>(null) }
     var splashDone by rememberSaveable { mutableStateOf(false) }
 
+    val prefsRepo = remember(context) { DemoPreferencesRepository(context.applicationContext) }
+    val rememberMeEnabled by prefsRepo.rememberMeEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val rememberedPhone by prefsRepo.rememberedPhone.collectAsStateWithLifecycle(initialValue = "")
+
     val demoViewModel: DemoChatViewModel = viewModel(
         factory = remember(context) {
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return DemoChatViewModel(DemoPreferencesRepository(context.applicationContext)) as T
+                    return DemoChatViewModel(prefsRepo) as T
                 }
             }
         }
     )
     val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
 
-    val sairaAiViewModel: SairaAiViewModel = viewModel()
+    val sairaAiViewModel: SairaAiViewModel = viewModel(
+        factory = remember(context) {
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return SairaAiViewModel(
+                        preferencesRepository = DemoPreferencesRepository(context.applicationContext)
+                    ) as T
+                }
+            }
+        }
+    )
 
     LaunchedEffect(Unit) {
         delay(1200L)
@@ -251,6 +266,13 @@ fun ChatboxAppRoot(
                 authReady = authReady,
                 authLoading = authLoading,
                 isOnline = isOnline,
+                rememberMeEnabled = rememberMeEnabled,
+                rememberedPhone = rememberedPhone,
+                onSaveRememberedPhone = { rememberMe, phone ->
+                    scope.launch {
+                        prefsRepo.saveRememberedLoginPhone(rememberMe, phone)
+                    }
+                },
                 onLanguageSelected = { demoViewModel.setLoginLanguage(it) },
                 onGoogleSignIn = startSignIn
             )
@@ -266,10 +288,11 @@ fun ChatboxAppRoot(
                             return LiveChatViewModel(
                                 repository = LiveChatRepository(context.applicationContext),
                                 currentUserId = signedInUser.uid,
-                                displayName = signedInUser.displayName,
+                                displayName = signedInUser.displayName ?: signedInUser.phoneNumber,
                                 mediaRepository = ChatMediaStorageRepository(context.applicationContext),
                                 voiceRecorder = VoiceNoteRecorder(context.applicationContext),
-                                connectivityObserver = connectivityObserver
+                                connectivityObserver = connectivityObserver,
+                                preferencesRepository = DemoPreferencesRepository(context.applicationContext)
                             ) as T
                         }
                     }
@@ -471,7 +494,10 @@ private fun AuthenticatedAppShell(
                     onSendMessage = { liveViewModel.sendMessage() },
                     onSendQuickReaction = { liveViewModel.sendQuickReaction(it) },
                     onBlockPeer = { peerUid, conv -> liveViewModel.blockPeer(peerUid, conv) },
-                    onUnblockPeer = { peerUid -> liveViewModel.unblockPeer(peerUid) }
+                    onUnblockPeer = { peerUid -> liveViewModel.unblockPeer(peerUid) },
+                    onSairaCompanionDraftChange = { liveViewModel.updateSairaCompanionDraft(it) },
+                    onSendSairaCompanionMessage = { liveViewModel.sendSairaCompanionMessage() },
+                    onDismissSairaCompanion = { liveViewModel.dismissSairaCompanion() }
                 )
             }
             composable<SairaAiRoute> {
@@ -488,7 +514,20 @@ private fun AuthenticatedAppShell(
                         navigateToTab(navController, DemoRoute)
                     },
                     onDraftChange = { sairaAiViewModel.updateDraft(it) },
-                    onSubmitQuestion = { sairaAiViewModel.submitQuestion() }
+                    onSubmitQuestion = { sairaAiViewModel.submitQuestion() },
+                    onResetChat = { sairaAiViewModel.resetChat() },
+                    onToggleChatboxOneMinAutoReply = { sairaAiViewModel.setChatboxOneMinuteAutoReply(it) },
+                    onToggleNotificationAutoReply = { sairaAiViewModel.setNotificationAutoReply(it) },
+                    onRuleContactChange = { sairaAiViewModel.updateRuleContactDraft(it) },
+                    onRulePlatformChange = { sairaAiViewModel.updateRulePlatformDraft(it) },
+                    onRuleGuidanceChange = { sairaAiViewModel.updateRuleGuidanceDraft(it) },
+                    onAddNotificationRule = { sairaAiViewModel.addNotificationRule() },
+                    onToggleNotificationRule = { ruleId, enabled ->
+                        sairaAiViewModel.toggleNotificationRule(ruleId, enabled)
+                    },
+                    onDeleteNotificationRule = { ruleId ->
+                        sairaAiViewModel.deleteNotificationRule(ruleId)
+                    }
                 )
             }
             composable<CallsRoute> {

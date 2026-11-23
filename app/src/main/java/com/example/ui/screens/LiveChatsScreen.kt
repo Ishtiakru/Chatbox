@@ -179,7 +179,10 @@ fun LiveChatsScreen(
     onSendMessage: () -> Unit,
     onSendQuickReaction: (String) -> Unit,
     onBlockPeer: (String, Conversation) -> Unit,
-    onUnblockPeer: (String) -> Unit
+    onUnblockPeer: (String) -> Unit,
+    onSairaCompanionDraftChange: (String) -> Unit = {},
+    onSendSairaCompanionMessage: () -> Unit = {},
+    onDismissSairaCompanion: () -> Unit = {}
 ) {
     val allConversations = (conversationsState as? UiState.Success)?.data.orEmpty()
     val activeConversation = allConversations.firstOrNull { it.id == threadState.selectedId }
@@ -279,6 +282,9 @@ fun LiveChatsScreen(
                                 onSendMessage = onSendMessage,
                                 onSendQuickReaction = onSendQuickReaction,
                                 onUnblockPeer = { onUnblockPeer(peerUid) },
+                                onSairaCompanionDraftChange = onSairaCompanionDraftChange,
+                                onSendSairaCompanionMessage = onSendSairaCompanionMessage,
+                                onDismissSairaCompanion = onDismissSairaCompanion,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -355,6 +361,9 @@ fun LiveChatsScreen(
                         onSendMessage = onSendMessage,
                         onSendQuickReaction = onSendQuickReaction,
                         onUnblockPeer = { onUnblockPeer(peerUid) },
+                        onSairaCompanionDraftChange = onSairaCompanionDraftChange,
+                        onSendSairaCompanionMessage = onSendSairaCompanionMessage,
+                        onDismissSairaCompanion = onDismissSairaCompanion,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

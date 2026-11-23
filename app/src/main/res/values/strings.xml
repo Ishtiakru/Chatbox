@@ -36,4 +36,10 @@
     <string name="cd_app_update_badge">App update available</string>
     <string name="cd_search_languages">Search languages</string>
     <string name="search_languages_placeholder">Search country or language…</string>
+    <string name="saira_notification_service_label">Saira Assistant Auto-Reply</string>
+    <string name="cd_saira_reset_chat">Start fresh Saira chat</string>
+    <string name="cd_saira_delete_rule">Delete notification rule</string>
+    <string name="cd_saira_dismiss_assist">Dismiss Saira assistant suggestion</string>
+    <string name="cd_show_password">Show password</string>
+    <string name="cd_hide_password">Hide password</string>
 </resources>
