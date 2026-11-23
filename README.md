@@ -16,6 +16,10 @@ A native Android rewrite of **Chatbox** (`Saira / Chatbox`) built with Kotlin, J
 
 Because Cloud Functions / FCM server triggers cannot be provisioned automatically from this environment, deploy a Cloud Function (using Firebase Admin SDK) in your Firebase project triggered on new documents in `conversations/{conversationId}/messages/{messageId}` (on the named Firestore database) to look up recipient device tokens in `userFcmTokens/{recipientUid}/devices` and send FCM messages containing `conversationId`, `senderId`, `senderName`, and `body`.
 
+## Firebase Configuration
+
+`app/google-services.json` is committed so CI can build without extra setup. It targets the AI Studio Firebase project (`gen-lang-client-0251556445`) and the `com.aistudio.chatbox.kxmpzq` application ID. The release workflow prefers the `GOOGLE_SERVICES_JSON` (or `GOOGLE_SERVICES_JSON_BASE64`) repository secret when present, and falls back to the committed file. If AI Studio regenerates the Android app, download the fresh `google-services.json` from the AI Studio project and either replace the committed file or add it as the secret.
+
 ## Security Rules & Testing
 
 - `firestore.rules` enforces zero-trust access control across all collections with a catch-all deny.
