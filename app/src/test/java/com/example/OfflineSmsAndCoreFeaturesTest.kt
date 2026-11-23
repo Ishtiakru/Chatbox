@@ -11,7 +11,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
-import com.example.data.model.SairaOfflineGuide
 import com.example.data.model.SparkCommandProposal
 import com.example.data.model.UserProfile
 import com.example.data.model.WorldLanguages
@@ -19,10 +18,8 @@ import com.example.data.repository.ChatboxFirestoreProvider
 import com.example.data.repository.SparkAdminCommands
 import com.example.media.VoicePlaybackState
 import com.example.ui.screens.CallsScreen
-import com.example.ui.screens.DemoChatsScreen
 import com.example.ui.screens.LiveThreadPane
 import com.example.ui.theme.ChatboxTheme
-import com.example.ui.viewmodel.DemoUiState
 import com.example.ui.viewmodel.LiveThreadState
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.PersistentCacheSettings
@@ -212,48 +209,11 @@ class OfflineSmsAndCoreFeaturesTest {
     }
 
     @Test
-    fun `demo chats screen allows selecting contact and sending SMS offline while disabling new chat`() {
-        var sent = false
-        composeRule.setContent {
-            ChatboxTheme(lavenderAppearance = false) {
-                DemoChatsScreen(
-                    uiState = DemoUiState(activeContactId = "saira", draft = "Offline check"),
-                    publicWelcomeBanner = "Welcome to Chatbox",
-                    userDisplayName = "Sojib",
-                    userEmail = "sojibsheikhuk@gmail.com",
-                    isSignedIn = true,
-                    authBusy = false,
-                    isOnline = false,
-                    onSelectContact = {},
-                    onSearchChange = {},
-                    onDraftChange = {},
-                    onAppendEmoji = {},
-                    onSendMessage = { sent = true },
-                    onShowModal = {},
-                    onAccountAction = {}
-                )
-            }
-        }
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("demo_new_chat_button").assertIsNotEnabled()
-        composeRule.onNodeWithTag("demo_contact_saira").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("demo_voice_button").assertIsNotEnabled()
-        composeRule.onNodeWithTag("demo_video_button").assertIsNotEnabled()
-        composeRule.onNodeWithTag("demo_attach_button").assertDoesNotExist()
-        composeRule.onNodeWithTag("demo_emoji_button").assertDoesNotExist()
-        composeRule.onNodeWithTag("demo_send_button").assertIsEnabled().performClick()
-        assertTrue(sent)
-    }
-
-    @Test
-    fun `world languages, offline guide, and Spark admin command parsing work accurately`() {
+    fun `world languages and Spark admin command parsing work accurately`() {
         assertEquals("bn-BD", WorldLanguages.normalizeCode("bn"))
         assertTrue(WorldLanguages.isBengali("bn-BD"))
         assertTrue(WorldLanguages.all.size >= 45)
 
-        assertTrue(SairaOfflineGuide.reply("hello").isNotBlank())
 
         assertEquals(
             SparkCommandProposal.SetTheme("lavender"),

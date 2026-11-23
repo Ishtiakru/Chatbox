@@ -7,7 +7,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import com.example.data.repository.DemoPreferencesRepository
+import com.example.data.repository.AppPreferencesRepository
 import com.example.saira.SairaAssistantEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +25,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val prefsRepository by lazy { DemoPreferencesRepository(applicationContext) }
+    private val prefsRepository by lazy { AppPreferencesRepository(applicationContext) }
     private val recentProcessedFingerprints = LinkedHashMap<String, Long>(MAX_CACHE_ENTRIES, 0.75f, true)
     private val lastReplyByContact = mutableMapOf<String, Long>()
 

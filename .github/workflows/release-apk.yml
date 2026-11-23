@@ -32,7 +32,12 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${{ github.ref_name }}"
           else
-            TAG="v1.0.${{ github.run_number }}"
+            VERSION_NAME="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+            if [ -n "$VERSION_NAME" ]; then
+              TAG="v${VERSION_NAME}"
+            else
+              TAG="v1.0.${{ github.run_number }}"
+            fi
           fi
           echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -129,6 +134,9 @@ jobs:
 
       - name: Build Debug & Release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
+
+      - name: Compile unit tests
+        run: gradle :app:compileDebugUnitTestKotlin --no-daemon
 
       - name: Prepare & optionally sign APKs
         id: sign_apk

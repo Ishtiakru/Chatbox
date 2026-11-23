@@ -18,7 +18,7 @@ import com.example.data.auth.normalizePhoneNumber
 import com.example.data.auth.sendPasswordResetToGmail
 import com.example.data.auth.validatePasswordStrength
 import com.example.data.auth.validatePhoneNumber
-import com.example.data.repository.DemoPreferencesRepository
+import com.example.data.repository.AppPreferencesRepository
 import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.ForgotPasswordResetFields
 import com.example.ui.screens.validateResetRequestInput
@@ -62,7 +62,7 @@ class AuthAndPrefsTest {
     @Test
     fun `remember me persists and clears phone number in DataStore`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val repo = DemoPreferencesRepository(context)
+        val repo = AppPreferencesRepository(context)
 
         repo.saveRememberedLoginPhone(rememberMe = true, phone = "01711223344")
         assertTrue(repo.rememberMeEnabled.first())

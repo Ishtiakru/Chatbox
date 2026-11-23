@@ -11,7 +11,7 @@ import com.example.data.model.UserProfile
 import com.example.data.repository.AlwaysOnlineConnectivityProvider
 import com.example.data.repository.ChatMediaStorageRepository
 import com.example.data.repository.ConnectivityStatusProvider
-import com.example.data.repository.DemoPreferencesRepository
+import com.example.data.repository.AppPreferencesRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.friendlyFirestoreMessage
 import com.example.media.VoiceNotePlayer
@@ -90,7 +90,7 @@ class LiveChatViewModel(
     private val mediaRepository: ChatMediaStorageRepository? = null,
     private val voiceRecorder: VoiceNoteRecorder? = null,
     private val connectivityObserver: ConnectivityStatusProvider = AlwaysOnlineConnectivityProvider,
-    private val preferencesRepository: DemoPreferencesRepository? = null
+    private val preferencesRepository: AppPreferencesRepository? = null
 ) : ViewModel() {
 
     private companion object {

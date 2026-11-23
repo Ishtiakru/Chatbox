@@ -83,62 +83,6 @@ import com.example.ui.viewmodel.LiveScreenMode
 import com.example.ui.viewmodel.LiveThreadState
 
 @Composable
-fun LiveChatsSignInGate(
-    authBusy: Boolean,
-    onSignIn: () -> Unit,
-    onExploreDemo: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
-    ) {
-        Text(
-            text = "A SPACE FOR REAL CONVERSATIONS",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "Live chats",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer
-            ) {
-                Text(
-                    text = "EXPERIMENTAL",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
-        }
-        Text(
-            text = "Separate from your local demo conversations.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        SignInRequiredCard(
-            title = "Sign in to connect.",
-            body = "Live conversations require your Google account and a configured Firestore database.",
-            icon = Icons.Rounded.Group,
-            isBusy = authBusy,
-            onSignIn = onSignIn,
-            secondaryButtonLabel = "Explore the demo",
-            onSecondaryClick = onExploreDemo,
-            testTagPrefix = "live"
-        )
-    }
-}
-
-@Composable
 fun LiveChatsScreen(
     currentUserId: String,
     conversationsState: UiState<List<Conversation>>,

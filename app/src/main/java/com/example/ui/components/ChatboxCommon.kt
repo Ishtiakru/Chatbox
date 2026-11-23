@@ -61,83 +61,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
-import com.example.data.model.AvatarStyle
-import com.example.data.model.DemoCatalog
-import com.example.data.model.DemoContact
-import com.example.ui.theme.AvatarBlueEnd
-import com.example.ui.theme.AvatarBlueInk
-import com.example.ui.theme.AvatarBlueStart
-import com.example.ui.theme.AvatarLavenderEnd
-import com.example.ui.theme.AvatarLavenderInk
-import com.example.ui.theme.AvatarLavenderStart
-import com.example.ui.theme.AvatarPeachEnd
-import com.example.ui.theme.AvatarPeachInk
-import com.example.ui.theme.AvatarPeachStart
-import com.example.ui.theme.AvatarYellowEnd
-import com.example.ui.theme.AvatarYellowInk
-import com.example.ui.theme.AvatarYellowStart
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
+import com.example.BuildConfig
+import com.example.R
 import com.example.data.model.SparkAppUpdate
-import com.example.ui.theme.ChatboxButtonPurple
-import com.example.ui.theme.ChatboxOnlineDot
+import com.example.ui.theme.AvatarLavenderStart
 import com.example.ui.theme.ChatboxUpdateGreenBg
-import com.example.ui.viewmodel.DemoModal
-
-@Composable
-fun DemoAvatar(
-    contact: DemoContact,
-    size: Dp,
-    showOnlineDot: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    val (brush, inkColor) = when (contact.style) {
-        AvatarStyle.SAIRA -> Brush.linearGradient(
-            listOf(Color(0xFF7D68B8), ChatboxButtonPurple)
-        ) to Color.White
-        AvatarStyle.PEACH -> Brush.linearGradient(
-            listOf(AvatarPeachStart, AvatarPeachEnd)
-        ) to AvatarPeachInk
-        AvatarStyle.LAVENDER -> Brush.linearGradient(
-            listOf(AvatarLavenderStart, AvatarLavenderEnd)
-        ) to AvatarLavenderInk
-        AvatarStyle.YELLOW -> Brush.linearGradient(
-            listOf(AvatarYellowStart, AvatarYellowEnd)
-        ) to AvatarYellowInk
-        AvatarStyle.BLUE -> Brush.linearGradient(
-            listOf(AvatarBlueStart, AvatarBlueEnd)
-        ) to AvatarBlueInk
-    }
-
-    Box(modifier = modifier.size(size)) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(CircleShape)
-                .background(brush),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = contact.avatar,
-                color = inkColor,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = (size.value * 0.36f).sp
-            )
-        }
-        if (showOnlineDot && contact.online) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size((size * 0.28f).coerceAtLeast(10.dp))
-                    .clip(CircleShape)
-                    .background(ChatboxOnlineDot)
-                    .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
-            )
-        }
-    }
-}
 
 @Composable
 fun MessengerAvatar(
@@ -312,23 +243,7 @@ fun SignInRequiredCard(
 }
 
 @Composable
-fun DemoInfoModalDialog(
-    modal: DemoModal,
-    onDismiss: () -> Unit
-) {
-    val (title, body) = when (modal) {
-        DemoModal.VOICE -> "Voice calls are on the way" to
-            "Calling is not connected in this prototype. A real call requires authentication, signaling and a calling service."
-        DemoModal.VIDEO -> "A little closer, soon" to
-            "Video calling is not connected yet. We’ll need a secure calling service and camera permissions to make this work."
-        DemoModal.ATTACH -> "Attachments are coming later" to
-            "Files cannot be uploaded or sent in this local demo."
-        DemoModal.NEW_CHAT -> "Your people, in one place" to
-            "Adding real contacts requires Firebase authentication and a connected database. Switch to Live chats to connect with a Chatbox ID."
-        DemoModal.ABOUT -> "A little note about this space" to
-            "Chatbox (v${DemoCatalog.APP_VERSION}) includes local demo conversations, live Firestore chats, Saira AI via Firebase AI Logic, and Spark Admin studio."
-    }
-
+fun AboutChatboxDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
@@ -338,12 +253,18 @@ fun DemoInfoModalDialog(
                 tint = MaterialTheme.colorScheme.primary
             )
         },
-        title = { Text(title) },
-        text = { Text(body, style = MaterialTheme.typography.bodyMedium) },
+        title = { Text("About Chatbox") },
+        text = {
+            Text(
+                text = "Chatbox v${BuildConfig.VERSION_NAME}\n" +
+                    "Live Firestore chat, Saira AI via Firebase AI Logic, and Spark Admin Studio.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                modifier = Modifier.testTag("demo_modal_dismiss_button")
+                modifier = Modifier.testTag("about_dialog_dismiss_button")
             ) {
                 Text("Got it")
             }

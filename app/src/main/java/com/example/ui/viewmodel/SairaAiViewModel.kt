@@ -4,7 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.AiExchange
-import com.example.data.repository.DemoPreferencesRepository
+import com.example.data.repository.AppPreferencesRepository
 import com.example.data.repository.SairaAiRepository
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
@@ -32,7 +32,7 @@ data class SairaAiUiState(
 
 class SairaAiViewModel(
     private val repository: SairaAiRepository = SairaAiRepository(),
-    private val preferencesRepository: DemoPreferencesRepository? = null
+    private val preferencesRepository: AppPreferencesRepository? = null
 ) : ViewModel() {
 
     private companion object {
