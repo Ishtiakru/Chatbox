@@ -82,18 +82,29 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.example.data.SparkCommandProposal
+import com.example.data.ai.AdminPlanInterpreter
 import com.example.data.ai.AiChatMessage
 import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
+import com.example.data.ai.SairaCommandAction
+import com.example.data.ai.SairaCommandProcessor
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.AiExchange
+import com.example.data.model.CoreAppTab
 import com.example.data.model.SairaChatSession
+import com.example.data.model.SparkAppearance
+import com.example.data.model.SparkDynamicConfig
+import com.example.data.model.UserProfile
+import com.example.data.repository.AuthRepository
 import com.example.data.repository.SairaSessionRepository
+import com.example.data.repository.SparkAdminRepository
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
 import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.NoticeBanner
 import com.example.ui.components.SairaMetaOrb
+import com.example.util.friendlyFirestoreMessage
 import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
@@ -123,6 +134,10 @@ private val starterPrompts = listOf(
 fun SairaAiScreen(
     currentUserId: String,
     isOnline: Boolean,
+    isAdmin: Boolean,
+    ownProfile: UserProfile?,
+    appearance: SparkAppearance,
+    dynamicConfig: SparkDynamicConfig,
     appUpdateActive: Boolean,
     onAppUpdateClick: () -> Unit,
     oneMinAutoReplyEnabled: Boolean,
@@ -136,6 +151,10 @@ fun SairaAiScreen(
     fallbackBaseUrl: String,
     fallbackModel: String,
     onSaveFallbackConfig: (kindId: String, apiKey: String, baseUrl: String, model: String) -> Unit,
+    onOpenProfile: () -> Unit,
+    onNavigateCoreTab: (CoreAppTab) -> Unit,
+    authRepo: AuthRepository,
+    sparkAdminRepo: SparkAdminRepository,
     sessionRepo: SairaSessionRepository
 ) {
     val colors = LocalChatboxColors.current
@@ -197,9 +216,183 @@ fun SairaAiScreen(
         }
     }
 
+    fun appendCommandExchange(question: String, answerText: String) {
+        var activeSessionId = sessionId
+        var activeIsNew = sessionIsNew
+        var prevExchanges = exchanges
+        if (prevExchanges.size >= SESSION_ROLLOVER_LIMIT) {
+            activeSessionId = "saira_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+            activeIsNew = true
+            sessionId = activeSessionId
+            sessionIsNew = true
+            rolloverCount += 1
+            prevExchanges = emptyList()
+        }
+        val exId = "cmd_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
+        exchanges = prevExchanges + AiExchange(
+            id = exId,
+            question = question,
+            answer = answerText,
+            isStreaming = false
+        )
+        if (isOnline) {
+            val title = (prevExchanges.firstOrNull()?.question ?: question).take(90).ifEmpty { "Saira Command" }
+            sessionIsNew = false
+            scope.launch {
+                sessionRepo.persistExchange(
+                    uid = currentUserId,
+                    sessionId = activeSessionId,
+                    isNewSession = activeIsNew,
+                    title = title,
+                    question = question,
+                    answer = answerText,
+                    sequence = prevExchanges.size
+                )
+            }
+        }
+    }
+
+    suspend fun <T> executeSairaAdminWrite(block: suspend () -> Result<T>): Result<T> {
+        authRepo.ensureRecentGoogleAuth(context).onFailure { return Result.failure(it) }
+        val first = block()
+        val firstErr = first.exceptionOrNull()
+        if (firstErr != null && firstErr.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true) {
+            authRepo.reauthenticateWithGoogle(context).onFailure { return Result.failure(it) }
+            return block()
+        }
+        return first
+    }
+
     fun sendPrompt(rawQuestion: String) {
         val question = rawQuestion.trim()
-        if (isBusy || question.isEmpty() || !isOnline || question.length > 2000) return
+        if (isBusy || question.isEmpty() || question.length > 2000) return
+
+        when (
+            val cmd = SairaCommandProcessor.parse(
+                rawInput = question,
+                isAdmin = isAdmin,
+                ownProfile = ownProfile,
+                appearance = appearance,
+                dynamicConfig = dynamicConfig
+            )
+        ) {
+            is SairaCommandAction.StartNewThread -> {
+                draft = ""
+                startNewThread()
+                return
+            }
+            is SairaCommandAction.Reply -> {
+                draft = ""
+                errorMessage = null
+                appendCommandExchange(question, cmd.text)
+                if (cmd.openHistory) showHistoryDialog = true
+                if (cmd.openProfile) onOpenProfile()
+                if (cmd.openBackupDialog) showBackupKeyDialog = true
+                cmd.switchSubTab?.let { selectedSubTab = it }
+                cmd.toggleOneMinAutoReply?.let { onChangeOneMinAutoReply(it) }
+                cmd.navigateToCoreTab?.let { onNavigateCoreTab(it) }
+                return
+            }
+            is SairaCommandAction.ExecuteAdminProposal -> {
+                if (!isOnline) {
+                    errorMessage = "Offline · Connect to the internet to run live admin commands."
+                    return
+                }
+                draft = ""
+                isBusy = true
+                errorMessage = null
+                val exId = "ex_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
+                val prevExchanges = exchanges
+                exchanges = prevExchanges + AiExchange(id = exId, question = question, answer = "", isStreaming = true)
+                activeJob = scope.launch {
+                    try {
+                        val res = executeSairaAdminWrite {
+                            sparkAdminRepo.applySparkProposal(currentUserId, cmd.proposal)
+                        }
+                        val replyText = res.fold(
+                            onSuccess = { msg -> "কমান্ড সফল হয়েছে: $msg" },
+                            onFailure = { err -> "কমান্ড ব্যর্থ হয়েছে: ${friendlyFirestoreMessage(err)}" }
+                        )
+                        exchanges = exchanges.map { item ->
+                            if (item.id == exId) item.copy(answer = replyText, isStreaming = false) else item
+                        }
+                        val title = (prevExchanges.firstOrNull()?.question ?: question).take(90)
+                        val wasNew = sessionIsNew
+                        sessionIsNew = false
+                        sessionRepo.persistExchange(
+                            uid = currentUserId,
+                            sessionId = sessionId,
+                            isNewSession = wasNew,
+                            title = title,
+                            question = question,
+                            answer = replyText,
+                            sequence = prevExchanges.size
+                        )
+                    } catch (e: CancellationException) {
+                        exchanges = exchanges.filterNot { it.id == exId && it.answer.isEmpty() }
+                            .map { it.copy(isStreaming = false) }
+                        throw e
+                    } finally {
+                        isBusy = false
+                        activeJob = null
+                    }
+                }
+                return
+            }
+            is SairaCommandAction.ExecuteAdminNaturalInstruction -> {
+                if (!isOnline) {
+                    errorMessage = "Offline · Connect to the internet to run live admin commands."
+                    return
+                }
+                draft = ""
+                isBusy = true
+                errorMessage = null
+                val exId = "ex_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
+                val prevExchanges = exchanges
+                exchanges = prevExchanges + AiExchange(id = exId, question = question, answer = "", isStreaming = true)
+                activeJob = scope.launch {
+                    try {
+                        val plan = AdminPlanInterpreter.interpret(question, dynamicConfig.customMenus)
+                        val res = executeSairaAdminWrite {
+                            sparkAdminRepo.applyAdminAiUpdatePlan(currentUserId, dynamicConfig, plan)
+                        }
+                        val replyText = res.fold(
+                            onSuccess = { msg -> "কমান্ড সম্পন্ন হয়েছে: $msg" },
+                            onFailure = { err -> "কমান্ড ব্যর্থ হয়েছে: ${friendlyFirestoreMessage(err)}" }
+                        )
+                        exchanges = exchanges.map { item ->
+                            if (item.id == exId) item.copy(answer = replyText, isStreaming = false) else item
+                        }
+                        val title = (prevExchanges.firstOrNull()?.question ?: question).take(90)
+                        val wasNew = sessionIsNew
+                        sessionIsNew = false
+                        sessionRepo.persistExchange(
+                            uid = currentUserId,
+                            sessionId = sessionId,
+                            isNewSession = wasNew,
+                            title = title,
+                            question = question,
+                            answer = replyText,
+                            sequence = prevExchanges.size
+                        )
+                    } catch (e: CancellationException) {
+                        exchanges = exchanges.filterNot { it.id == exId && it.answer.isEmpty() }
+                            .map { it.copy(isStreaming = false) }
+                        throw e
+                    } finally {
+                        isBusy = false
+                        activeJob = null
+                    }
+                }
+                return
+            }
+            SairaCommandAction.NotACommand -> Unit
+        }
+
+        if (!isOnline) {
+            errorMessage = "Offline · Connect to the internet to chat with Saira AI (local commands like /help or /id still work offline)."
+            return
+        }
 
         var activeSessionId = sessionId
         var activeIsNew = sessionIsNew
@@ -471,7 +664,35 @@ fun SairaAiScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.widthIn(max = 420.dp)
                     )
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier
+                            .widthIn(max = 480.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val quickCommands = buildList {
+                            add("/help")
+                            add("/id")
+                            add("/status")
+                            if (isAdmin) {
+                                add("আমার হোম পেজটা ল্যাভেন্ডার কালার করো")
+                                add("মেনুবার উপরে নিয়ে আসো")
+                            }
+                        }
+                        quickCommands.forEach { cmdChip ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { sendPrompt(cmdChip) },
+                                label = { Text(cmdChip, maxLines = 1) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = ChatboxSoftLavender,
+                                    labelColor = ChatboxPrimary
+                                )
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     Column(
                         modifier = Modifier.widthIn(max = 480.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -631,9 +852,9 @@ fun SairaAiScreen(
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it.take(2000) },
-                        enabled = isOnline && !isBusy,
+                        enabled = !isBusy,
                         placeholder = {
-                            Text(if (isOnline) "Ask Saira AI anything…" else "Offline · Saira disabled")
+                            Text(if (isOnline) "Ask Saira AI or type /help…" else "Offline · Type /help or /id…")
                         },
                         singleLine = true,
                         shape = CircleShape,
@@ -664,7 +885,7 @@ fun SairaAiScreen(
                                         listOf(MetaOrbPurple, MetaOrbIndigo, MetaOrbCyan)
                                     )
                                 )
-                                .clickable(enabled = isOnline && draft.isNotBlank()) { sendPrompt(draft) }
+                                .clickable(enabled = draft.isNotBlank()) { sendPrompt(draft) }
                                 .testTag("saira_send_button"),
                             contentAlignment = Alignment.Center
                         ) {

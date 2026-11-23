@@ -308,6 +308,10 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 CoreAppTab.SAIRA -> SairaAiScreen(
                                     currentUserId = user.uid,
                                     isOnline = isOnline,
+                                    isAdmin = isAdmin,
+                                    ownProfile = ownProfile,
+                                    appearance = appearance,
+                                    dynamicConfig = dynamicConfig,
                                     appUpdateActive = appUpdate.active,
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                     oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
@@ -321,6 +325,10 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     fallbackBaseUrl = fallbackBaseUrl,
                                     fallbackModel = fallbackModel,
                                     onSaveFallbackConfig = viewModel::saveAiFallbackConfig,
+                                    onOpenProfile = { viewModel.openProfileDialog(true) },
+                                    onNavigateCoreTab = { target -> viewModel.selectTab(AppTab.Core(target)) },
+                                    authRepo = viewModel.authRepo,
+                                    sparkAdminRepo = viewModel.sparkAdminRepo,
                                     sessionRepo = viewModel.sairaSessionRepo
                                 )
                                 CoreAppTab.CALLS -> CallsScreen(

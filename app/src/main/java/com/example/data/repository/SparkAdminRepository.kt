@@ -325,6 +325,99 @@ class SparkAdminRepository(private val context: Context) {
                         else "Cleared the app Update button."
                     )
                 }
+                is SparkCommandProposal.SetAppTitle -> {
+                    val title = proposal.value.trim().take(40)
+                    require(title.isNotEmpty()) { "App title cannot be empty." }
+                    val existingSnap = runCatching {
+                        db.collection("settings").document("sparkConfig").get().await()
+                    }.getOrNull()
+                    val existingMenus = (existingSnap?.get("customMenus") as? List<*>).orEmpty()
+                        .mapNotNull { entry ->
+                            val map = entry as? Map<*, *> ?: return@mapNotNull null
+                            sanitizeCustomMenu(
+                                id = map["id"] as? String ?: "",
+                                label = map["label"] as? String ?: "",
+                                icon = map["icon"] as? String ?: "sparkles",
+                                title = map["title"] as? String ?: "",
+                                body = map["body"] as? String ?: ""
+                            )
+                        }
+                    val existingAnnouncement = existingSnap?.getString("homeAnnouncement").orEmpty()
+                    saveSparkDynamicConfig(
+                        uid,
+                        SparkDynamicConfig(
+                            appTitle = title,
+                            homeAnnouncement = existingAnnouncement,
+                            customMenus = existingMenus
+                        )
+                    ).getOrThrow()
+                    Result.success("App title updated to \"$title\".")
+                }
+                is SparkCommandProposal.SetAnnouncement -> {
+                    val announcement = proposal.value.trim().take(240)
+                    val existingSnap = runCatching {
+                        db.collection("settings").document("sparkConfig").get().await()
+                    }.getOrNull()
+                    val existingMenus = (existingSnap?.get("customMenus") as? List<*>).orEmpty()
+                        .mapNotNull { entry ->
+                            val map = entry as? Map<*, *> ?: return@mapNotNull null
+                            sanitizeCustomMenu(
+                                id = map["id"] as? String ?: "",
+                                label = map["label"] as? String ?: "",
+                                icon = map["icon"] as? String ?: "sparkles",
+                                title = map["title"] as? String ?: "",
+                                body = map["body"] as? String ?: ""
+                            )
+                        }
+                    val existingTitle = existingSnap?.getString("appTitle")?.ifBlank { "Chatbox" } ?: "Chatbox"
+                    saveSparkDynamicConfig(
+                        uid,
+                        SparkDynamicConfig(
+                            appTitle = existingTitle,
+                            homeAnnouncement = announcement,
+                            customMenus = existingMenus
+                        )
+                    ).getOrThrow()
+                    Result.success(
+                        if (announcement.isEmpty()) "Cleared home announcement."
+                        else "Updated home announcement."
+                    )
+                }
+                is SparkCommandProposal.RemoveMenu -> {
+                    val target = proposal.idOrLabel.trim().lowercase()
+                    val existingSnap = runCatching {
+                        db.collection("settings").document("sparkConfig").get().await()
+                    }.getOrNull()
+                    val existingMenus = (existingSnap?.get("customMenus") as? List<*>).orEmpty()
+                        .mapNotNull { entry ->
+                            val map = entry as? Map<*, *> ?: return@mapNotNull null
+                            sanitizeCustomMenu(
+                                id = map["id"] as? String ?: "",
+                                label = map["label"] as? String ?: "",
+                                icon = map["icon"] as? String ?: "sparkles",
+                                title = map["title"] as? String ?: "",
+                                body = map["body"] as? String ?: ""
+                            )
+                        }
+                    val nextMenus = existingMenus.filterNot {
+                        it.id.equals(target, ignoreCase = true) ||
+                            it.label.equals(target, ignoreCase = true)
+                    }
+                    if (nextMenus.size == existingMenus.size) {
+                        return Result.failure(IllegalArgumentException("No custom menu matched \"$target\"."))
+                    }
+                    val existingTitle = existingSnap?.getString("appTitle")?.ifBlank { "Chatbox" } ?: "Chatbox"
+                    val existingAnnouncement = existingSnap?.getString("homeAnnouncement").orEmpty()
+                    saveSparkDynamicConfig(
+                        uid,
+                        SparkDynamicConfig(
+                            appTitle = existingTitle,
+                            homeAnnouncement = existingAnnouncement,
+                            customMenus = nextMenus
+                        )
+                    ).getOrThrow()
+                    Result.success("Removed custom menu \"$target\".")
+                }
                 SparkCommandProposal.Unsupported ->
                     Result.failure(IllegalArgumentException("Unsupported command proposal."))
             }

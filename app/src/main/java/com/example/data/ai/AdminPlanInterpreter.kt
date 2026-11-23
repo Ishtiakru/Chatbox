@@ -96,6 +96,19 @@ object AdminPlanInterpreter {
                 summary = "স্বাগতম বার্তা আপডেট করার জন্য প্রস্তুত।",
                 welcomeBanner = direct.value
             )
+            is SparkCommandProposal.SetAppTitle -> return AdminAiUpdatePlan(
+                summary = "অ্যাপের নাম '${direct.value}'-এ পরিবর্তনের জন্য প্রস্তুত।",
+                appTitle = direct.value
+            )
+            is SparkCommandProposal.SetAnnouncement -> return AdminAiUpdatePlan(
+                summary = if (direct.value.isEmpty()) "হোম নোটিশ/ঘোষণা মুছে ফেলার জন্য প্রস্তুত।" else "হোম ঘোষণা আপডেট করার জন্য প্রস্তুত।",
+                homeAnnouncement = direct.value
+            )
+            is SparkCommandProposal.RemoveMenu -> return AdminAiUpdatePlan(
+                summary = "কাস্টম মেনু '${direct.idOrLabel}' সরানোর জন্য প্রস্তুত।",
+                removeMenuId = direct.idOrLabel.lowercase().replace(Regex("[^a-z0-9_-]"), "")
+                    .ifEmpty { direct.idOrLabel.lowercase() }
+            )
             is SparkCommandProposal.SetAppUpdate -> return AdminAiUpdatePlan(
                 summary = if (direct.active) "নতুন ভার্সন v${direct.version} আপডেট প্রকাশের জন্য প্রস্তুত।" else "সবুজ Update বাটন বন্ধ করার জন্য প্রস্তুত।",
                 appUpdate = SparkAppUpdate(
@@ -202,16 +215,25 @@ object AdminPlanInterpreter {
         val lower = instruction.lowercase()
         val theme = when {
             lower.contains("lavender") || instruction.contains("ল্যাভেন্ডার") -> "lavender"
-            lower.contains("default theme") || instruction.contains("ডিফল্ট") -> "default"
+            lower.contains("default theme") || instruction.contains("ডিফল্ট") || instruction.contains("আগের কালার") -> "default"
             else -> null
         }
         val menuPos = when {
-            lower.contains("menu top") || instruction.contains("উপরে") -> "top"
-            lower.contains("menu bottom") || instruction.contains("নিচে") -> "bottom"
+            lower.contains("menu top") || lower.contains("upore") || instruction.contains("উপরে") -> "top"
+            lower.contains("menu bottom") || lower.contains("niche") || instruction.contains("নিচে") -> "bottom"
             else -> null
         }
-        val wantsMenu = lower.contains("menu") || lower.contains("menubar") ||
-            instruction.contains("মেনু") || lower.contains("nemu")
+        val wantsRemoveMenu = lower.contains("remove menu") || lower.contains("delete menu") ||
+            instruction.contains("মেনু ডিলিট") || instruction.contains("মেনু রিমুভ") ||
+            instruction.contains("মেনু বাদ")
+        val removeMenuId = if (wantsRemoveMenu) {
+            Regex("""(?:remove|delete)\s+menu\s+([a-zA-Z0-9_-]{2,24})""", RegexOption.IGNORE_CASE)
+                .find(instruction)?.groupValues?.getOrNull(1)?.lowercase()
+                ?: Regex("""([^\s,।]{2,20})\s+মেনু""").find(instruction)?.groupValues?.getOrNull(1)?.lowercase()
+        } else null
+
+        val wantsMenu = !wantsRemoveMenu && (lower.contains("menu") || lower.contains("menubar") ||
+            instruction.contains("মেনু") || lower.contains("nemu")) && menuPos == null
         val menu = if (wantsMenu) {
             val namedMatch = Regex(
                 """(?:নাম|name|title|label)\s*[:\-]?\s*["']?([^\n,।"']{2,20})["']?""",
@@ -236,7 +258,12 @@ object AdminPlanInterpreter {
             )
         } else null
 
-        if (theme == null && menuPos == null && menu == null) {
+        val appTitle = Regex(
+            """(?:app\s*(?:name|title)|অ্যাপের\s*নাম|নাম\s*বদলে)\s*[:\-]?\s*["']?([^\n,।"']{2,30})["']?""",
+            RegexOption.IGNORE_CASE
+        ).find(instruction)?.groupValues?.getOrNull(1)?.trim()?.take(40)
+
+        if (theme == null && menuPos == null && menu == null && removeMenuId == null && appTitle == null) {
             return AdminAiUpdatePlan(
                 summary = "হোম স্ক্রিনে ঘোষণা হিসেবে যুক্ত করার জন্য প্রস্তুত।",
                 homeAnnouncement = instruction.take(240)
@@ -247,7 +274,9 @@ object AdminPlanInterpreter {
             summary = "নির্দেশনা অনুযায়ী অ্যাপ কনফিগারেশন আপডেটের জন্য প্রস্তুত।",
             theme = theme,
             menuPosition = menuPos,
-            addOrUpdateMenu = menu
+            appTitle = appTitle,
+            addOrUpdateMenu = menu,
+            removeMenuId = removeMenuId
         )
     }
 }

@@ -4,7 +4,13 @@ import com.example.data.DemoCatalog
 import com.example.data.SparkAdminCommands
 import com.example.data.SparkCommandProposal
 import com.example.data.ai.AdminPlanInterpreter
+import com.example.data.ai.SairaCommandAction
+import com.example.data.ai.SairaCommandProcessor
 import com.example.data.model.ChatboxConstants
+import com.example.data.model.CoreAppTab
+import com.example.data.model.SparkAppearance
+import com.example.data.model.SparkDynamicConfig
+import com.example.data.model.UserProfile
 import com.example.data.model.WorldLanguages
 import com.example.data.repository.LiveChatRepository
 import org.junit.Assert.assertEquals
@@ -25,10 +31,14 @@ class ChatboxLogicTest {
     }
 
     @Test
-    fun `spark admin commands parse English and Bengali dashboard inputs`() {
+    fun `spark admin commands parse English Bengali and Banglish dashboard inputs`() {
         assertEquals(
             SparkCommandProposal.SetTheme("lavender"),
             SparkAdminCommands.parse("আমার হোম পেজটা ল্যাভেন্ডার কালার করো")
+        )
+        assertEquals(
+            SparkCommandProposal.SetTheme("lavender"),
+            SparkAdminCommands.parse("home lavender koro")
         )
         assertEquals(
             SparkCommandProposal.SetTheme("default"),
@@ -39,8 +49,20 @@ class ChatboxLogicTest {
             SparkAdminCommands.parse("মেনুবার উপরে নিয়ে আসো")
         )
         assertEquals(
+            SparkCommandProposal.SetMenu("top"),
+            SparkAdminCommands.parse("menu upore nao")
+        )
+        assertEquals(
             SparkCommandProposal.SetMenu("bottom"),
             SparkAdminCommands.parse("menu: bottom")
+        )
+        assertEquals(
+            SparkCommandProposal.SetAppTitle("Chatbox Pro"),
+            SparkAdminCommands.parse("title: Chatbox Pro")
+        )
+        assertEquals(
+            SparkCommandProposal.RemoveMenu("notice"),
+            SparkAdminCommands.parse("remove menu notice")
         )
         assertEquals(
             SparkCommandProposal.SetAppUpdate(
@@ -78,6 +100,8 @@ class ChatboxLogicTest {
 
     @Test
     fun `offline saira demo guide replies in Bengali for core topics`() {
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("/help").contains("/id"))
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("hi").contains("Saira"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("অ্যাডমিন প্যানেল").contains("অ্যাডমিন"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("firebase").contains("Firebase"))
@@ -97,5 +121,60 @@ class ChatboxLogicTest {
         )
         assertEquals("Rules", banglishMenuPlan.addOrUpdateMenu?.label)
         assertEquals("rules", banglishMenuPlan.addOrUpdateMenu?.id)
+    }
+
+    @Test
+    fun `saira command processor executes utility and admin commands with proper role checks`() {
+        val profile = UserProfile(uid = "u1", displayName = "Istiak", shortId = "482910")
+        val appearance = SparkAppearance(theme = "default", menu = "bottom")
+        val config = SparkDynamicConfig(appTitle = "Chatbox")
+
+        val helpAction = SairaCommandProcessor.parse("/help", isAdmin = true, profile, appearance, config)
+        assertTrue(helpAction is SairaCommandAction.Reply && helpAction.text.contains("/id"))
+
+        val idAction = SairaCommandProcessor.parse("/id", isAdmin = false, profile, appearance, config)
+        assertTrue(idAction is SairaCommandAction.Reply && idAction.text.contains("482910"))
+
+        val newAction = SairaCommandProcessor.parse("/new", isAdmin = false, profile, appearance, config)
+        assertEquals(SairaCommandAction.StartNewThread, newAction)
+
+        val autoReplyOn = SairaCommandProcessor.parse("/autoreply on", isAdmin = false, profile, appearance, config)
+        assertTrue(autoReplyOn is SairaCommandAction.Reply && autoReplyOn.toggleOneMinAutoReply == true)
+
+        val adminNavDenied = SairaCommandProcessor.parse("/admin", isAdmin = false, profile, appearance, config)
+        assertTrue(adminNavDenied is SairaCommandAction.Reply && adminNavDenied.navigateToCoreTab == null)
+
+        val adminNavAllowed = SairaCommandProcessor.parse("/admin", isAdmin = true, profile, appearance, config)
+        assertTrue(adminNavAllowed is SairaCommandAction.Reply && adminNavAllowed.navigateToCoreTab == CoreAppTab.ADMIN)
+
+        val adminThemeCmd = SairaCommandProcessor.parse(
+            "আমার হোম পেজটা ল্যাভেন্ডার কালার করো",
+            isAdmin = true,
+            profile,
+            appearance,
+            config
+        )
+        assertEquals(
+            SairaCommandAction.ExecuteAdminProposal(SparkCommandProposal.SetTheme("lavender")),
+            adminThemeCmd
+        )
+
+        val nonAdminThemeCmd = SairaCommandProcessor.parse(
+            "theme: lavender",
+            isAdmin = false,
+            profile,
+            appearance,
+            config
+        )
+        assertTrue(nonAdminThemeCmd is SairaCommandAction.Reply)
+
+        val normalChat = SairaCommandProcessor.parse(
+            "Explain gravity simply",
+            isAdmin = true,
+            profile,
+            appearance,
+            config
+        )
+        assertEquals(SairaCommandAction.NotACommand, normalChat)
     }
 }

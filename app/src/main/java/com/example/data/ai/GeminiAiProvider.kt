@@ -134,7 +134,7 @@ class GeminiAiProvider(
                 }
                 if (timedOutOnFirstChunk && !emittedAny) {
                     lastError = AiUnavailableException(
-                        "Saira AI took too long to respond. Check your internet connection and try again."
+                        "Saira AI took too long to start replying. Try again or add a Backup AI key in Auto-Reply settings."
                     )
                     continue
                 }
@@ -166,7 +166,7 @@ class GeminiAiProvider(
         const val DEFAULT_ID = "gemini"
         const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
         const val FALLBACK_MODEL = "gemini-3.8-flash"
-        const val FIRST_CHUNK_TIMEOUT_MS = 15_000L
-        const val TOTAL_TIMEOUT_MS = 45_000L
+        const val FIRST_CHUNK_TIMEOUT_MS = 8_000L
+        const val TOTAL_TIMEOUT_MS = 35_000L
     }
 }

@@ -77,10 +77,16 @@ object DemoCatalog {
     )
 
     fun getSairaOfflineGuideReply(input: String): String {
-        val text = input.lowercase()
+        val text = input.trim().lowercase()
         return when {
-            Regex("admin|অ্যাডমিন|এডমিন").containsMatchIn(text) ->
-                "অ্যাডমিন প্যানেল লক করা আছে। Firebase security rules অনুযায়ী শুধু অনুমোদিত অ্যাডমিন প্রবেশ করতে পারবেন।"
+            Regex("^/?(help|command|commands)$|কমান্ড|কিভাবে\\s*কাজ").containsMatchIn(text) ->
+                "Saira AI কমান্ডসমূহ (Saira ট্যাবে ব্যবহার করুন):\n• /help — কমান্ড তালিকা\n• /id — আপনার ৬-ডিজিট আইডি\n• /profile — প্রোফাইল এডিট\n• /new — নতুন থ্রেড\n• /autoreply on বা off\nঅ্যাডমিন কমান্ড: theme: lavender, menu: top, welcome: ..., update: 1.0.1 | Note"
+            Regex("^(hi+|hello|hey|salam|assalam|হ্যালো|হাই|সালাম|কেমন\\s*আছো?)").containsMatchIn(text) ->
+                "হ্যালো! আমি Saira ✨ আপনার সব কাজের জন্য পূর্ণ Saira AI ট্যাবটি খুলুন—সেখানে দ্রুত AI উত্তর ও সব কমান্ড সরাসরি কাজ করবে।"
+            Regex("6.?digit|short.?id|\\bid\\b|আইডি|প্রোফাইল|profile").containsMatchIn(text) ->
+                "Live ট্যাবের উপরের Profile আইকন থেকে আপনার ৬-ডিজিট ইউজার আইডি ও ফোন নম্বর সেট করে বন্ধুদের অ্যাড করতে পারবেন।"
+            Regex("admin|অ্যাডমিন|এডমিন|theme|menu|থিম|মেনু").containsMatchIn(text) ->
+                "অ্যাডমিন প্যানেল লক করা আছে। অনুমোদিত অ্যাডমিন জিমেইল দিয়ে Admin Panel বা Saira AI থেকে থিম, মেনুবার ও আপডেট কমান্ড চালাতে পারবেন।"
             Regex("call|video|voice|কল|ভিডিও|কথা").containsMatchIn(text) ->
                 "ভয়েস ও ভিডিও কলের ডিজাইন প্রস্তুত, কিন্তু কল এখনো সংযুক্ত নয়। এর জন্য নিরাপদ signaling ও calling service প্রয়োজন।"
             Regex("update|version|আপডেট|ভার্সন").containsMatchIn(text) ->
@@ -92,7 +98,7 @@ object DemoCatalog {
             Regex("develop|built|made|বানানো|তৈরি|কিভাবে").containsMatchIn(text) ->
                 "এই নেটিভ Android অ্যাপটি Kotlin ও Jetpack Compose (Material 3) দিয়ে তৈরি, যা Firebase Auth, Firestore, Storage ও Gemini AI ব্যবহার করে।"
             else ->
-                "আমি এখন ডেমো মোডের একটি সীমিত অফলাইন গাইড। পূর্ণ AI-এর জন্য Saira AI ট্যাব ব্যবহার করুন অথবা চ্যাট, কল, অ্যাডমিন, Firebase বা অ্যাপের ফিচার সম্পর্কে জিজ্ঞেস করুন।"
+                "আমি এখন ডেমো মোডের একটি সীমিত অফলাইন গাইড। পূর্ণ AI ও কমান্ডের জন্য নিচের Saira ট্যাব ব্যবহার করুন অথবা /help লিখুন।"
         }
     }
 }
