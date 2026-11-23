@@ -426,12 +426,6 @@ fun SairaAiScreen(
                         ) {
                             Icon(Icons.Rounded.History, contentDescription = "Saved threads", tint = ChatboxPrimary)
                         }
-                        IconButton(
-                            onClick = { startNewThread() },
-                            modifier = Modifier.testTag("saira_new_chat_button")
-                        ) {
-                            Icon(Icons.Rounded.AddComment, contentDescription = "New Saira chat", tint = ChatboxPrimary)
-                        }
                     }
                 }
             }
@@ -459,6 +453,32 @@ fun SairaAiScreen(
                     isError = true,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
+                if (err.contains("app check", ignoreCase = true) || err.contains("attestation", ignoreCase = true)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { showBackupKeyDialog = true },
+                            modifier = Modifier.testTag("saira_appcheck_backup_button")
+                        ) {
+                            Icon(Icons.Rounded.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Backup AI সেট করুন")
+                        }
+                        TextButton(
+                            onClick = {
+                                errorMessage = null
+                                scope.launch { SairaAiClient.warmUp() }
+                            }
+                        ) {
+                            Text("টোকেন রিফ্রেশ")
+                        }
+                    }
+                }
             }
 
             if (exchanges.isEmpty()) {

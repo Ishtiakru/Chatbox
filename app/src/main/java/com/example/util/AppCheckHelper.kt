@@ -9,7 +9,8 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
-
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "AppCheckInit"
@@ -34,6 +35,9 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             FirebaseApp.initializeApp(context)
         }
 
+        val appCheck = FirebaseAppCheck.getInstance()
+        appCheck.setTokenAutoRefreshEnabled(true)
+
         if (BuildConfig.DEBUG) {
             val persistenceKey = FirebaseApp.getInstance().persistenceKey
             val debugPrefs = context.getSharedPreferences(
@@ -53,7 +57,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 metaPrefs.edit()
                     .putBoolean(KEY_HAS_TRUSTED_DEBUG_TOKEN, true)
                     .commit()
-                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                appCheck.installAppCheckProviderFactory(
                     DebugAppCheckProviderFactory.getInstance()
                 )
                 appCheckConfigured.set(true)
@@ -62,7 +66,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 metaPrefs.getBoolean(KEY_HAS_TRUSTED_DEBUG_TOKEN, false) &&
                 !debugPrefs.getString(DEBUG_SECRET_KEY, null).isNullOrEmpty()
             ) {
-                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                appCheck.installAppCheckProviderFactory(
                     DebugAppCheckProviderFactory.getInstance()
                 )
                 appCheckConfigured.set(true)
@@ -70,8 +74,8 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             } else {
                 // Sideloaded debug APK on a physical device has no harness debug token:
                 // use reCAPTCHA Enterprise so Firebase AI Logic attestation succeeds out of the box.
-                if (!installRecaptchaProvider(context)) {
-                    FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                if (!installRecaptchaProvider(context, appCheck)) {
+                    appCheck.installAppCheckProviderFactory(
                         DebugAppCheckProviderFactory.getInstance()
                     )
                     Log.w(TAG, "Fallback to DebugAppCheckProviderFactory without trusted token.")
@@ -79,7 +83,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 appCheckConfigured.set(true)
             }
         } else {
-            if (installRecaptchaProvider(context)) {
+            if (installRecaptchaProvider(context, appCheck)) {
                 appCheckConfigured.set(true)
             }
         }
@@ -88,7 +92,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
     }
 }
 
-private fun installRecaptchaProvider(context: Context): Boolean {
+private fun installRecaptchaProvider(context: Context, appCheck: FirebaseAppCheck): Boolean {
     val resId = context.resources.getIdentifier(
         RECAPTCHA_SITE_KEY_RES,
         "string",
@@ -103,9 +107,37 @@ private fun installRecaptchaProvider(context: Context): Boolean {
         Log.e(TAG, "recaptcha_site_key resource string is blank.")
         return false
     }
-    FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+    appCheck.installAppCheckProviderFactory(
         RecaptchaAppCheckProviderFactory.getInstance(siteKey)
     )
     Log.d(TAG, "RecaptchaAppCheckProviderFactory installed.")
     return true
+}
+
+suspend fun forceRefreshAppCheckToken(timeoutMs: Long = 8_000L): String? =
+    withTimeoutOrNull(timeoutMs) {
+        runCatching {
+            val result = FirebaseAppCheck.getInstance().getAppCheckToken(true).await()
+            result.token.takeIf { it.isNotBlank() }
+        }.onFailure { err ->
+            Log.e(TAG, "App Check token refresh failed: ${err.message}", err)
+        }.getOrNull()
+    }
+
+fun isAppCheckError(error: Throwable?): Boolean {
+    var current = error
+    var depth = 0
+    while (current != null && depth < 6) {
+        val msg = "${current.javaClass.simpleName} ${current.message.orEmpty()}".lowercase()
+        if (
+            msg.contains("app check") ||
+            msg.contains("appcheck") ||
+            msg.contains("attestation")
+        ) {
+            return true
+        }
+        current = current.cause
+        depth++
+    }
+    return false
 }

@@ -1,6 +1,8 @@
 package com.example.data.ai
 
 import android.util.Log
+import com.example.util.forceRefreshAppCheckToken
+import com.example.util.isAppCheckError
 import com.google.firebase.Firebase
 import com.google.firebase.ai.Chat
 import com.google.firebase.ai.GenerativeModel
@@ -58,9 +60,10 @@ class GeminiAiProvider(
         history: List<AiChatMessage>,
         prompt: String
     ): String {
+        val convertedHistory = historyContent(history)
         return try {
             withTimeout(TOTAL_TIMEOUT_MS) {
-                val chat: Chat = model(modelName, systemInstruction).startChat(history = historyContent(history))
+                val chat: Chat = model(modelName, systemInstruction).startChat(history = convertedHistory)
                 chat.sendMessage(prompt).text?.trim().orEmpty()
             }
         } catch (e: TimeoutCancellationException) {
@@ -71,12 +74,29 @@ class GeminiAiProvider(
             if (AiErrorClassifier.isQuotaExhausted(e)) {
                 throw AiQuotaExhaustedException("Gemini quota exhausted", e)
             }
+            if (isAppCheckError(e)) {
+                Log.w(TAG, "App Check error on primary generate(); force-refreshing token and retrying once.", e)
+                forceRefreshAppCheckToken()
+                return try {
+                    withTimeout(TOTAL_TIMEOUT_MS) {
+                        val chat: Chat = model(modelName, systemInstruction).startChat(history = convertedHistory)
+                        chat.sendMessage(prompt).text?.trim().orEmpty()
+                    }
+                } catch (retryErr: TimeoutCancellationException) {
+                    throw AiUnavailableException("Gemini took too long to respond. Please try again.", retryErr)
+                } catch (retryErr: CancellationException) {
+                    throw retryErr
+                } catch (retryErr: Throwable) {
+                    Log.e(TAG, "Gemini failed again after App Check refresh", retryErr)
+                    throw retryErr
+                }
+            }
             Log.w(TAG, "Primary model '$modelName' failed; attempting fallback '$fallbackModelName'", e)
             val backupName = fallbackModelName?.takeIf { it != modelName }
             if (backupName != null) {
                 return try {
                     withTimeout(TOTAL_TIMEOUT_MS) {
-                        val chat: Chat = model(backupName, systemInstruction).startChat(history = historyContent(history))
+                        val chat: Chat = model(backupName, systemInstruction).startChat(history = convertedHistory)
                         chat.sendMessage(prompt).text?.trim().orEmpty()
                     }
                 } catch (e2: TimeoutCancellationException) {
@@ -106,8 +126,11 @@ class GeminiAiProvider(
         val convertedHistory = historyContent(history)
         var lastError: Throwable? = null
         var succeeded = false
+        var refreshedAppCheckOnce = false
 
-        for (candidate in candidateModels) {
+        var idx = 0
+        while (idx < candidateModels.size) {
+            val candidate = candidateModels[idx]
             var emittedAny = false
             var timedOutOnFirstChunk = false
             try {
@@ -138,6 +161,7 @@ class GeminiAiProvider(
                     lastError = AiUnavailableException(
                         "Saira AI took too long to start replying. Try again or add a Backup AI key in Auto-Reply settings."
                     )
+                    idx++
                     continue
                 }
                 succeeded = true
@@ -148,14 +172,23 @@ class GeminiAiProvider(
                     e
                 )
                 if (emittedAny) break
+                idx++
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 if (AiErrorClassifier.isQuotaExhausted(e)) {
                     throw AiQuotaExhaustedException("Gemini quota exhausted", e)
                 }
+                if (!emittedAny && !refreshedAppCheckOnce && isAppCheckError(e)) {
+                    refreshedAppCheckOnce = true
+                    Log.w(TAG, "App Check error during stream(); force-refreshing token and retrying.", e)
+                    forceRefreshAppCheckToken()
+                    // Retry the same primary candidate once with a fresh App Check token
+                    continue
+                }
                 lastError = e
                 if (emittedAny) break
+                idx++
             }
         }
 
