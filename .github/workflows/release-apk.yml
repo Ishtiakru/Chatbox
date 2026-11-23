@@ -68,20 +68,64 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          APPLICATION_ID: com.aistudio.chatbox.kxmpzq
         run: |
-          if [ -f app/google-services.json ]; then
-            echo "Using repository app/google-services.json."
-          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+          set -euo pipefail
+          if [ -n "${GOOGLE_SERVICES_JSON_BASE64:-}" ]; then
             echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 -d > app/google-services.json
             echo "Decoded app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
-          elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
+          elif [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
             printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
             echo "Created app/google-services.json from GOOGLE_SERVICES_JSON secret."
+          elif [ -f app/google-services.json ]; then
+            echo "Using repository app/google-services.json."
           else
             echo "::error::Missing app/google-services.json! AI Studio omits google-services.json when pushing to GitHub. Add a repository secret named GOOGLE_SERVICES_JSON (paste the contents of app/google-services.json) in GitHub -> Settings -> Secrets and variables -> Actions, then re-run this workflow."
             exit 1
           fi
-          python3 -m json.tool app/google-services.json > /dev/null
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          path = "app/google-services.json"
+          app_id = os.environ["APPLICATION_ID"]
+          with open(path, encoding="utf-8") as handle:
+              data = json.load(handle)
+
+          clients = data.get("client", [])
+          match = next(
+              (
+                  client
+                  for client in clients
+                  if client.get("client_info", {})
+                  .get("android_client_info", {})
+                  .get("package_name")
+                  == app_id
+              ),
+              None,
+          )
+          if match is None:
+              packages = [
+                  client.get("client_info", {})
+                  .get("android_client_info", {})
+                  .get("package_name")
+                  for client in clients
+              ]
+              print(
+                  f"::error::{path} has no Android client for package "
+                  f"'{app_id}'. Found: {packages}. Regenerate google-services.json "
+                  "from Firebase/AI Studio for this applicationId."
+              )
+              sys.exit(1)
+
+          project_id = data.get("project_info", {}).get("project_id")
+          mobile_app_id = match["client_info"].get("mobilesdk_app_id")
+          print(
+              f"google-services.json OK: project={project_id} "
+              f"app={mobile_app_id} package={app_id}"
+          )
+          PY
 
       - name: Build Debug & Release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
