@@ -137,11 +137,32 @@ fun ChatboxLogoWithUpdateBadge(
     modifier: Modifier = Modifier,
     logoSize: Dp = 36.dp
 ) {
-    ChatboxUpdateBadge(
-        appUpdateActive = appUpdateActive,
-        onUpdateClick = onUpdateClick,
-        modifier = modifier
-    )
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier
+                .size(logoSize)
+                .border(1.dp, Color(0xFF10B981).copy(alpha = 0.35f), CircleShape),
+            shape = CircleShape,
+            color = Color.White,
+            shadowElevation = 1.dp
+        ) {
+            Image(
+                painter = painterResource(R.drawable.chatbox_logo_lavender),
+                contentDescription = stringResource(R.string.app_name),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        ChatboxUpdateBadge(
+            appUpdateActive = appUpdateActive,
+            onUpdateClick = onUpdateClick,
+            modifier = Modifier
+        )
+    }
 }
 
 @Composable
