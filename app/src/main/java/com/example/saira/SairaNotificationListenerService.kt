@@ -30,92 +30,97 @@ class SairaNotificationListenerService : NotificationListenerService() {
     private val recentReplyTimestamps = ConcurrentHashMap<String, Long>()
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        val target = sbn ?: return
+        serviceScope.launch {
+            processNotification(target)
+        }
+    }
+
+    internal suspend fun processNotification(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
-        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+        if (isGroupSummary) return
 
         val extras = notification.extras ?: return
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val bodyText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
 
         val replyAction = findReplyAction(notification) ?: return
         val packageName = sbn.packageName
 
-        serviceScope.launch {
-            val prefs = AppPreferencesRepository(applicationContext)
-            val notifEnabled = prefs.sairaNotifReplyEnabled.first()
-            val locationEnabled = prefs.sairaLiveLocationEnabled.first()
-            val rules = prefs.sairaNotificationRules.first()
-            val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
+        val prefs = AppPreferencesRepository(applicationContext)
+        val notifEnabled = prefs.sairaNotifReplyEnabled.first()
+        val locationEnabled = prefs.sairaLiveLocationEnabled.first()
+        val rules = prefs.sairaNotificationRules.first()
+        val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
 
-            val match = SairaNotificationMatcher.match(
-                notifAutoReplyEnabled = notifEnabled,
-                liveLocationEnabled = locationEnabled,
-                locationPermissionGranted = hasLocPerm,
-                packageName = packageName,
-                senderTitle = senderTitle,
-                incomingText = bodyText,
-                isGroupSummary = isGroupSummary,
-                rules = rules
-            ) ?: return@launch
+        val match = SairaNotificationMatcher.match(
+            notifAutoReplyEnabled = notifEnabled,
+            liveLocationEnabled = locationEnabled,
+            locationPermissionGranted = hasLocPerm,
+            packageName = packageName,
+            senderTitle = senderTitle,
+            incomingText = bodyText,
+            isGroupSummary = isGroupSummary,
+            rules = rules
+        ) ?: return
 
-            val cooldownKey = "${match.platform.name}::${match.normalizedSender.lowercase()}"
-            val nowMs = System.currentTimeMillis()
-            val prevMs = recentReplyTimestamps[cooldownKey] ?: 0L
-            if (nowMs - prevMs < REPLY_COOLDOWN_MS) return@launch
-            recentReplyTimestamps[cooldownKey] = nowMs
+        val cooldownKey = "${match.platform.name}::${match.normalizedSender.lowercase()}"
+        val nowMs = System.currentTimeMillis()
+        val prevMs = recentReplyTimestamps[cooldownKey] ?: 0L
+        if (nowMs - prevMs < REPLY_COOLDOWN_MS) return
+        recentReplyTimestamps[cooldownKey] = nowMs
 
-            val locationSnapshot = if (match.shouldAttachLocation) {
-                SairaLocationHelper.getBestAvailableLocation(applicationContext)
-            } else {
-                null
-            }
+        val locationSnapshot = if (match.shouldAttachLocation) {
+            SairaLocationHelper.getBestAvailableLocation(applicationContext)
+        } else {
+            null
+        }
 
-            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-            val finalReply = if (match.rule.useAiReply && NetworkMonitor.isCurrentlyConnected(applicationContext)) {
-                val aiAttempt = runCatching {
-                    val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
-                        senderName = match.normalizedSender,
-                        platformLabel = match.platform.label,
-                        incomingMessage = bodyText.orEmpty(),
-                        taughtGuidance = match.rule.taughtReplyGuidance,
-                        locationText = locationSnapshot?.toShareText(),
-                        hourOfDay = hour
-                    )
-                    SairaAiClient.complete(SairaPrompts.autoReplySystemInstruction, emptyList(), prompt)
-                }.getOrNull()?.trim().orEmpty()
-
-                if (aiAttempt.isNotEmpty()) aiAttempt
-                else SairaNotificationMatcher.buildDeterministicReply(
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val finalReply = if (match.rule.useAiReply && NetworkMonitor.isCurrentlyConnected(applicationContext)) {
+            val aiAttempt = runCatching {
+                val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
                     senderName = match.normalizedSender,
-                    rule = match.rule,
-                    locationSnapshot = locationSnapshot,
+                    platformLabel = match.platform.label,
+                    incomingMessage = bodyText.orEmpty(),
+                    taughtGuidance = match.rule.taughtReplyGuidance,
+                    locationText = locationSnapshot?.toShareText(),
                     hourOfDay = hour
                 )
-            } else {
-                SairaNotificationMatcher.buildDeterministicReply(
-                    senderName = match.normalizedSender,
-                    rule = match.rule,
-                    locationSnapshot = locationSnapshot,
-                    hourOfDay = hour
-                )
-            }
+                SairaAiClient.complete(SairaPrompts.autoReplySystemInstruction, emptyList(), prompt)
+            }.getOrNull()?.trim().orEmpty()
 
-            val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
-            if (sentOk) {
-                prefs.appendAutoReplyLog(
-                    SairaAutoReplyLog(
-                        id = "log_${nowMs}_${Random.nextInt(100, 999)}",
-                        contactName = match.normalizedSender,
-                        platformLabel = match.platform.label,
-                        incomingPreview = bodyText.orEmpty().take(120),
-                        sentReply = finalReply.take(280),
-                        includedLocation = locationSnapshot != null,
-                        timestampMs = nowMs
-                    )
+            if (aiAttempt.isNotEmpty()) aiAttempt
+            else SairaNotificationMatcher.buildDeterministicReply(
+                senderName = match.normalizedSender,
+                rule = match.rule,
+                locationSnapshot = locationSnapshot,
+                hourOfDay = hour
+            )
+        } else {
+            SairaNotificationMatcher.buildDeterministicReply(
+                senderName = match.normalizedSender,
+                rule = match.rule,
+                locationSnapshot = locationSnapshot,
+                hourOfDay = hour
+            )
+        }
+
+        val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
+        if (sentOk) {
+            prefs.appendAutoReplyLog(
+                SairaAutoReplyLog(
+                    id = "log_${nowMs}_${Random.nextInt(100, 999)}",
+                    contactName = match.normalizedSender,
+                    platformLabel = match.platform.label,
+                    incomingPreview = bodyText.orEmpty().take(120),
+                    sentReply = finalReply.take(280),
+                    includedLocation = locationSnapshot != null,
+                    timestampMs = nowMs
                 )
-            }
+            )
         }
     }
 

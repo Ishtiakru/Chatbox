@@ -3,13 +3,22 @@ package com.example.saira
 import android.Manifest
 import android.app.Application
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.RemoteInput
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.location.Location
 import android.location.LocationManager
-import android.os.Bundle
+import android.os.Process
+import android.provider.Settings
+import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.repository.AppPreferencesRepository
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -18,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
@@ -82,7 +92,6 @@ class SairaCommandsRobolectricTest {
         )
         val rules = listOf(sajibWhatsAppRule, rahimaMessengerRule, disabledRule)
 
-        // 1. Blocked when master toggle is OFF
         assertNull(
             SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = false,
@@ -96,7 +105,6 @@ class SairaCommandsRobolectricTest {
             )
         )
 
-        // 2. Blocked for unlisted sender
         assertNull(
             SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = true,
@@ -110,7 +118,6 @@ class SairaCommandsRobolectricTest {
             )
         )
 
-        // 3. Blocked when rule exists but is disabled
         assertNull(
             SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = true,
@@ -124,7 +131,6 @@ class SairaCommandsRobolectricTest {
             )
         )
 
-        // 4. Blocked when platform does not match (Sajib is WHATSAPP only, arrives on Messenger)
         assertNull(
             SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = true,
@@ -138,7 +144,6 @@ class SairaCommandsRobolectricTest {
             )
         )
 
-        // 5. Blocked for WhatsApp/Messenger group summary notifications
         assertNull(
             SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = true,
@@ -152,7 +157,6 @@ class SairaCommandsRobolectricTest {
             )
         )
 
-        // 6. Matched for Sajib on WhatsApp (including unread message count stripped cleanly)
         val waMatch = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = true,
             liveLocationEnabled = false,
@@ -176,7 +180,6 @@ class SairaCommandsRobolectricTest {
         assertTrue(waReply.contains("হ্যালো Sajib, সুপ্রভাত!"))
         assertTrue(waReply.contains("কাজে ব্যস্ত আছি"))
 
-        // 7. Matched for Rahima on Messenger
         val msgMatch = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = true,
             liveLocationEnabled = false,
@@ -189,26 +192,121 @@ class SairaCommandsRobolectricTest {
         )
         assertNotNull(msgMatch)
         assertEquals(SairaPlatform.MESSENGER, msgMatch!!.platform)
+    }
 
-        // 8. Verify RemoteInput extraction works on realistic Android NotificationCompat/Notification action
-        val remoteInput = RemoteInput.Builder("key_text_reply")
-            .setAllowFreeFormInput(true)
-            .build()
-        val actionIntent = android.app.PendingIntent.getBroadcast(
-            application,
-            0,
-            Intent("com.example.ACTION_TEST_REPLY"),
-            android.app.PendingIntent.FLAG_MUTABLE
+    // -------------------------------------------------------------------------
+    // End-to-End Service + DataStore + RemoteInput Broadcast Verification
+    // -------------------------------------------------------------------------
+    @Test
+    fun `notification listener service end to end dispatches remote input and records log only for consented contact`() = runBlocking {
+        val prefs = AppPreferencesRepository(application)
+        prefs.clearAutoReplyLogs()
+        prefs.setSairaNotifReplyEnabled(true)
+        prefs.setSairaLiveLocationEnabled(true)
+        prefs.setPeerLocationAllowed("peer_sajib", true)
+        prefs.saveSairaNotificationRules(
+            listOf(
+                SairaNotificationRule(
+                    id = "rule_sajib",
+                    contactName = "সজীব",
+                    platform = SairaPlatform.WHATSAPP,
+                    taughtReplyGuidance = "আমি একটু বাইরে আছি।",
+                    enabled = true,
+                    allowLocationShare = true,
+                    useAiReply = false
+                )
+            )
         )
-        val action = Notification.Action.Builder(null, "Reply", actionIntent)
-            .addRemoteInput(remoteInput)
-            .build()
-        val notification = Notification.Builder(application, "test_ch")
-            .setContentTitle("Sajib")
-            .setContentText("Hello")
-            .addAction(action)
-            .build()
-        assertNotNull(notification.actions?.firstOrNull()?.remoteInputs?.firstOrNull()?.allowFreeFormInput == true)
+
+        assertTrue(prefs.sairaNotifReplyEnabled.first())
+        assertTrue(prefs.sairaLiveLocationEnabled.first())
+        assertTrue("peer_sajib" in prefs.sairaLiveLocationAllowedPeers.first())
+
+        // Grant coarse location permission & seed ShadowLocationManager
+        Shadows.shadowOf(application).grantPermissions(Manifest.permission.ACCESS_COARSE_LOCATION)
+        val locationManager = application.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val shadowLocationManager = Shadows.shadowOf(locationManager)
+        shadowLocationManager.setProviderEnabled(LocationManager.NETWORK_PROVIDER, true)
+        val mockLoc = Location(LocationManager.NETWORK_PROVIDER).apply {
+            latitude = 23.78088
+            longitude = 90.27923
+            accuracy = 18f
+            time = System.currentTimeMillis()
+        }
+        @Suppress("DEPRECATION")
+        shadowLocationManager.setLastKnownLocation(LocationManager.NETWORK_PROVIDER, mockLoc)
+
+        // Verify notification listener permission check helper
+        val componentFlat = ComponentName(application, SairaNotificationListenerService::class.java).flattenToString()
+        Settings.Secure.putString(application.contentResolver, "enabled_notification_listeners", componentFlat)
+        assertTrue(SairaNotificationListenerService.isNotificationAccessGranted(application))
+
+        // Capture dispatched RemoteInput reply via BroadcastReceiver
+        var capturedReply: String? = null
+        val replyActionIntent = "com.example.TEST_WHATSAPP_REMOTE_INPUT"
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val results = RemoteInput.getResultsFromIntent(intent)
+                capturedReply = results?.getCharSequence("key_reply")?.toString()
+            }
+        }
+        application.registerReceiver(receiver, IntentFilter(replyActionIntent), Context.RECEIVER_EXPORTED)
+
+        fun buildSbn(pkg: String, sender: String, text: String): StatusBarNotification {
+            val remoteInput = RemoteInput.Builder("key_reply").setAllowFreeFormInput(true).build()
+            val pendingIntent = PendingIntent.getBroadcast(
+                application,
+                202,
+                Intent(replyActionIntent).setPackage(application.packageName),
+                PendingIntent.FLAG_MUTABLE
+            )
+            val action = Notification.Action.Builder(null, "Reply", pendingIntent)
+                .addRemoteInput(remoteInput)
+                .build()
+            val notif = Notification.Builder(application, "wa_ch")
+                .setContentTitle(sender)
+                .setContentText(text)
+                .addAction(action)
+                .build()
+            @Suppress("DEPRECATION")
+            return StatusBarNotification(
+                pkg,
+                pkg,
+                501,
+                null,
+                Process.myUid(),
+                0,
+                0,
+                notif,
+                Process.myUserHandle(),
+                System.currentTimeMillis()
+            )
+        }
+
+        val service = Robolectric.buildService(SairaNotificationListenerService::class.java).create().get()
+
+        // 1) Unlisted sender -> MUST NOT reply
+        service.processNotification(buildSbn("com.whatsapp", "Stranger", "কই আছো?"))
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNull(capturedReply)
+        assertTrue(prefs.sairaAutoReplyLogs.first().isEmpty())
+
+        // 2) Approved sender asking location -> MUST reply with taught message + Maps location link & log it
+        service.processNotification(buildSbn("com.whatsapp", "সজীব", "তোমার লোকেশন দাও, কই আছো?"))
+        Shadows.shadowOf(application.mainLooper).idle()
+
+        assertNotNull(capturedReply)
+        assertTrue(capturedReply!!.contains("হ্যালো সজীব"))
+        assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertTrue(capturedReply!!.contains("https://maps.google.com/?q=23.78088,90.27923"))
+
+        val logs = prefs.sairaAutoReplyLogs.first()
+        assertEquals(1, logs.size)
+        assertEquals("সজীব", logs.first().contactName)
+        assertEquals("WhatsApp", logs.first().platformLabel)
+        assertTrue(logs.first().includedLocation)
+
+        application.unregisterReceiver(receiver)
     }
 
     // -------------------------------------------------------------------------
@@ -227,11 +325,9 @@ class SairaCommandsRobolectricTest {
         val locRuleDenied = locRuleAllowed.copy(id = "r_loc_no", contactName = "Kamal", allowLocationShare = false)
         val rules = listOf(locRuleAllowed, locRuleDenied)
 
-        // Before permission granted: SairaLocationHelper refuses to access location
         assertFalse(SairaLocationHelper.hasLocationPermission(application))
         assertNull(SairaLocationHelper.getBestAvailableLocation(application))
 
-        // Matcher refuses to attach location when permission is false
         val deniedByPerm = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = true,
             liveLocationEnabled = true,
@@ -245,7 +341,6 @@ class SairaCommandsRobolectricTest {
         assertNotNull(deniedByPerm)
         assertFalse(deniedByPerm!!.shouldAttachLocation)
 
-        // Matcher refuses to attach location when rule.allowLocationShare is false (Kamal)
         val deniedByContactRule = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = true,
             liveLocationEnabled = true,
@@ -259,7 +354,6 @@ class SairaCommandsRobolectricTest {
         assertNotNull(deniedByContactRule)
         assertFalse(deniedByContactRule!!.shouldAttachLocation)
 
-        // Matcher attaches location ONLY when all 4 gates are satisfied
         val allowedMatch = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = true,
             liveLocationEnabled = true,
@@ -273,7 +367,6 @@ class SairaCommandsRobolectricTest {
         assertNotNull(allowedMatch)
         assertTrue(allowedMatch!!.shouldAttachLocation)
 
-        // Grant foreground COARSE location and seed Robolectric ShadowLocationManager
         Shadows.shadowOf(application).grantPermissions(Manifest.permission.ACCESS_COARSE_LOCATION)
         assertTrue(SairaLocationHelper.hasLocationPermission(application))
 
