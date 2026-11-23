@@ -125,19 +125,31 @@ export function SearchBar({
   value,
   onChange,
   placeholder,
+  ariaLabel,
+  inputRef,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
+  ariaLabel?: string;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   return (
     <div className="relative flex items-center">
       <Search className="w-4 h-4 text-[#8f89a3] absolute left-3 pointer-events-none" />
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && value) {
+            e.preventDefault();
+            onChange('');
+          }
+        }}
         placeholder={placeholder}
+        aria-label={ariaLabel ?? placeholder}
         className="w-full h-10 pl-9 pr-9 rounded-xl bg-[var(--chatbox-field-bg)] border border-[var(--chatbox-border)] text-sm text-[var(--chatbox-ink)] placeholder:text-[#8f89a3] focus:outline-none focus:border-[#5b4a8f] transition-colors"
       />
       {value && (

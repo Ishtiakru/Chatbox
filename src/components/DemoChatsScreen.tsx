@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowUp,
@@ -64,6 +64,28 @@ export function DemoChatsScreen({
   const [mobilePane, setMobilePane] = useState<'list' | 'thread'>('list');
   const [showDetails, setShowDetails] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingField =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setMobilePane('list');
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      } else if (e.key === '/' && !isTypingField) {
+        e.preventDefault();
+        setMobilePane('list');
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const selectedContact: DemoContact = useMemo(
     () => DEMO_CONTACTS.find((c) => c.id === selectedContactId) ?? DEMO_CONTACTS[0],
@@ -162,11 +184,24 @@ export function DemoChatsScreen({
             </div>
           </div>
 
-          <SearchBar
-            value={searchQuery}
-            onChange={setSearchQuery}
-            placeholder="Search by name or message…"
-          />
+          <div className="space-y-1.5">
+            <SearchBar
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search conversations by name or message…"
+              ariaLabel="Global search across Demo Chats by contact name or message content"
+              inputRef={searchInputRef}
+            />
+            {searchQuery.trim() && (
+              <p className="text-[11px] font-medium text-[#5b4a8f] px-1">
+                {filteredContacts.length === 0
+                  ? 'No matching conversations'
+                  : `${filteredContacts.length} matching ${
+                      filteredContacts.length === 1 ? 'conversation' : 'conversations'
+                    }`}
+              </p>
+            )}
+          </div>
 
           {publicWelcomeBanner && (
             <NoticeBanner text={publicWelcomeBanner} />
@@ -181,15 +216,27 @@ export function DemoChatsScreen({
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {filteredContacts.length === 0 ? (
-            <div className="p-6 text-center text-sm text-[#8f89a3]">
-              No matching demo conversations.
+            <div className="p-6 text-center space-y-2.5">
+              <p className="text-sm font-medium text-[var(--chatbox-ink)]">
+                No conversations match &ldquo;{searchQuery.trim()}&rdquo;
+              </p>
+              <p className="text-xs text-[#8f89a3]">
+                Try another contact name or message keyword.
+              </p>
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="inline-flex items-center px-3 py-1.5 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] text-xs font-semibold cursor-pointer"
+              >
+                Clear search
+              </button>
             </div>
           ) : (
             filteredContacts.map((contact) => {
               const msgs = messagesByContact[contact.id] ?? [];
               const q = searchQuery.trim().toLowerCase();
               const matchedMsg = q
-                ? msgs.find((m) => m.text.toLowerCase().includes(q))
+                ? [...msgs].reverse().find((m) => m.text.toLowerCase().includes(q))
                 : undefined;
               const previewMsg = matchedMsg ?? msgs[msgs.length - 1];
               const selected = contact.id === selectedContact.id;
@@ -222,9 +269,12 @@ export function DemoChatsScreen({
                     </div>
                     <p className="text-xs text-[#6b657d] truncate mt-0.5">
                       {previewMsg ? (
-                        <HighlightText text={previewMsg.text} query={searchQuery} />
+                        <>
+                          {previewMsg.from === 'me' && <span>You: </span>}
+                          <HighlightText text={previewMsg.text} query={searchQuery} />
+                        </>
                       ) : (
-                        contact.role
+                        <HighlightText text={contact.role} query={searchQuery} />
                       )}
                     </p>
                   </div>
@@ -344,7 +394,15 @@ export function DemoChatsScreen({
                       : 'bg-[var(--chatbox-incoming-bubble)] text-[var(--chatbox-incoming-text)] rounded-bl-xs'
                   }`}
                 >
-                  <HighlightText text={msg.text} query={searchQuery} />
+                  <HighlightText
+                    text={msg.text}
+                    query={searchQuery}
+                    highlightClassName={
+                      isMe
+                        ? 'bg-[#5b4a8f]/25 text-[#2a2340] font-semibold rounded-xs px-0.5'
+                        : 'bg-[#5b4a8f]/15 text-[#5b4a8f] font-semibold rounded-xs px-0.5'
+                    }
+                  />
                 </div>
                 <span className="text-[11px] text-[#8f89a3] mt-1 px-1">{msg.time}</span>
               </div>

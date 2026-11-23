@@ -1,13 +1,14 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, type Content } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 const MODEL_NAME = 'gemini-4-hydrogen';
+const FALLBACK_MODEL_NAME = 'gemini-3.1-flash-lite';
 
 const CURATED_KNOWLEDGE = `
 # Saira's curated app knowledge
@@ -38,6 +39,7 @@ Core Behavior Rules:
    - When the user is ending the conversation or saying goodbye/thank you/done at night (isNightTime=true), gracefully wish them "Good Night" (e.g., "Good Night! শুভ রাত্রি।") as a warm closing.
 4. Unlimited General Knowledge:
    - Answer ANY question or request the user brings (everyday help, study, technology, coding, writing, advice, general facts, or Chatbox app guidance) clearly, accurately, and warmly.
+   - Keep responses well-structured and concise (typically 1-4 short paragraphs unless the user asks for deeper detail).
 5. Ground Chatbox-specific questions in this app summary when asked about Chatbox:
 ${CURATED_KNOWLEDGE}
 `.trim();
@@ -60,6 +62,201 @@ function getAiClient(): GoogleGenAI | null {
       },
     },
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractRawErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Unknown AI error';
+  }
+}
+
+function tryUnwrapNestedMessage(raw: string): string {
+  let current = raw.trim();
+  for (let i = 0; i < 3; i += 1) {
+    if (!current.startsWith('{')) break;
+    try {
+      const parsed = JSON.parse(current) as {
+        message?: unknown;
+        error?: { message?: unknown } | unknown;
+      };
+      if (typeof parsed.error === 'object' && parsed.error !== null && 'message' in parsed.error) {
+        const inner = (parsed.error as { message?: unknown }).message;
+        if (typeof inner === 'string' && inner.trim()) {
+          current = inner.trim();
+          continue;
+        }
+      }
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        current = parsed.message.trim();
+        continue;
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+function extractGeminiErrorMessage(error: unknown): string {
+  const raw = extractRawErrorText(error);
+  const unwrapped = tryUnwrapNestedMessage(raw);
+  const lower = unwrapped.toLowerCase();
+
+  if (lower.includes('api_key_invalid') || lower.includes('api key not valid') || lower.includes('permission_denied')) {
+    return 'Gemini API key is invalid or unauthorized. Check GEMINI_API_KEY in Settings > Secrets.';
+  }
+  if (lower.includes('503') || lower.includes('unavailable') || lower.includes('high demand')) {
+    return 'Saira AI is temporarily busy due to high model demand. Please try again in a moment.';
+  }
+  if (lower.includes('429') || lower.includes('resource_exhausted') || lower.includes('quota')) {
+    return 'Saira AI rate limit reached. Please wait a moment and try again.';
+  }
+  return unwrapped || 'Saira AI is unavailable right now.';
+}
+
+function isTransientGeminiError(error: unknown): boolean {
+  const raw = extractRawErrorText(error).toLowerCase();
+  return (
+    raw.includes('503') ||
+    raw.includes('unavailable') ||
+    raw.includes('high demand') ||
+    raw.includes('429') ||
+    raw.includes('resource_exhausted') ||
+    raw.includes('overloaded') ||
+    raw.includes('timeout') ||
+    raw.includes('timed out') ||
+    raw.includes('econnreset')
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function getModelThinkingConfig(model: string) {
+  return model === MODEL_NAME
+    ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    : {};
+}
+
+async function generateTextWithFallback(
+  ai: GoogleGenAI,
+  contents: string | Content[],
+  systemInstruction: string
+): Promise<string> {
+  const candidates = [
+    { model: MODEL_NAME, delayMs: 0, timeoutMs: 9000 },
+    { model: FALLBACK_MODEL_NAME, delayMs: 150, timeoutMs: 9000 },
+  ];
+
+  let lastError: unknown;
+  for (const attempt of candidates) {
+    if (attempt.delayMs > 0) {
+      await sleep(attempt.delayMs);
+    }
+    try {
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: attempt.model,
+          contents,
+          config: {
+            systemInstruction,
+            ...getModelThinkingConfig(attempt.model),
+          },
+        }),
+        attempt.timeoutMs,
+        attempt.model
+      );
+      const text = response.text?.trim();
+      if (text) return text;
+    } catch (error) {
+      lastError = error;
+      if (!isTransientGeminiError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw lastError ?? new Error('Saira AI did not return a response.');
+}
+
+async function streamTextWithFallback(
+  ai: GoogleGenAI,
+  contents: Content[],
+  systemInstruction: string,
+  onText: (text: string) => void
+): Promise<boolean> {
+  const candidates = [
+    { model: MODEL_NAME, delayMs: 0, firstChunkTimeoutMs: 12000 },
+    { model: MODEL_NAME, delayMs: 350, firstChunkTimeoutMs: 12000 },
+    { model: FALLBACK_MODEL_NAME, delayMs: 150, firstChunkTimeoutMs: 12000 },
+  ];
+
+  let lastError: unknown;
+  for (const attempt of candidates) {
+    if (attempt.delayMs > 0) {
+      await sleep(attempt.delayMs);
+    }
+    let emittedAny = false;
+    try {
+      const stream = await withTimeout(
+        ai.models.generateContentStream({
+          model: attempt.model,
+          contents,
+          config: {
+            systemInstruction,
+            ...getModelThinkingConfig(attempt.model),
+          },
+        }),
+        attempt.firstChunkTimeoutMs,
+        attempt.model
+      );
+      const iterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        const step = emittedAny
+          ? await iterator.next()
+          : await withTimeout(iterator.next(), attempt.firstChunkTimeoutMs, attempt.model);
+        if (step.done) break;
+        const text = step.value.text;
+        if (text) {
+          emittedAny = true;
+          onText(text);
+        }
+      }
+      if (emittedAny) {
+        return true;
+      }
+    } catch (error) {
+      lastError = error;
+      if (emittedAny || !isTransientGeminiError(error)) {
+        throw error;
+      }
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  return false;
 }
 
 function getTimeGreeting(hourOfDay?: number): string {
@@ -130,7 +327,7 @@ async function startServer() {
     }
     contextualPrompt += `\nUser message: ${question}`;
 
-    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    const contents: Content[] = [];
     for (const item of historyItems) {
       const q = typeof item.question === 'string' ? item.question.trim() : '';
       const a = typeof item.answer === 'string' ? item.answer.trim() : '';
@@ -146,30 +343,39 @@ async function startServer() {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    let closed = false;
+    res.on('close', () => {
+      closed = true;
+    });
 
     try {
-      const stream = await ai.models.generateContentStream({
-        model: MODEL_NAME,
+      const produced = await streamTextWithFallback(
+        ai,
         contents,
-        config: {
-          systemInstruction: CHAT_SYSTEM_INSTRUCTION,
-          maxOutputTokens: 1024,
-        },
-      });
-
-      for await (const chunk of stream) {
-        const text = chunk.text;
-        if (text) {
-          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        CHAT_SYSTEM_INSTRUCTION,
+        (text) => {
+          if (!closed && !res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
         }
+      );
+      if (!closed && !res.writableEnded) {
+        if (!produced) {
+          res.write(`data: ${JSON.stringify({ error: 'Saira returned an empty response. Please try again.' })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        }
+        res.end();
       }
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Saira AI is unavailable right now.';
-      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
-      res.end();
+      if (!closed && !res.writableEnded) {
+        const message = extractGeminiErrorMessage(error);
+        res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+        res.end();
+      }
     }
   });
 
@@ -209,15 +415,7 @@ async function startServer() {
           `Reply directly and helpfully to "${cleanUser}" in the same language they wrote in.`,
         ].join('\n');
 
-        const response = await ai.models.generateContent({
-          model: MODEL_NAME,
-          contents: prompt,
-          config: {
-            systemInstruction: REPLY_SYSTEM_INSTRUCTION,
-            maxOutputTokens: 256,
-          },
-        });
-        const reply = response.text?.trim();
+        const reply = await generateTextWithFallback(ai, prompt, REPLY_SYSTEM_INSTRUCTION);
         if (reply) {
           res.json({ reply });
           return;
@@ -277,15 +475,7 @@ async function startServer() {
               `- Match language: ${useBengali ? 'Bengali (natural conversational Bangla)' : "English or user's message language"}.`,
             ].join('\n');
 
-        const response = await ai.models.generateContent({
-          model: MODEL_NAME,
-          contents: prompt,
-          config: {
-            systemInstruction: REPLY_SYSTEM_INSTRUCTION,
-            maxOutputTokens: 256,
-          },
-        });
-        const reply = response.text?.trim();
+        const reply = await generateTextWithFallback(ai, prompt, REPLY_SYSTEM_INSTRUCTION);
         if (reply) {
           res.json({ reply });
           return;

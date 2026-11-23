@@ -104,7 +104,7 @@ export function AuthLoginScreen({
     onSaveRememberedPhone(rememberMeChecked, cleanPhone);
     setFormNotice(
       bn
-        ? 'এই ওয়েব সংস্করণে Google Sign-In সক্রিয় আছে। নিচে "Sign in with Google" বাটনে ক্লিক করে চালিয়ে যান।'
+        ? 'এই ওয়েব সংস্করণে Google Sign-In সক্রিয় আছে। নিচে "Google দিয়ে চালিয়ে যান" বাটনে ক্লিক করে চালিয়ে যান।'
         : 'Google Sign-In is active for this web build. Click "Continue with Google" below to sign in securely.'
     );
   };
@@ -339,9 +339,9 @@ export function AuthLoginScreen({
           type="button"
           disabled={!authReady || authLoading || !isOnline}
           onClick={onGoogleSignIn}
-          className="w-full h-12 rounded-2xl bg-white hover:bg-[#f7f5fb] border border-[#cbd2d9] text-[#1c1e21] font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-colors disabled:opacity-55 cursor-pointer"
+          className="w-full h-12 rounded-2xl bg-[#7658b4] hover:bg-[#5b4a8f] text-white font-semibold text-sm flex items-center justify-center gap-2.5 shadow-xs transition-colors disabled:opacity-55 cursor-pointer"
         >
-          <span className="w-5 h-5 rounded-full bg-[#efeaf7] text-[#5b4a8f] font-bold text-xs flex items-center justify-center">
+          <span className="w-5 h-5 rounded-full bg-white text-[#5b4a8f] font-bold text-xs flex items-center justify-center">
             G
           </span>
           {authLoading

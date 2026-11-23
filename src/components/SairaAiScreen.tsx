@@ -75,6 +75,7 @@ export function SairaAiScreen({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    let streamedAny = false;
 
     try {
       const finalAnswer = await streamSairaChat({
@@ -83,6 +84,7 @@ export function SairaAiScreen({
         isFirstTurn,
         signal: controller.signal,
         onChunk: (accumulated) => {
+          streamedAny = true;
           setExchanges((prev) =>
             prev.map((item) =>
               item.id === exchangeId ? { ...item, answer: accumulated, isStreaming: true } : item
@@ -98,11 +100,18 @@ export function SairaAiScreen({
         );
       } else {
         setExchanges((prev) => prev.filter((item) => item.id !== exchangeId));
+        setDraft((cur) => cur || question);
         setError('Saira returned an empty response. Please try again.');
       }
     } catch (err) {
-      setExchanges((prev) => prev.filter((item) => item.id !== exchangeId || Boolean(item.answer)));
-      setExchanges((prev) => prev.map((item) => ({ ...item, isStreaming: false })));
+      setExchanges((prev) =>
+        prev
+          .filter((item) => item.id !== exchangeId || Boolean(item.answer))
+          .map((item) => ({ ...item, isStreaming: false }))
+      );
+      if (!streamedAny) {
+        setDraft((cur) => cur || question);
+      }
       setError(err instanceof Error ? err.message : 'Saira AI is unavailable right now.');
     } finally {
       setIsBusy(false);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -28,6 +28,7 @@ import {
   saveStoredRememberMe,
 } from './services/storagePrefs';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
+import { isBengaliLanguage } from './data/worldLanguages';
 import type {
   AppTab,
   DemoModal,
@@ -67,6 +68,7 @@ export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const signInInFlightRef = useRef(false);
 
   const [loginLanguage, setLoginLanguage] = useState(() => getStoredLoginLanguage());
   const [rememberState, setRememberState] = useState(() => getStoredRememberMe());
@@ -101,7 +103,11 @@ export function App() {
       setCurrentUser(user);
       setAuthReady(true);
     });
-    return () => unsub();
+    const fallbackTimer = window.setTimeout(() => setAuthReady(true), 1500);
+    return () => {
+      unsub();
+      window.clearTimeout(fallbackTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -124,20 +130,60 @@ export function App() {
   }, [appearance.theme]);
 
   const handleGoogleSignIn = async () => {
-    if (authLoading) return;
+    if (signInInFlightRef.current || authLoading) return;
+    signInInFlightRef.current = true;
     setAuthLoading(true);
     setAuthError(null);
+    const bn = isBengaliLanguage(loginLanguage);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const credential = await signInWithPopup(auth, googleProvider);
+      if (credential.user) {
+        setCurrentUser(credential.user);
+      }
     } catch (err) {
+      if (auth.currentUser) {
+        setCurrentUser(auth.currentUser);
+        return;
+      }
       const code =
         typeof err === 'object' && err !== null && 'code' in err
           ? String((err as { code?: unknown }).code)
           : '';
-      if (!code.includes('popup-closed-by-user')) {
+      if (code.includes('cancelled-popup-request')) {
+        return;
+      }
+      if (code.includes('popup-closed-by-user')) {
+        setAuthError(
+          bn
+            ? 'Google সাইন-ইন সম্পন্ন হওয়ার আগেই পপআপ বন্ধ হয়ে গেছে। আপনি যদি অ্যাকাউন্ট সিলেক্ট করার পরও লগইন পেজে ফিরে আসেন, তাহলে ব্রাউজারের প্রিভিউ ফ্রেম পপআপ/থার্ড-পার্টি কুকি ব্লক করতে পারে — নিচের "Open in new tab" বাটনে ক্লিক করে নতুন ট্যাবে খুলে সাইন ইন করুন। (auth/popup-closed-by-user)'
+            : 'Google sign-in popup closed before completing. If you picked your account and it returned to login, your browser may be blocking cross-site popup cookies inside this preview frame — open Chatbox in a new browser tab or allow popups & third-party cookies. (auth/popup-closed-by-user)'
+        );
+      } else if (code.includes('popup-blocked')) {
+        setAuthError(
+          bn
+            ? 'ব্রাউজার সাইন-ইন পপআপ ব্লক করেছে। এই সাইটের জন্য Pop-ups allow করে আবার চেষ্টা করুন, অথবা "Open in new tab" ব্যবহার করুন। (auth/popup-blocked)'
+            : 'Browser popup was blocked. Please allow popups for this site and click "Continue with Google" again. (auth/popup-blocked)'
+        );
+      } else if (code.includes('unauthorized-domain')) {
+        setAuthError(
+          bn
+            ? `এই ডোমেইনটি (${window.location.hostname}) Firebase Authentication > Settings > Authorized domains-এ যোগ করা নেই। (${code})`
+            : `This domain (${window.location.hostname}) is not authorized in Firebase Authentication > Settings > Authorized domains. (${code})`
+        );
+      } else if (code.includes('web-storage-unsupported')) {
+        setAuthError(
+          bn
+            ? 'ব্রাউজারের থার্ড-পার্টি কুকি/স্টোরেজ বন্ধ থাকায় সাইন ইন আটকে গেছে। কুকি চালু করুন অথবা "Open in new tab" দিয়ে নতুন ট্যাবে ওপেন করে সাইন ইন করুন। (auth/web-storage-unsupported)'
+            : 'Browser storage/cookies are disabled for third-party frames. Enable cookies or open Chatbox in a standalone browser tab to sign in. (auth/web-storage-unsupported)'
+        );
+      } else {
         setAuthError(err instanceof Error ? err.message : 'Unable to sign in with Google.');
       }
     } finally {
+      if (auth.currentUser) {
+        setCurrentUser(auth.currentUser);
+      }
+      signInInFlightRef.current = false;
       setAuthLoading(false);
     }
   };
@@ -190,8 +236,18 @@ export function App() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-sm text-[#5a5468]">{authError}</p>
-            <div className="flex justify-end">
+            <p className="text-sm text-[#5a5468] leading-relaxed break-words">{authError}</p>
+            <div className="flex flex-wrap justify-end gap-2">
+              {typeof window !== 'undefined' && window.self !== window.top && (
+                <a
+                  href={window.location.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] text-xs font-semibold"
+                >
+                  Open in new tab
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => setAuthError(null)}

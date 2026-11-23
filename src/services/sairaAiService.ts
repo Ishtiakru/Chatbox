@@ -38,6 +38,26 @@ export async function streamSairaChat(params: {
   let buffer = '';
   let accumulated = '';
 
+  const processLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return;
+    const jsonStr = trimmed.slice(5).trim();
+    if (!jsonStr) return;
+    let parsed: { text?: string; error?: string; done?: boolean };
+    try {
+      parsed = JSON.parse(jsonStr) as { text?: string; error?: string; done?: boolean };
+    } catch {
+      return;
+    }
+    if (parsed.error) {
+      throw new Error(parsed.error);
+    }
+    if (parsed.text) {
+      accumulated += parsed.text;
+      params.onChunk(accumulated);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -46,18 +66,14 @@ export async function streamSairaChat(params: {
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const jsonStr = trimmed.slice(5).trim();
-      if (!jsonStr) continue;
-      const parsed = JSON.parse(jsonStr) as { text?: string; error?: string; done?: boolean };
-      if (parsed.error) {
-        throw new Error(parsed.error);
-      }
-      if (parsed.text) {
-        accumulated += parsed.text;
-        params.onChunk(accumulated);
-      }
+      processLine(line);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    for (const line of buffer.split('\n')) {
+      processLine(line);
     }
   }
 

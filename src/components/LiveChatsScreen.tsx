@@ -70,6 +70,7 @@ import {
 
 const QUICK_REACTION_OPTIONS = ['💜', '👍', '❤️', '😂', '😮', '🔥', '🎉', '🙏'];
 const PAGE_SIZE = 100;
+const SEARCH_MESSAGE_LIMIT = 100;
 const INACTIVITY_DELAY_MS = 60_000;
 const MAX_INACTIVITY_AGE_MS = 10 * 60_000;
 
@@ -112,6 +113,9 @@ export function LiveChatsScreen({
   const [convError, setConvError] = useState<string | null>(null);
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [peerProfiles, setPeerProfiles] = useState<Record<string, UserProfile>>({});
+  const [messagesByConversation, setMessagesByConversation] = useState<
+    Record<string, LiveMessage[]>
+  >({});
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<'list' | 'thread'>('list');
@@ -171,6 +175,29 @@ export function LiveChatsScreen({
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const threadFeedRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingField =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setMobilePane('list');
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      } else if (e.key === '/' && !isTypingField) {
+        e.preventDefault();
+        setMobilePane('list');
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Ensure user's own lookup profile exists
   useEffect(() => {
@@ -232,6 +259,55 @@ export function LiveChatsScreen({
     };
   }, [peerUidsKey]);
 
+  // Observe recent messages across all conversations so global search can filter by message content
+  const convIdsKey = useMemo(
+    () =>
+      conversations
+        .map((c) => c.id)
+        .sort()
+        .join(','),
+    [conversations]
+  );
+
+  useEffect(() => {
+    const convIds = convIdsKey ? convIdsKey.split(',').filter(Boolean) : [];
+    const activeSet = new Set(convIds);
+    setMessagesByConversation((prev) => {
+      let changed = false;
+      const next: Record<string, LiveMessage[]> = {};
+      for (const [id, list] of Object.entries(prev)) {
+        if (activeSet.has(id)) {
+          next[id] = list;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    if (convIds.length === 0) return;
+
+    const unsubs: Unsubscribe[] = convIds.map((convId) =>
+      observeConversationMessages(
+        convId,
+        SEARCH_MESSAGE_LIMIT,
+        (items) => {
+          setMessagesByConversation((prev) => ({
+            ...prev,
+            [convId]: items,
+          }));
+        },
+        () => {
+          // Read errors are surfaced through handleFirestoreError inside observeConversationMessages
+        }
+      )
+    );
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [convIdsKey]);
+
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,
     [conversations, selectedId]
@@ -269,9 +345,26 @@ export function LiveChatsScreen({
     return Array.from(map.values());
   }, [olderMessages, messages]);
 
+  const combinedMessagesRef = useRef<LiveMessage[]>([]);
+  combinedMessagesRef.current = combinedMessages;
+
   useEffect(() => {
+    const q = listSearch.trim().toLowerCase();
+    if (q && !threadSearchQuery.trim() && threadFeedRef.current) {
+      const matched = [...combinedMessagesRef.current]
+        .reverse()
+        .find((m) => m.body.toLowerCase().includes(q));
+      if (matched) {
+        const nodes = threadFeedRef.current.querySelectorAll<HTMLElement>('[data-live-msg-id]');
+        const el = Array.from(nodes).find((node) => node.dataset.liveMsgId === matched.id);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [combinedMessages.length, selectedId]);
+  }, [messages.length, selectedId, listSearch, threadSearchQuery]);
 
   const selectedPeerUid = selectedConversation
     ? selectedConversation.participants.find((p) => p !== currentUserId) ?? ''
@@ -630,16 +723,31 @@ export function LiveChatsScreen({
     }
   };
 
-  // Filtered conversations & requests
+  // Filtered conversations & requests (matches contact name, Chatbox ID, or message content)
   const filteredConvs = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     if (!q) return conversations;
     return conversations.filter((conv) => {
       const peerUid = conv.participants.find((p) => p !== currentUserId) ?? '';
       const name = peerProfiles[peerUid]?.displayName ?? peerUid;
-      return name.toLowerCase().includes(q) || peerUid.toLowerCase().includes(q);
+      if (name.toLowerCase().includes(q) || peerUid.toLowerCase().includes(q)) {
+        return true;
+      }
+      const msgs =
+        conv.id === selectedId
+          ? combinedMessages
+          : (messagesByConversation[conv.id] ?? []);
+      return msgs.some((m) => m.body.toLowerCase().includes(q));
     });
-  }, [conversations, listSearch, currentUserId, peerProfiles]);
+  }, [
+    conversations,
+    listSearch,
+    currentUserId,
+    peerProfiles,
+    selectedId,
+    combinedMessages,
+    messagesByConversation,
+  ]);
 
   const incomingRequests = filteredConvs.filter(
     (c) => c.status === 'pending' && c.createdBy !== currentUserId
@@ -656,6 +764,8 @@ export function LiveChatsScreen({
       .filter((m) => m.body.toLowerCase().includes(q))
       .map((m) => m.id);
   }, [combinedMessages, threadSearchQuery]);
+
+  const effectiveThreadHighlight = threadSearchQuery.trim() ? threadSearchQuery : listSearch;
 
   const latestMsgId = combinedMessages[combinedMessages.length - 1]?.id ?? null;
   const showCompanion =
@@ -750,11 +860,24 @@ export function LiveChatsScreen({
             </form>
           )}
 
-          <SearchBar
-            value={listSearch}
-            onChange={setListSearch}
-            placeholder="Search by name or ID…"
-          />
+          <div className="space-y-1.5">
+            <SearchBar
+              value={listSearch}
+              onChange={setListSearch}
+              placeholder="Search conversations by name or message…"
+              ariaLabel="Global search across Live Chats by contact name or message content"
+              inputRef={searchInputRef}
+            />
+            {listSearch.trim() && !loadingConversations && (
+              <p className="text-[11px] font-medium text-[#5b4a8f] px-1">
+                {filteredConvs.length === 0
+                  ? 'No matching conversations'
+                  : `${filteredConvs.length} matching ${
+                      filteredConvs.length === 1 ? 'conversation' : 'conversations'
+                    }`}
+              </p>
+            )}
+          </div>
 
           {!isOnline && (
             <NoticeBanner
@@ -769,12 +892,30 @@ export function LiveChatsScreen({
           {loadingConversations ? (
             <p className="p-4 text-center text-xs text-[#8f89a3]">Loading conversations…</p>
           ) : filteredConvs.length === 0 ? (
-            <div className="p-6 text-center space-y-2">
-              <p className="text-sm font-medium text-[var(--chatbox-ink)]">No live chats yet</p>
-              <p className="text-xs text-[#8f89a3]">
-                Share your Chatbox ID or click + to send a conversation request.
-              </p>
-            </div>
+            listSearch.trim() ? (
+              <div className="p-6 text-center space-y-2.5">
+                <p className="text-sm font-medium text-[var(--chatbox-ink)]">
+                  No conversations match &ldquo;{listSearch.trim()}&rdquo;
+                </p>
+                <p className="text-xs text-[#8f89a3]">
+                  Try another contact name, Chatbox ID, or message keyword.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setListSearch('')}
+                  className="inline-flex items-center px-3 py-1.5 rounded-xl bg-[#efeaf7] hover:bg-[#e6dff5] text-[#5b4a8f] text-xs font-semibold cursor-pointer"
+                >
+                  Clear search
+                </button>
+              </div>
+            ) : (
+              <div className="p-6 text-center space-y-2">
+                <p className="text-sm font-medium text-[var(--chatbox-ink)]">No live chats yet</p>
+                <p className="text-xs text-[#8f89a3]">
+                  Share your Chatbox ID or click + to send a conversation request.
+                </p>
+              </div>
+            )
           ) : (
             <>
               {incomingRequests.length > 0 && (
@@ -786,6 +927,14 @@ export function LiveChatsScreen({
                     const peerUid = conv.participants.find((p) => p !== currentUserId) ?? '';
                     const name = peerProfiles[peerUid]?.displayName || `User ${peerUid.slice(0, 6)}`;
                     const selected = conv.id === selectedId;
+                    const msgs =
+                      conv.id === selectedId
+                        ? combinedMessages
+                        : (messagesByConversation[conv.id] ?? []);
+                    const q = listSearch.trim().toLowerCase();
+                    const matchedMsg = q
+                      ? [...msgs].reverse().find((m) => m.body.toLowerCase().includes(q))
+                      : undefined;
                     return (
                       <button
                         key={conv.id}
@@ -801,10 +950,17 @@ export function LiveChatsScreen({
                         <MessengerAvatar label={name} size={40} />
                         <div className="flex-1 min-w-0">
                           <p className="font-display text-sm font-semibold text-[var(--chatbox-ink)] truncate">
-                            {name}
+                            <HighlightText text={name} query={listSearch} />
                           </p>
                           <p className="text-xs text-[#5b4a8f] truncate">
-                            Wants to message you · Tap to review
+                            {matchedMsg ? (
+                              <>
+                                {matchedMsg.senderId === currentUserId && <span>You: </span>}
+                                <HighlightText text={matchedMsg.body} query={listSearch} />
+                              </>
+                            ) : (
+                              'Wants to message you · Tap to review'
+                            )}
                           </p>
                         </div>
                       </button>
@@ -823,6 +979,15 @@ export function LiveChatsScreen({
                     const name = peerProfiles[peerUid]?.displayName || `User ${peerUid.slice(0, 6)}`;
                     const blocked = blockedIds.has(peerUid);
                     const selected = conv.id === selectedId;
+                    const msgs =
+                      conv.id === selectedId
+                        ? combinedMessages
+                        : (messagesByConversation[conv.id] ?? []);
+                    const q = listSearch.trim().toLowerCase();
+                    const matchedMsg = q
+                      ? [...msgs].reverse().find((m) => m.body.toLowerCase().includes(q))
+                      : undefined;
+                    const latestMsg = msgs[msgs.length - 1];
                     const statusText = blocked
                       ? 'Blocked'
                       : conv.status === 'pending'
@@ -844,10 +1009,34 @@ export function LiveChatsScreen({
                       >
                         <MessengerAvatar label={name} size={40} />
                         <div className="flex-1 min-w-0">
-                          <p className="font-display text-sm font-semibold text-[var(--chatbox-ink)] truncate">
-                            {name}
+                          <div className="flex items-center justify-between gap-1.5">
+                            <p className="font-display text-sm font-semibold text-[var(--chatbox-ink)] truncate">
+                              <HighlightText text={name} query={listSearch} />
+                            </p>
+                            {latestMsg?.pendingWrites && (
+                              <Clock className="w-3 h-3 text-[#5b4a8f] shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-xs text-[#6b657d] truncate">
+                            {matchedMsg ? (
+                              <>
+                                {matchedMsg.senderId === currentUserId && <span>You: </span>}
+                                <HighlightText text={matchedMsg.body} query={listSearch} />
+                              </>
+                            ) : latestMsg ? (
+                              <>
+                                {latestMsg.senderId === currentUserId && <span>You: </span>}
+                                {latestMsg.body ||
+                                  (latestMsg.imageUrl
+                                    ? 'Photo'
+                                    : latestMsg.audioUrl
+                                      ? 'Voice note'
+                                      : statusText)}
+                              </>
+                            ) : (
+                              statusText
+                            )}
                           </p>
-                          <p className="text-xs text-[#6b657d] truncate">{statusText}</p>
                         </div>
                       </button>
                     );
@@ -1001,7 +1190,7 @@ export function LiveChatsScreen({
             )}
 
             {/* Message Feed */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div ref={threadFeedRef} className="flex-1 overflow-y-auto p-4 space-y-2">
               {hasMoreOlder && (
                 <div className="text-center pb-2">
                   <button
@@ -1045,6 +1234,7 @@ export function LiveChatsScreen({
                       </div>
                     )}
                     <div
+                      data-live-msg-id={msg.id}
                       className={`flex items-end gap-2 ${
                         isOwn ? 'justify-end' : 'justify-start'
                       } ${groupedWithPrev ? 'mt-0.5' : 'mt-2'}`}
@@ -1101,7 +1291,7 @@ export function LiveChatsScreen({
                               <div className="px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
                                 <HighlightText
                                   text={msg.body}
-                                  query={threadSearchQuery}
+                                  query={effectiveThreadHighlight}
                                   highlightClassName={
                                     isOwn
                                       ? 'bg-white/30 text-white font-semibold rounded-xs px-0.5'
