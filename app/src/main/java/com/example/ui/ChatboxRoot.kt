@@ -121,7 +121,10 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val quickReaction by viewModel.quickReaction.collectAsState()
     val oneMinAutoReplyEnabled by viewModel.oneMinAutoReplyEnabled.collectAsState()
     val notifAutoReplyEnabled by viewModel.notifAutoReplyEnabled.collectAsState()
+    val liveLocationEnabled by viewModel.liveLocationEnabled.collectAsState()
+    val liveLocationAllowedPeers by viewModel.liveLocationAllowedPeers.collectAsState()
     val sairaRules by viewModel.sairaRules.collectAsState()
+    val sairaAutoReplyLogs by viewModel.sairaAutoReplyLogs.collectAsState()
     val fallbackKindId by viewModel.aiFallbackProviderKind.collectAsState()
     val fallbackApiKey by viewModel.aiFallbackApiKey.collectAsState()
     val fallbackBaseUrl by viewModel.aiFallbackBaseUrl.collectAsState()
@@ -295,12 +298,15 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     isOnline = isOnline,
                                     appUpdateActive = appUpdate.active,
                                     oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                                    liveLocationEnabled = liveLocationEnabled,
+                                    liveLocationAllowedPeers = liveLocationAllowedPeers,
                                     quickReaction = quickReaction,
                                     ownProfile = ownProfile,
                                     homeAnnouncement = dynamicConfig.homeAnnouncement,
                                     appTitle = dynamicConfig.appTitle,
                                     liveChatRepo = viewModel.liveChatRepo,
                                     onQuickReactionChange = viewModel::setQuickReaction,
+                                    onSetPeerLocationAllowed = viewModel::setPeerLocationAllowed,
                                     onOpenProfile = { viewModel.openProfileDialog(true) },
                                     onOpenCalls = { viewModel.selectTab(AppTab.Core(CoreAppTab.CALLS)) },
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) }
@@ -308,27 +314,23 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 CoreAppTab.SAIRA -> SairaAiScreen(
                                     currentUserId = user.uid,
                                     isOnline = isOnline,
-                                    isAdmin = isAdmin,
-                                    ownProfile = ownProfile,
-                                    appearance = appearance,
-                                    dynamicConfig = dynamicConfig,
                                     appUpdateActive = appUpdate.active,
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                     oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
                                     onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
                                     notifAutoReplyEnabled = notifAutoReplyEnabled,
                                     onChangeNotifAutoReply = viewModel::setNotifAutoReplyEnabled,
+                                    liveLocationEnabled = liveLocationEnabled,
+                                    onChangeLiveLocation = viewModel::setLiveLocationEnabled,
                                     rules = sairaRules,
                                     onSaveRules = viewModel::saveSairaRules,
+                                    autoReplyLogs = sairaAutoReplyLogs,
+                                    onClearAutoReplyLogs = viewModel::clearSairaAutoReplyLogs,
                                     fallbackKindId = fallbackKindId,
                                     fallbackApiKey = fallbackApiKey,
                                     fallbackBaseUrl = fallbackBaseUrl,
                                     fallbackModel = fallbackModel,
                                     onSaveFallbackConfig = viewModel::saveAiFallbackConfig,
-                                    onOpenProfile = { viewModel.openProfileDialog(true) },
-                                    onNavigateCoreTab = { target -> viewModel.selectTab(AppTab.Core(target)) },
-                                    authRepo = viewModel.authRepo,
-                                    sparkAdminRepo = viewModel.sparkAdminRepo,
                                     sessionRepo = viewModel.sairaSessionRepo
                                 )
                                 CoreAppTab.CALLS -> CallsScreen(

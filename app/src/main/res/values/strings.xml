@@ -15,4 +15,5 @@
     <string name="profile_title">Profile</string>
     <string name="saira_ai_title">Saira AI</string>
     <string name="calls_title">Calls</string>
+    <string name="saira_notification_listener_label">Saira Auto-Reply Assistant</string>
 </resources>

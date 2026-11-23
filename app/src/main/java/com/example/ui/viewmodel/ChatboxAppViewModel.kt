@@ -21,6 +21,7 @@ import com.example.data.repository.AuthResult
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.SairaSessionRepository
 import com.example.data.repository.SparkAdminRepository
+import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaNotificationRule
 import com.example.util.NetworkMonitor
 import com.example.util.friendlyFirestoreMessage
@@ -67,7 +68,16 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val notifAutoReplyEnabled: StateFlow<Boolean> = prefs.sairaNotifReplyEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val liveLocationEnabled: StateFlow<Boolean> = prefs.sairaLiveLocationEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val liveLocationAllowedPeers: StateFlow<Set<String>> = prefs.sairaLiveLocationAllowedPeers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     val sairaRules: StateFlow<List<SairaNotificationRule>> = prefs.sairaNotificationRules
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val sairaAutoReplyLogs: StateFlow<List<SairaAutoReplyLog>> = prefs.sairaAutoReplyLogs
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val aiFallbackProviderKind: StateFlow<String> = prefs.aiFallbackProviderKind
@@ -236,8 +246,20 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch { prefs.setSairaNotifReplyEnabled(enabled) }
     }
 
+    fun setLiveLocationEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setSairaLiveLocationEnabled(enabled) }
+    }
+
+    fun setPeerLocationAllowed(peerUid: String, allowed: Boolean) {
+        viewModelScope.launch { prefs.setPeerLocationAllowed(peerUid, allowed) }
+    }
+
     fun saveSairaRules(rules: List<SairaNotificationRule>) {
         viewModelScope.launch { prefs.saveSairaNotificationRules(rules) }
+    }
+
+    fun clearSairaAutoReplyLogs() {
+        viewModelScope.launch { prefs.clearAutoReplyLogs() }
     }
 
     fun saveAiFallbackConfig(kindId: String, apiKey: String, baseUrl: String, model: String) {

@@ -25,6 +25,9 @@ class AppPreferencesRepository(private val context: Context) {
     private val sairaNotificationRulesKey = stringPreferencesKey("saira_notification_rules_v1")
     private val sairaNotifReplyEnabledKey = booleanPreferencesKey("saira_notif_reply_enabled_v1")
     private val sairaChatboxOneMinEnabledKey = booleanPreferencesKey("saira_chatbox_one_min_enabled_v1")
+    private val sairaLiveLocationEnabledKey = booleanPreferencesKey("saira_live_location_enabled_v1")
+    private val sairaLiveLocationAllowedPeersKey = stringPreferencesKey("saira_live_location_peers_v1")
+    private val sairaAutoReplyLogsKey = stringPreferencesKey("saira_auto_reply_logs_v1")
     private val rememberMeEnabledKey = booleanPreferencesKey("login_remember_me_v1")
     private val rememberedPhoneKey = stringPreferencesKey("login_remembered_phone_v1")
     private val aiFallbackProviderKindKey = stringPreferencesKey("ai_fallback_provider_v1")
@@ -62,6 +65,31 @@ class AppPreferencesRepository(private val context: Context) {
     val sairaChatboxOneMinEnabled: Flow<Boolean> =
         context.appDataStore.data.map { prefs ->
             prefs[sairaChatboxOneMinEnabledKey] ?: true
+        }
+
+    val sairaLiveLocationEnabled: Flow<Boolean> =
+        context.appDataStore.data.map { prefs ->
+            prefs[sairaLiveLocationEnabledKey] ?: false
+        }
+
+    val sairaLiveLocationAllowedPeers: Flow<Set<String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[sairaLiveLocationAllowedPeersKey] ?: return@map emptySet()
+            try {
+                json.decodeFromString<Set<String>>(raw)
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+
+    val sairaAutoReplyLogs: Flow<List<com.example.saira.SairaAutoReplyLog>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[sairaAutoReplyLogsKey] ?: return@map emptyList()
+            try {
+                json.decodeFromString<List<com.example.saira.SairaAutoReplyLog>>(raw)
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
     val rememberMeEnabled: Flow<Boolean> =
@@ -139,6 +167,40 @@ class AppPreferencesRepository(private val context: Context) {
     suspend fun setSairaChatboxOneMinEnabled(enabled: Boolean) {
         context.appDataStore.edit { prefs ->
             prefs[sairaChatboxOneMinEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setSairaLiveLocationEnabled(enabled: Boolean) {
+        context.appDataStore.edit { prefs ->
+            prefs[sairaLiveLocationEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setPeerLocationAllowed(peerUid: String, allowed: Boolean) {
+        val clean = peerUid.trim()
+        if (clean.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[sairaLiveLocationAllowedPeersKey]?.let {
+                runCatching { json.decodeFromString<Set<String>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = if (allowed) current + clean else current - clean
+            prefs[sairaLiveLocationAllowedPeersKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun appendAutoReplyLog(entry: com.example.saira.SairaAutoReplyLog) {
+        context.appDataStore.edit { prefs ->
+            val current = prefs[sairaAutoReplyLogsKey]?.let {
+                runCatching { json.decodeFromString<List<com.example.saira.SairaAutoReplyLog>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = (listOf(entry) + current).take(20)
+            prefs[sairaAutoReplyLogsKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun clearAutoReplyLogs() {
+        context.appDataStore.edit { prefs ->
+            prefs.remove(sairaAutoReplyLogsKey)
         }
     }
 

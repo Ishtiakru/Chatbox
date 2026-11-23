@@ -4,15 +4,11 @@ import com.example.data.DemoCatalog
 import com.example.data.SparkAdminCommands
 import com.example.data.SparkCommandProposal
 import com.example.data.ai.AdminPlanInterpreter
-import com.example.data.ai.SairaCommandAction
-import com.example.data.ai.SairaCommandProcessor
+import com.example.data.ai.SairaPrompts
 import com.example.data.model.ChatboxConstants
-import com.example.data.model.CoreAppTab
-import com.example.data.model.SparkAppearance
-import com.example.data.model.SparkDynamicConfig
-import com.example.data.model.UserProfile
 import com.example.data.model.WorldLanguages
 import com.example.data.repository.LiveChatRepository
+import com.example.saira.SairaTimeGreeting
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -100,7 +96,7 @@ class ChatboxLogicTest {
 
     @Test
     fun `offline saira demo guide replies in Bengali for core topics`() {
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("/help").contains("/id"))
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("কমান্ড কি কি").contains("১ মিনিটের"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("hi").contains("Saira"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("অ্যাডমিন প্যানেল").contains("অ্যাডমিন"))
         assertTrue(DemoCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
@@ -124,57 +120,29 @@ class ChatboxLogicTest {
     }
 
     @Test
-    fun `saira command processor executes utility and admin commands with proper role checks`() {
-        val profile = UserProfile(uid = "u1", displayName = "Istiak", shortId = "482910")
-        val appearance = SparkAppearance(theme = "default", menu = "bottom")
-        val config = SparkDynamicConfig(appTitle = "Chatbox")
+    fun `time greeting and prompts cover all day periods and sender name check-in`() {
+        assertEquals("সুপ্রভাত", SairaTimeGreeting.infoForHour(8).bengaliGreeting)
+        assertEquals("শুভ দুপুর", SairaTimeGreeting.infoForHour(13).bengaliGreeting)
+        assertEquals("শুভ সন্ধ্যা", SairaTimeGreeting.infoForHour(19).bengaliGreeting)
+        assertEquals("শুভ রাত্রি", SairaTimeGreeting.infoForHour(23).bengaliGreeting)
+        assertTrue(SairaTimeGreeting.infoForHour(2).isNightTime)
 
-        val helpAction = SairaCommandProcessor.parse("/help", isAdmin = true, profile, appearance, config)
-        assertTrue(helpAction is SairaCommandAction.Reply && helpAction.text.contains("/id"))
-
-        val idAction = SairaCommandProcessor.parse("/id", isAdmin = false, profile, appearance, config)
-        assertTrue(idAction is SairaCommandAction.Reply && idAction.text.contains("482910"))
-
-        val newAction = SairaCommandProcessor.parse("/new", isAdmin = false, profile, appearance, config)
-        assertEquals(SairaCommandAction.StartNewThread, newAction)
-
-        val autoReplyOn = SairaCommandProcessor.parse("/autoreply on", isAdmin = false, profile, appearance, config)
-        assertTrue(autoReplyOn is SairaCommandAction.Reply && autoReplyOn.toggleOneMinAutoReply == true)
-
-        val adminNavDenied = SairaCommandProcessor.parse("/admin", isAdmin = false, profile, appearance, config)
-        assertTrue(adminNavDenied is SairaCommandAction.Reply && adminNavDenied.navigateToCoreTab == null)
-
-        val adminNavAllowed = SairaCommandProcessor.parse("/admin", isAdmin = true, profile, appearance, config)
-        assertTrue(adminNavAllowed is SairaCommandAction.Reply && adminNavAllowed.navigateToCoreTab == CoreAppTab.ADMIN)
-
-        val adminThemeCmd = SairaCommandProcessor.parse(
-            "আমার হোম পেজটা ল্যাভেন্ডার কালার করো",
-            isAdmin = true,
-            profile,
-            appearance,
-            config
+        val absenceMsg = SairaTimeGreeting.buildOneMinuteAbsenceFallback(
+            senderName = "সজীব",
+            peerName = "ইশতিয়াক",
+            hourOfDay = 19
         )
-        assertEquals(
-            SairaCommandAction.ExecuteAdminProposal(SparkCommandProposal.SetTheme("lavender")),
-            adminThemeCmd
-        )
+        assertTrue(absenceMsg.startsWith("হ্যালো সজীব! শুভ সন্ধ্যা"))
 
-        val nonAdminThemeCmd = SairaCommandProcessor.parse(
-            "theme: lavender",
-            isAdmin = false,
-            profile,
-            appearance,
-            config
+        val autoPrompt = SairaPrompts.buildNotificationAutoReplyPrompt(
+            senderName = "Rahima",
+            platformLabel = "WhatsApp",
+            incomingMessage = "Where are you?",
+            taughtGuidance = "আমি মিটিংয়ে আছি",
+            locationText = null,
+            hourOfDay = 9
         )
-        assertTrue(nonAdminThemeCmd is SairaCommandAction.Reply)
-
-        val normalChat = SairaCommandProcessor.parse(
-            "Explain gravity simply",
-            isAdmin = true,
-            profile,
-            appearance,
-            config
-        )
-        assertEquals(SairaCommandAction.NotACommand, normalChat)
+        assertTrue(autoPrompt.contains("সুপ্রভাত"))
+        assertTrue(autoPrompt.contains("NOT permitted"))
     }
 }

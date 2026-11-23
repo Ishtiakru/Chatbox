@@ -47,11 +47,13 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -98,6 +100,8 @@ import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
 import com.example.data.model.UserProfile
 import com.example.data.repository.LiveChatRepository
+import com.example.saira.SairaLocationHelper
+import com.example.saira.SairaTimeGreeting
 import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxSearchField
 import com.example.ui.components.MessengerAvatar
@@ -134,12 +138,15 @@ fun LiveChatsScreen(
     isOnline: Boolean,
     appUpdateActive: Boolean,
     oneMinAutoReplyEnabled: Boolean,
+    liveLocationEnabled: Boolean,
+    liveLocationAllowedPeers: Set<String>,
     quickReaction: String,
     ownProfile: UserProfile?,
     homeAnnouncement: String,
     appTitle: String = "Chatbox",
     liveChatRepo: LiveChatRepository,
     onQuickReactionChange: (String) -> Unit,
+    onSetPeerLocationAllowed: (String, Boolean) -> Unit,
     onOpenProfile: () -> Unit,
     onOpenCalls: () -> Unit,
     onAppUpdateClick: () -> Unit
@@ -246,6 +253,9 @@ fun LiveChatsScreen(
                         isBlockedByMe = peerId in blockedIds,
                         isOnline = isOnline,
                         oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                        liveLocationEnabled = liveLocationEnabled,
+                        peerLocationAllowed = peerId in liveLocationAllowedPeers,
+                        onSetPeerLocationAllowed = { allowed -> onSetPeerLocationAllowed(peerId, allowed) },
                         quickReaction = quickReaction,
                         showBack = false,
                         liveChatRepo = liveChatRepo,
@@ -299,6 +309,9 @@ fun LiveChatsScreen(
                     isBlockedByMe = peerId in blockedIds,
                     isOnline = isOnline,
                     oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                    liveLocationEnabled = liveLocationEnabled,
+                    peerLocationAllowed = peerId in liveLocationAllowedPeers,
+                    onSetPeerLocationAllowed = { allowed -> onSetPeerLocationAllowed(peerId, allowed) },
                     quickReaction = quickReaction,
                     showBack = true,
                     liveChatRepo = liveChatRepo,
@@ -665,6 +678,9 @@ private fun LiveThreadPane(
     isBlockedByMe: Boolean,
     isOnline: Boolean,
     oneMinAutoReplyEnabled: Boolean,
+    liveLocationEnabled: Boolean,
+    peerLocationAllowed: Boolean,
+    onSetPeerLocationAllowed: (Boolean) -> Unit,
     quickReaction: String,
     showBack: Boolean,
     liveChatRepo: LiveChatRepository,
@@ -720,14 +736,16 @@ private fun LiveThreadPane(
 
     // One-minute Saira companion banner state
     var companionNotice by remember(conversation.id) { mutableStateOf<String?>(null) }
+    var showLocationConsentDialog by remember(conversation.id) { mutableStateOf(false) }
     val latestMsg = combinedMessages.lastOrNull()
-    LaunchedEffect(latestMsg?.id, oneMinAutoReplyEnabled, conversation.status, isOnline) {
-        if (!oneMinAutoReplyEnabled || !isOnline || conversation.status != "active") {
+    val peerName = peerProfile?.displayName ?: peerUid.take(10)
+    LaunchedEffect(latestMsg?.id, oneMinAutoReplyEnabled, conversation.status, isOnline, peerName) {
+        if (!oneMinAutoReplyEnabled || conversation.status != "active") {
             companionNotice = null
             return@LaunchedEffect
         }
         val msg = latestMsg ?: return@LaunchedEffect
-        if (msg.senderId != currentUserId || msg.pendingWrites) {
+        if (msg.pendingWrites) {
             companionNotice = null
             return@LaunchedEffect
         }
@@ -735,16 +753,29 @@ private fun LiveThreadPane(
         if (ageMs > 10 * 60_000L) return@LaunchedEffect
         val waitMs = (60_000L - ageMs).coerceAtLeast(1_000L)
         delay(waitMs)
-        runCatching {
+
+        val senderName = if (msg.senderId == currentUserId) userDisplayName else peerName
+        val recipientName = if (msg.senderId == currentUserId) peerName else userDisplayName
+        val fallbackReply = SairaTimeGreeting.buildOneMinuteAbsenceFallback(
+            senderName = senderName,
+            peerName = recipientName
+        )
+
+        if (!isOnline) {
+            companionNotice = fallbackReply
+            return@LaunchedEffect
+        }
+
+        val aiReply = runCatching {
             val prompt = SairaPrompts.buildOneMinAbsencePrompt(
-                senderName = userDisplayName,
-                peerName = peerProfile?.displayName ?: "your friend",
+                senderName = senderName,
+                peerName = recipientName,
                 lastMessageText = msg.body.ifBlank { "[Media message]" }
             )
             SairaAiClient.complete(SairaPrompts.chatSystemInstruction, emptyList(), prompt)
-        }.onSuccess { reply ->
-            if (reply.isNotBlank()) companionNotice = reply
-        }
+        }.getOrNull()?.trim().orEmpty()
+
+        companionNotice = aiReply.ifEmpty { fallbackReply }
     }
 
     // Zero-permission Android Photo Picker
@@ -786,6 +817,31 @@ private fun LiveThreadPane(
         else threadError = "Microphone permission is required to record voice notes."
     }
 
+    fun dispatchLiveLocationMessage() {
+        val snapshot = SairaLocationHelper.getBestAvailableLocation(context)
+        if (snapshot == null) {
+            threadError = "লোকেশন পাওয়া যায়নি—ডিভাইসের Location চালু আছে কিনা দেখুন।"
+            return
+        }
+        scope.launch {
+            busySending = true
+            threadError = null
+            liveChatRepo.sendLiveMessage(
+                conversationId = conversation.id,
+                senderId = currentUserId,
+                rawBody = snapshot.toShareText()
+            ).onFailure { threadError = friendlyFirestoreMessage(it) }
+            busySending = false
+        }
+    }
+
+    val locationPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) dispatchLiveLocationMessage()
+        else threadError = "লোকেশন শেয়ার করতে লোকেশন পারমিশন প্রয়োজন।"
+    }
+
     val listState = rememberLazyListState()
     LaunchedEffect(combinedMessages.size) {
         if (combinedMessages.isNotEmpty() && searchQuery.isEmpty()) {
@@ -793,7 +849,6 @@ private fun LiveThreadPane(
         }
     }
 
-    val peerName = peerProfile?.displayName ?: peerUid.take(10)
     val isPendingRecipient = conversation.status == "pending" && conversation.createdBy != currentUserId
 
     Column(modifier = modifier.background(colors.background)) {
@@ -1112,6 +1167,26 @@ private fun LiveThreadPane(
                     Icon(Icons.Rounded.Mic, contentDescription = "Record voice note", tint = ChatboxPrimary)
                 }
 
+                IconButton(
+                    enabled = canSend && isOnline && !busySending,
+                    onClick = {
+                        if (!liveLocationEnabled || !peerLocationAllowed) {
+                            showLocationConsentDialog = true
+                        } else if (SairaLocationHelper.hasLocationPermission(context)) {
+                            dispatchLiveLocationMessage()
+                        } else {
+                            locationPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                        }
+                    },
+                    modifier = Modifier.testTag("live_location_share_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MyLocation,
+                        contentDescription = "Share Live Location with consent",
+                        tint = if (liveLocationEnabled && peerLocationAllowed) ChatboxUpdateGreen else ChatboxPrimary
+                    )
+                }
+
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it.take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH) },
@@ -1203,6 +1278,43 @@ private fun LiveThreadPane(
                 }
             }
         }
+    }
+
+    if (showLocationConsentDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocationConsentDialog = false },
+            title = { Text("লাইভ লোকেশন অনুমতি") },
+            text = {
+                Text(
+                    text = if (!liveLocationEnabled) {
+                        "লোকেশন শেয়ার করার আগে Saira → Auto-Reply থেকে Live Location Sharing চালু করুন অথবা $peerName-এর জন্য অনুমতি দিন।"
+                    } else {
+                        "আপনি কি $peerName-এর সাথে আপনার লাইভ লোকেশন শেয়ার করার অনুমতি দিচ্ছেন?"
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = liveLocationEnabled,
+                    onClick = {
+                        onSetPeerLocationAllowed(true)
+                        showLocationConsentDialog = false
+                        if (SairaLocationHelper.hasLocationPermission(context)) {
+                            dispatchLiveLocationMessage()
+                        } else {
+                            locationPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                        }
+                    }
+                ) {
+                    Text("অনুমতি দিন ও পাঠান")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLocationConsentDialog = false }) {
+                    Text("বাতিল")
+                }
+            }
+        )
     }
 }
 

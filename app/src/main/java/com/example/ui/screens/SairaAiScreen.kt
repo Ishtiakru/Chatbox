@@ -1,9 +1,12 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,11 +37,13 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
@@ -61,6 +66,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -76,35 +82,30 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.example.data.SparkCommandProposal
-import com.example.data.ai.AdminPlanInterpreter
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.ai.AiChatMessage
 import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
-import com.example.data.ai.SairaCommandAction
-import com.example.data.ai.SairaCommandProcessor
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.AiExchange
-import com.example.data.model.CoreAppTab
 import com.example.data.model.SairaChatSession
-import com.example.data.model.SparkAppearance
-import com.example.data.model.SparkDynamicConfig
-import com.example.data.model.UserProfile
-import com.example.data.repository.AuthRepository
 import com.example.data.repository.SairaSessionRepository
-import com.example.data.repository.SparkAdminRepository
+import com.example.saira.SairaAutoReplyLog
+import com.example.saira.SairaLocationHelper
+import com.example.saira.SairaNotificationListenerService
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
+import com.example.saira.SairaTimeGreeting
 import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.NoticeBanner
 import com.example.ui.components.SairaMetaOrb
-import com.example.util.friendlyFirestoreMessage
 import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
@@ -119,12 +120,15 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.random.Random
 
 private const val SESSION_ROLLOVER_LIMIT = 20
 
 private val starterPrompts = listOf(
-    "বাংলায় একটি সুন্দর শুভ সকালের মেসেজ লিখে দাও",
+    "বাংলায় একটি সুন্দর সময় অনুযায়ী সম্ভাষণ ও বার্তা লিখে দাও",
     "Explain quantum computing simply in 3 points",
     "Help me plan a productive daily routine",
     "Write a friendly reply when I am busy at work"
@@ -134,27 +138,23 @@ private val starterPrompts = listOf(
 fun SairaAiScreen(
     currentUserId: String,
     isOnline: Boolean,
-    isAdmin: Boolean,
-    ownProfile: UserProfile?,
-    appearance: SparkAppearance,
-    dynamicConfig: SparkDynamicConfig,
     appUpdateActive: Boolean,
     onAppUpdateClick: () -> Unit,
     oneMinAutoReplyEnabled: Boolean,
     onChangeOneMinAutoReply: (Boolean) -> Unit,
     notifAutoReplyEnabled: Boolean,
     onChangeNotifAutoReply: (Boolean) -> Unit,
+    liveLocationEnabled: Boolean,
+    onChangeLiveLocation: (Boolean) -> Unit,
     rules: List<SairaNotificationRule>,
     onSaveRules: (List<SairaNotificationRule>) -> Unit,
+    autoReplyLogs: List<SairaAutoReplyLog>,
+    onClearAutoReplyLogs: () -> Unit,
     fallbackKindId: String,
     fallbackApiKey: String,
     fallbackBaseUrl: String,
     fallbackModel: String,
     onSaveFallbackConfig: (kindId: String, apiKey: String, baseUrl: String, model: String) -> Unit,
-    onOpenProfile: () -> Unit,
-    onNavigateCoreTab: (CoreAppTab) -> Unit,
-    authRepo: AuthRepository,
-    sparkAdminRepo: SparkAdminRepository,
     sessionRepo: SairaSessionRepository
 ) {
     val colors = LocalChatboxColors.current
@@ -181,6 +181,8 @@ fun SairaAiScreen(
     val savedSessions by remember(currentUserId) {
         sessionRepo.observeSessions(currentUserId)
     }.collectAsState(initial = emptyList())
+
+    val currentTimeInfo = remember(exchanges.size) { SairaTimeGreeting.infoForHour() }
 
     LaunchedEffect(Unit) {
         SairaAiClient.warmUp()
@@ -216,181 +218,12 @@ fun SairaAiScreen(
         }
     }
 
-    fun appendCommandExchange(question: String, answerText: String) {
-        var activeSessionId = sessionId
-        var activeIsNew = sessionIsNew
-        var prevExchanges = exchanges
-        if (prevExchanges.size >= SESSION_ROLLOVER_LIMIT) {
-            activeSessionId = "saira_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
-            activeIsNew = true
-            sessionId = activeSessionId
-            sessionIsNew = true
-            rolloverCount += 1
-            prevExchanges = emptyList()
-        }
-        val exId = "cmd_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
-        exchanges = prevExchanges + AiExchange(
-            id = exId,
-            question = question,
-            answer = answerText,
-            isStreaming = false
-        )
-        if (isOnline) {
-            val title = (prevExchanges.firstOrNull()?.question ?: question).take(90).ifEmpty { "Saira Command" }
-            sessionIsNew = false
-            scope.launch {
-                sessionRepo.persistExchange(
-                    uid = currentUserId,
-                    sessionId = activeSessionId,
-                    isNewSession = activeIsNew,
-                    title = title,
-                    question = question,
-                    answer = answerText,
-                    sequence = prevExchanges.size
-                )
-            }
-        }
-    }
-
-    suspend fun <T> executeSairaAdminWrite(block: suspend () -> Result<T>): Result<T> {
-        authRepo.ensureRecentGoogleAuth(context).onFailure { return Result.failure(it) }
-        val first = block()
-        val firstErr = first.exceptionOrNull()
-        if (firstErr != null && firstErr.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true) {
-            authRepo.reauthenticateWithGoogle(context).onFailure { return Result.failure(it) }
-            return block()
-        }
-        return first
-    }
-
     fun sendPrompt(rawQuestion: String) {
         val question = rawQuestion.trim()
         if (isBusy || question.isEmpty() || question.length > 2000) return
 
-        when (
-            val cmd = SairaCommandProcessor.parse(
-                rawInput = question,
-                isAdmin = isAdmin,
-                ownProfile = ownProfile,
-                appearance = appearance,
-                dynamicConfig = dynamicConfig
-            )
-        ) {
-            is SairaCommandAction.StartNewThread -> {
-                draft = ""
-                startNewThread()
-                return
-            }
-            is SairaCommandAction.Reply -> {
-                draft = ""
-                errorMessage = null
-                appendCommandExchange(question, cmd.text)
-                if (cmd.openHistory) showHistoryDialog = true
-                if (cmd.openProfile) onOpenProfile()
-                if (cmd.openBackupDialog) showBackupKeyDialog = true
-                cmd.switchSubTab?.let { selectedSubTab = it }
-                cmd.toggleOneMinAutoReply?.let { onChangeOneMinAutoReply(it) }
-                cmd.navigateToCoreTab?.let { onNavigateCoreTab(it) }
-                return
-            }
-            is SairaCommandAction.ExecuteAdminProposal -> {
-                if (!isOnline) {
-                    errorMessage = "Offline · Connect to the internet to run live admin commands."
-                    return
-                }
-                draft = ""
-                isBusy = true
-                errorMessage = null
-                val exId = "ex_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
-                val prevExchanges = exchanges
-                exchanges = prevExchanges + AiExchange(id = exId, question = question, answer = "", isStreaming = true)
-                activeJob = scope.launch {
-                    try {
-                        val res = executeSairaAdminWrite {
-                            sparkAdminRepo.applySparkProposal(currentUserId, cmd.proposal)
-                        }
-                        val replyText = res.fold(
-                            onSuccess = { msg -> "কমান্ড সফল হয়েছে: $msg" },
-                            onFailure = { err -> "কমান্ড ব্যর্থ হয়েছে: ${friendlyFirestoreMessage(err)}" }
-                        )
-                        exchanges = exchanges.map { item ->
-                            if (item.id == exId) item.copy(answer = replyText, isStreaming = false) else item
-                        }
-                        val title = (prevExchanges.firstOrNull()?.question ?: question).take(90)
-                        val wasNew = sessionIsNew
-                        sessionIsNew = false
-                        sessionRepo.persistExchange(
-                            uid = currentUserId,
-                            sessionId = sessionId,
-                            isNewSession = wasNew,
-                            title = title,
-                            question = question,
-                            answer = replyText,
-                            sequence = prevExchanges.size
-                        )
-                    } catch (e: CancellationException) {
-                        exchanges = exchanges.filterNot { it.id == exId && it.answer.isEmpty() }
-                            .map { it.copy(isStreaming = false) }
-                        throw e
-                    } finally {
-                        isBusy = false
-                        activeJob = null
-                    }
-                }
-                return
-            }
-            is SairaCommandAction.ExecuteAdminNaturalInstruction -> {
-                if (!isOnline) {
-                    errorMessage = "Offline · Connect to the internet to run live admin commands."
-                    return
-                }
-                draft = ""
-                isBusy = true
-                errorMessage = null
-                val exId = "ex_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
-                val prevExchanges = exchanges
-                exchanges = prevExchanges + AiExchange(id = exId, question = question, answer = "", isStreaming = true)
-                activeJob = scope.launch {
-                    try {
-                        val plan = AdminPlanInterpreter.interpret(question, dynamicConfig.customMenus)
-                        val res = executeSairaAdminWrite {
-                            sparkAdminRepo.applyAdminAiUpdatePlan(currentUserId, dynamicConfig, plan)
-                        }
-                        val replyText = res.fold(
-                            onSuccess = { msg -> "কমান্ড সম্পন্ন হয়েছে: $msg" },
-                            onFailure = { err -> "কমান্ড ব্যর্থ হয়েছে: ${friendlyFirestoreMessage(err)}" }
-                        )
-                        exchanges = exchanges.map { item ->
-                            if (item.id == exId) item.copy(answer = replyText, isStreaming = false) else item
-                        }
-                        val title = (prevExchanges.firstOrNull()?.question ?: question).take(90)
-                        val wasNew = sessionIsNew
-                        sessionIsNew = false
-                        sessionRepo.persistExchange(
-                            uid = currentUserId,
-                            sessionId = sessionId,
-                            isNewSession = wasNew,
-                            title = title,
-                            question = question,
-                            answer = replyText,
-                            sequence = prevExchanges.size
-                        )
-                    } catch (e: CancellationException) {
-                        exchanges = exchanges.filterNot { it.id == exId && it.answer.isEmpty() }
-                            .map { it.copy(isStreaming = false) }
-                        throw e
-                    } finally {
-                        isBusy = false
-                        activeJob = null
-                    }
-                }
-                return
-            }
-            SairaCommandAction.NotACommand -> Unit
-        }
-
         if (!isOnline) {
-            errorMessage = "Offline · Connect to the internet to chat with Saira AI (local commands like /help or /id still work offline)."
+            errorMessage = "অফলাইন · Saira AI-এর সাথে চ্যাট করতে ইন্টারনেট সংযোগ চালু করুন।"
             return
         }
 
@@ -538,9 +371,9 @@ fun SairaAiScreen(
                         )
                         Text(
                             text = if (rolloverCount > 0) {
-                                "Always on · Thread ${rolloverCount + 1}"
+                                "${currentTimeInfo.bengaliGreeting} · Thread ${rolloverCount + 1}"
                             } else {
-                                "Always on · Unlimited continuity"
+                                "${currentTimeInfo.bengaliGreeting} · Always on Free AI"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkSubtle,
@@ -578,7 +411,7 @@ fun SairaAiScreen(
                             ) {
                                 val activeRules = rules.count { it.enabled }
                                 Text(
-                                    text = if (activeRules > 0) "Rules ($activeRules)" else "Auto-Reply",
+                                    text = if (activeRules > 0) "Auto-Reply ($activeRules)" else "Auto-Reply",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = if (selectedSubTab == "autoReply") ChatboxPrimary else colors.inkMuted,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -616,7 +449,7 @@ fun SairaAiScreen(
 
             if (!isOnline) {
                 NoticeBanner(
-                    text = "Offline · Connect to the internet to chat with Saira AI.",
+                    text = "অফলাইন · ফ্রি AI চ্যাট ও উত্তর পেতে ইন্টারনেট সংযোগ চালু করুন।",
                     isError = true,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
@@ -630,7 +463,7 @@ fun SairaAiScreen(
             }
 
             if (exchanges.isEmpty()) {
-                // Meta AI Starter Hero
+                // Meta AI Starter Hero with time-of-day greeting
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -651,48 +484,20 @@ fun SairaAiScreen(
                     SairaMetaOrb(size = 64.dp, animate = isBusy)
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "Ask Saira AI anything",
+                        text = "${currentTimeInfo.bengaliGreeting}! সায়রাকে জিজ্ঞেস করুন",
                         style = MaterialTheme.typography.headlineMedium,
                         color = colors.ink,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "বাংলা, Banglish বা ইংরেজিতে যেকোনো প্রশ্ন করুন — আমি সবসময় প্রস্তুত। লিমিট শেষ হলে ব্যাকআপ AI ও নতুন থ্রেডে অটোমেটিক চলতে থাকবে।",
+                        text = "দিন-রাতের সময় বুঝে সম্ভাষণ ও ফ্রি AI-এর মাধ্যমে দ্রুত উত্তর, চ্যাটবক্সে ১ মিনিটের অপেক্ষা সঙ্গী, এবং অনুমতিসাপেক্ষে WhatsApp ও Messenger অটো-রিপ্লাই / লোকেশন শেয়ারিং।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.widthIn(max = 420.dp)
+                        modifier = Modifier.widthIn(max = 440.dp)
                     )
-                    Spacer(Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier
-                            .widthIn(max = 480.dp)
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val quickCommands = buildList {
-                            add("/help")
-                            add("/id")
-                            add("/status")
-                            if (isAdmin) {
-                                add("আমার হোম পেজটা ল্যাভেন্ডার কালার করো")
-                                add("মেনুবার উপরে নিয়ে আসো")
-                            }
-                        }
-                        quickCommands.forEach { cmdChip ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { sendPrompt(cmdChip) },
-                                label = { Text(cmdChip, maxLines = 1) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = ChatboxSoftLavender,
-                                    labelColor = ChatboxPrimary
-                                )
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(16.dp))
                     Column(
                         modifier = Modifier.widthIn(max = 480.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -727,7 +532,6 @@ fun SairaAiScreen(
                 ) {
                     items(exchanges, key = { it.id }) { ex ->
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // User right-aligned pill
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.CenterEnd
@@ -751,7 +555,6 @@ fun SairaAiScreen(
                                 }
                             }
 
-                            // Meta AI style left-aligned answer with orb
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -854,7 +657,7 @@ fun SairaAiScreen(
                         onValueChange = { draft = it.take(2000) },
                         enabled = !isBusy,
                         placeholder = {
-                            Text(if (isOnline) "Ask Saira AI or type /help…" else "Offline · Type /help or /id…")
+                            Text(if (isOnline) "Ask Saira AI anything…" else "Offline · Connect internet for AI")
                         },
                         singleLine = true,
                         shape = CircleShape,
@@ -899,14 +702,17 @@ fun SairaAiScreen(
                 }
             }
         } else {
-            // Auto-Reply + Always-On Backup AI Provider Settings Tab
             AutoReplyAndBackupTab(
                 oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
                 onChangeOneMinAutoReply = onChangeOneMinAutoReply,
                 notifAutoReplyEnabled = notifAutoReplyEnabled,
                 onChangeNotifAutoReply = onChangeNotifAutoReply,
+                liveLocationEnabled = liveLocationEnabled,
+                onChangeLiveLocation = onChangeLiveLocation,
                 rules = rules,
                 onSaveRules = onSaveRules,
+                autoReplyLogs = autoReplyLogs,
+                onClearAutoReplyLogs = onClearAutoReplyLogs,
                 hasBackupKeyConfigured = fallbackApiKey.isNotBlank(),
                 onOpenBackupKeyModal = { showBackupKeyDialog = true }
             )
@@ -953,15 +759,48 @@ private fun AutoReplyAndBackupTab(
     onChangeOneMinAutoReply: (Boolean) -> Unit,
     notifAutoReplyEnabled: Boolean,
     onChangeNotifAutoReply: (Boolean) -> Unit,
+    liveLocationEnabled: Boolean,
+    onChangeLiveLocation: (Boolean) -> Unit,
     rules: List<SairaNotificationRule>,
     onSaveRules: (List<SairaNotificationRule>) -> Unit,
+    autoReplyLogs: List<SairaAutoReplyLog>,
+    onClearAutoReplyLogs: () -> Unit,
     hasBackupKeyConfigured: Boolean,
     onOpenBackupKeyModal: () -> Unit
 ) {
     val colors = LocalChatboxColors.current
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var notifAccessGranted by remember {
+        mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
+    }
+    var locationPermGranted by remember {
+        mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
+                locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val locationPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        locationPermGranted = granted
+    }
+
     var contactDraft by remember { mutableStateOf("") }
     var platformDraft by remember { mutableStateOf(SairaPlatform.ANY) }
     var guidanceDraft by remember { mutableStateOf("") }
+    var allowLocationDraft by remember { mutableStateOf(false) }
+    var useAiReplyDraft by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -970,7 +809,7 @@ private fun AutoReplyAndBackupTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Always-On Backup AI Engine Card
+        // 4. Time-aware Greeting + Free Backup AI Card
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -987,15 +826,15 @@ private fun AutoReplyAndBackupTab(
                     Icon(Icons.Rounded.Key, contentDescription = null, tint = ChatboxPrimary)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Always-On Backup AI Failover",
+                            text = "ফ্রি AI ও অটো ব্যাকআপ ইঞ্জিন",
                             style = MaterialTheme.typography.titleSmall,
                             color = colors.ink
                         )
                         Text(
                             text = if (hasBackupKeyConfigured) {
-                                "Backup key active · Saira automatically switches if Gemini free quota cools down."
+                                "সময় অনুযায়ী সম্ভাষণ + ফ্রি Gemini ও ব্যাকআপ AI সংযুক্ত আছে।"
                             } else {
-                                "Optional: Add a free Groq / OpenRouter / Custom API key so Saira stays online even during peak Gemini quota limits."
+                                "সায়রা ফ্রি Gemini AI ব্যবহার করে; প্রয়োজনে এখানে ফ্রি Groq / OpenRouter / Custom ব্যাকআপ কী যোগ করতে পারবেন।"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkMuted
@@ -1008,12 +847,12 @@ private fun AutoReplyAndBackupTab(
                 ) {
                     Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (hasBackupKeyConfigured) "Edit Backup AI Provider" else "Configure Backup AI Key")
+                    Text(if (hasBackupKeyConfigured) "ব্যাকআপ AI এডিট করুন" else "ফ্রি ব্যাকআপ AI যোগ করুন")
                 }
             }
         }
 
-        // 1-Minute Absence Companion Card
+        // 1. 1-Minute Chatbox Absence Greeting
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -1028,9 +867,9 @@ private fun AutoReplyAndBackupTab(
             ) {
                 Icon(Icons.Rounded.Schedule, contentDescription = null, tint = ChatboxPrimary)
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Chatbox 1-Min Absence Auto-Reply", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                    Text("চ্যাটবক্সে ১ মিনিটের অপেক্ষা", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                     Text(
-                        "If a friend hasn't replied in Live chats for 1 minute, Saira greets you by name and assists while you wait.",
+                        "কেউ মেসেজ পাঠালে প্রাপক ১ মিনিটের মধ্যে সাড়া না দিলে সায়রা প্রেরকের নাম ধরে (যেমন: \"হ্যালো সজীব...\") সময় অনুযায়ী সম্ভাষণ জানিয়ে কথা বলা শুরু করবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted
                     )
@@ -1043,32 +882,131 @@ private fun AutoReplyAndBackupTab(
             }
         }
 
-        // Notification Auto-Reply Switch
+        // 2. Consent-gated WhatsApp & Messenger Auto-Reply + Notification Listener Permission
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
             border = BorderStroke(1.dp, colors.border)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Rounded.Notifications, contentDescription = null, tint = ChatboxPrimary)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("WhatsApp & Messenger Rules", style = MaterialTheme.typography.titleSmall, color = colors.ink)
-                    Text(
-                        "Configure taught auto-reply instructions for specific contacts.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.inkMuted
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = ChatboxPrimary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("অনুমতিসাপেক্ষে WhatsApp ও Messenger রিপ্লাই", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                        Text(
+                            "আপনি নিচে যার নাম ও নির্ধারিত মেসেজ/কমান্ড সেট করবেন, শুধু তার নোটিফিকেশন এলেই সায়রা রিপ্লাই দেবে।",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.inkMuted
+                        )
+                    }
+                    Switch(
+                        checked = notifAutoReplyEnabled,
+                        onCheckedChange = onChangeNotifAutoReply,
+                        modifier = Modifier.testTag("saira_notif_reply_switch")
                     )
                 }
-                Switch(
-                    checked = notifAutoReplyEnabled,
-                    onCheckedChange = onChangeNotifAutoReply
-                )
+                HorizontalDivider(color = colors.border)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (notifAccessGranted) Icons.Rounded.CheckCircle else Icons.Rounded.Notifications,
+                            contentDescription = null,
+                            tint = if (notifAccessGranted) ChatboxUpdateGreen else colors.inkSubtle,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (notifAccessGranted) "Notification Access চালু আছে" else "Notification Access অনুমতি প্রয়োজন",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (notifAccessGranted) ChatboxUpdateGreen else ChatboxErrorInk
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { SairaNotificationListenerService.openNotificationAccessSettings(context) },
+                        modifier = Modifier.testTag("saira_notif_access_button")
+                    ) {
+                        Text(if (notifAccessGranted) "সেটিংস দেখুন" else "অনুমতি দিন")
+                    }
+                }
+            }
+        }
+
+        // 3. Permission & Approved Contact Gated Live Location Sharing
+        Card(
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = colors.surface),
+            border = BorderStroke(1.dp, colors.border)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.Rounded.MyLocation, contentDescription = null, tint = ChatboxPrimary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("লাইভ লোকেশন শেয়ারিং", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                        Text(
+                            "আপনার অনুমতি এবং নির্ধারিত ব্যক্তির ক্ষেত্রেই কেবল লোকেশন বা কাস্টম বার্তা পাঠানো হবে।",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.inkMuted
+                        )
+                    }
+                    Switch(
+                        checked = liveLocationEnabled,
+                        onCheckedChange = onChangeLiveLocation,
+                        modifier = Modifier.testTag("saira_live_location_switch")
+                    )
+                }
+                HorizontalDivider(color = colors.border)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (locationPermGranted) Icons.Rounded.CheckCircle else Icons.Rounded.MyLocation,
+                            contentDescription = null,
+                            tint = if (locationPermGranted) ChatboxUpdateGreen else colors.inkSubtle,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (locationPermGranted) "Location Permission চালু আছে" else "Location Permission প্রয়োজন",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (locationPermGranted) ChatboxUpdateGreen else ChatboxErrorInk
+                        )
+                    }
+                    if (!locationPermGranted) {
+                        OutlinedButton(
+                            onClick = { locationPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
+                            modifier = Modifier.testTag("saira_location_permission_button")
+                        ) {
+                            Text("লোকেশন অনুমতি দিন")
+                        }
+                    }
+                }
             }
         }
 
@@ -1082,13 +1020,15 @@ private fun AutoReplyAndBackupTab(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Teach Saira a Contact Rule", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                Text("নির্ধারিত ব্যক্তি ও মেসেজ সেট করুন", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                 OutlinedTextField(
                     value = contactDraft,
                     onValueChange = { contactDraft = it.take(80) },
-                    label = { Text("Contact name (e.g. Rahima)") },
+                    label = { Text("ব্যক্তির নাম (যেমন: সজীব বা Rahima)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_rule_contact_input")
                 )
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -1109,10 +1049,45 @@ private fun AutoReplyAndBackupTab(
                 OutlinedTextField(
                     value = guidanceDraft,
                     onValueChange = { guidanceDraft = it.take(400) },
-                    label = { Text("What should Saira reply when they message?") },
+                    label = { Text("মেসেজ এলে কী রিপ্লাই দেবে বা কী কমান্ড পালন করবে?") },
                     minLines = 2,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_rule_guidance_input")
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "এই ব্যক্তির জন্য লাইভ লোকেশন শেয়ার অনুমতি",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = allowLocationDraft,
+                        onCheckedChange = { allowLocationDraft = it },
+                        modifier = Modifier.testTag("saira_rule_location_switch")
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "ফ্রি AI ব্যবহার করে স্বাভাবিক রিপ্লাই তৈরি করুন",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = useAiReplyDraft,
+                        onCheckedChange = { useAiReplyDraft = it }
+                    )
+                }
                 Button(
                     enabled = contactDraft.isNotBlank() && guidanceDraft.isNotBlank(),
                     onClick = {
@@ -1121,24 +1096,30 @@ private fun AutoReplyAndBackupTab(
                             contactName = contactDraft.trim(),
                             platform = platformDraft,
                             taughtReplyGuidance = guidanceDraft.trim(),
-                            enabled = true
+                            enabled = true,
+                            allowLocationShare = allowLocationDraft,
+                            useAiReply = useAiReplyDraft
                         )
                         onSaveRules(next)
                         contactDraft = ""
                         guidanceDraft = ""
+                        allowLocationDraft = false
+                        useAiReplyDraft = true
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_save_rule_button")
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Save Reply Rule")
+                    Text("নিয়ম সেভ করুন")
                 }
             }
         }
 
         if (rules.isNotEmpty()) {
             Text(
-                text = "TAUGHT CONTACT RULES (${rules.size})",
+                text = "সেভ করা কন্টাক্ট নিয়মসমূহ (${rules.size})",
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.inkSubtle
             )
@@ -1148,33 +1129,129 @@ private fun AutoReplyAndBackupTab(
                     colors = CardDefaults.cardColors(containerColor = colors.surface),
                     border = BorderStroke(1.dp, colors.border)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "${rule.contactName} · ${rule.platform.label}",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = colors.ink
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${rule.contactName} · ${rule.platform.label}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = colors.ink
+                                )
+                                Text(
+                                    text = rule.taughtReplyGuidance,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.inkMuted
+                                )
+                            }
+                            Switch(
+                                checked = rule.enabled,
+                                onCheckedChange = { checked ->
+                                    onSaveRules(rules.map { if (it.id == rule.id) it.copy(enabled = checked) else it })
+                                }
                             )
+                            IconButton(onClick = { onSaveRules(rules.filterNot { it.id == rule.id }) }) {
+                                Icon(Icons.Rounded.DeleteOutline, contentDescription = "Delete rule", tint = ChatboxErrorInk)
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilterChip(
+                                selected = rule.allowLocationShare,
+                                onClick = {
+                                    onSaveRules(rules.map {
+                                        if (it.id == rule.id) it.copy(allowLocationShare = !it.allowLocationShare) else it
+                                    })
+                                },
+                                label = {
+                                    Text(if (rule.allowLocationShare) "Location: অনুমোদিত" else "Location: বন্ধ")
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.MyLocation, contentDescription = null, modifier = Modifier.size(15.dp))
+                                }
+                            )
+                            FilterChip(
+                                selected = rule.useAiReply,
+                                onClick = {
+                                    onSaveRules(rules.map {
+                                        if (it.id == rule.id) it.copy(useAiReply = !it.useAiReply) else it
+                                    })
+                                },
+                                label = { Text(if (rule.useAiReply) "Free AI: চালু" else "Fixed Text") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (autoReplyLogs.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "সাম্প্রতিক অটো-রিপ্লাই লগ (${autoReplyLogs.size})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.inkSubtle
+                )
+                TextButton(onClick = onClearAutoReplyLogs) {
+                    Text("মুছুন")
+                }
+            }
+            autoReplyLogs.forEach { log ->
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.surface),
+                    border = BorderStroke(1.dp, colors.border)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Text(
-                                text = rule.taughtReplyGuidance,
+                                text = "${log.contactName} (${log.platformLabel})",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = ChatboxPrimary
+                            )
+                            val timeStr = remember(log.timestampMs) {
+                                SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(log.timestampMs))
+                            }
+                            Text(timeStr, style = MaterialTheme.typography.labelSmall, color = colors.inkSubtle)
+                        }
+                        if (log.incomingPreview.isNotBlank()) {
+                            Text(
+                                text = "ইনকামিং: ${log.incomingPreview}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.inkMuted
                             )
                         }
-                        Switch(
-                            checked = rule.enabled,
-                            onCheckedChange = { checked ->
-                                onSaveRules(rules.map { if (it.id == rule.id) it.copy(enabled = checked) else it })
-                            }
+                        Text(
+                            text = "সায়রার উত্তর: ${log.sentReply}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.ink
                         )
-                        IconButton(onClick = { onSaveRules(rules.filterNot { it.id == rule.id }) }) {
-                            Icon(Icons.Rounded.DeleteOutline, contentDescription = "Delete rule", tint = ChatboxErrorInk)
+                        if (log.includedLocation) {
+                            Text(
+                                text = "• লাইভ লোকেশন সহ পাঠানো হয়েছে",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ChatboxUpdateGreen
+                            )
                         }
                     }
                 }
