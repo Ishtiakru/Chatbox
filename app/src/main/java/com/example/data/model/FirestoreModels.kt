@@ -63,6 +63,27 @@ data class SparkAppUpdate(
     val downloadUrl: String = ""
 )
 
+@Keep
+@IgnoreExtraProperties
+data class SairaChatSession(
+    @DocumentId val id: String = "",
+    val title: String = "",
+    val lastPreview: String = "",
+    val exchangeCount: Int = 0,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class SairaSessionExchange(
+    @DocumentId val id: String = "",
+    val question: String = "",
+    val answer: String = "",
+    val sequence: Int = 0,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 sealed interface SparkCommandProposal {
     data class SetWelcome(val value: String) : SparkCommandProposal
     data class SetTheme(val value: String) : SparkCommandProposal

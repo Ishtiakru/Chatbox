@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.example.data.model.AiExchange
 import com.example.data.repository.SairaKnowledge
 import com.google.firebase.Firebase
 import com.google.firebase.ai.Chat
@@ -100,6 +101,28 @@ object SairaAssistantEngine {
 
     fun resetSession() {
         activeChatSession = null
+    }
+
+    fun restoreSession(exchanges: List<AiExchange>) {
+        if (exchanges.isEmpty()) {
+            activeChatSession = null
+            return
+        }
+        val history = exchanges.takeLast(20).flatMap { exchange ->
+            buildList {
+                if (exchange.question.isNotBlank()) {
+                    add(content(role = "user") { text(exchange.question) })
+                }
+                if (exchange.answer.isNotBlank()) {
+                    add(content(role = "model") { text(exchange.answer) })
+                }
+            }
+        }
+        activeChatSession = if (history.isNotEmpty()) {
+            chatModel.startChat(history = history)
+        } else {
+            null
+        }
     }
 
     fun currentTimeGreeting(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): String {
