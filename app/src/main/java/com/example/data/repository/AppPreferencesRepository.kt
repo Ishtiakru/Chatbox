@@ -37,6 +37,7 @@ class AppPreferencesRepository(private val context: Context) {
     private val aiFallbackBaseUrlKey = stringPreferencesKey("ai_fallback_base_url_v1")
     private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
     private val demoMessagesKey = stringPreferencesKey("demo_messages_v1")
+    private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
@@ -146,6 +147,17 @@ class AppPreferencesRepository(private val context: Context) {
                 DemoCatalog.defaultSeeds + decoded
             } catch (_: Exception) {
                 DemoCatalog.defaultSeeds
+            }
+        }
+
+    fun observeUserAvatarPath(uid: String): Flow<String?> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[profileAvatarsKey] ?: return@map null
+            try {
+                val map = json.decodeFromString<Map<String, String>>(raw)
+                map[uid]?.takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                null
             }
         }
 
@@ -259,6 +271,22 @@ class AppPreferencesRepository(private val context: Context) {
         val encoded = json.encodeToString(messagesByContact)
         context.appDataStore.edit { prefs ->
             prefs[demoMessagesKey] = encoded
+        }
+    }
+
+    suspend fun saveUserAvatarPath(uid: String, path: String?) {
+        val cleanUid = uid.trim()
+        if (cleanUid.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[profileAvatarsKey]?.let {
+                runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull()
+            }.orEmpty().toMutableMap()
+            if (path.isNullOrBlank()) {
+                current.remove(cleanUid)
+            } else {
+                current[cleanUid] = path.trim()
+            }
+            prefs[profileAvatarsKey] = json.encodeToString(current)
         }
     }
 }

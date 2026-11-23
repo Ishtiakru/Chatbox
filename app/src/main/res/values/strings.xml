@@ -9,6 +9,7 @@
     <string name="nav_live">Live</string>
     <string name="nav_saira">Saira</string>
     <string name="nav_calls">Calls</string>
+    <string name="nav_profile">Profile</string>
     <string name="nav_admin">Admin</string>
     <string name="continue_with_google">Continue with Google</string>
     <string name="admin_panel_title">Admin Panel</string>

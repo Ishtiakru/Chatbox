@@ -2,6 +2,9 @@ package com.example.ui.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.DemoCatalog
@@ -26,6 +29,7 @@ import com.example.saira.SairaNotificationRule
 import com.example.util.NetworkMonitor
 import com.example.util.friendlyFirestoreMessage
 import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -39,6 +43,12 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatboxAppViewModel(application: Application) : AndroidViewModel(application) {
@@ -120,6 +130,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             if (user != null) sparkAdminRepo.observeSparkAppUpdate() else flowOf(SparkAppUpdate())
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SparkAppUpdate())
+
+    val userAvatarPath: StateFlow<String?> = currentUser
+        .flatMapLatest { user ->
+            if (user != null) prefs.observeUserAvatarPath(user.uid) else flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -237,6 +253,77 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updateOwnProfile(profile: UserProfile) {
         _ownProfile.value = profile
+    }
+
+    fun retryEnsureOwnProfile() {
+        val user = currentUser.value ?: return
+        viewModelScope.launch {
+            liveChatRepo.ensureOwnProfile(user.uid, user.displayName)
+                .onSuccess { profile -> _ownProfile.value = profile }
+        }
+    }
+
+    fun saveOwnAvatarFromUri(uri: Uri) {
+        val user = currentUser.value ?: return
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val savedPath = withContext(Dispatchers.IO) {
+                runCatching {
+                    val cr = app.contentResolver
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+                    val maxDim = 512
+                    val maxSide = max(bounds.outWidth, bounds.outHeight)
+                    var sample = 1
+                    while (maxSide / sample > maxDim * 2) sample *= 2
+                    val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+                    val decoded = cr.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, decodeOpts)
+                    } ?: return@runCatching null
+
+                    val scale = min(1f, maxDim.toFloat() / max(decoded.width, decoded.height))
+                    val targetW = max(1, (decoded.width * scale).roundToInt())
+                    val targetH = max(1, (decoded.height * scale).roundToInt())
+                    val scaled = if (targetW != decoded.width || targetH != decoded.height) {
+                        Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
+                            if (it != decoded) decoded.recycle()
+                        }
+                    } else {
+                        decoded
+                    }
+
+                    val avatarsDir = File(app.filesDir, "avatars").apply { mkdirs() }
+                    avatarsDir.listFiles { f -> f.name.startsWith("${user.uid}_") }
+                        ?.forEach { it.delete() }
+                    val outFile = File(avatarsDir, "${user.uid}_${System.currentTimeMillis()}.jpg")
+                    FileOutputStream(outFile).use { fos ->
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 88, fos)
+                    }
+                    scaled.recycle()
+                    outFile.absolutePath
+                }.getOrNull()
+            }
+            if (!savedPath.isNullOrBlank()) {
+                prefs.saveUserAvatarPath(user.uid, savedPath)
+            }
+        }
+    }
+
+    fun removeOwnAvatar() {
+        val user = currentUser.value ?: return
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val avatarsDir = File(app.filesDir, "avatars")
+                    avatarsDir.listFiles { f -> f.name.startsWith("${user.uid}_") }
+                        ?.forEach { it.delete() }
+                }
+            }
+            prefs.saveUserAvatarPath(user.uid, null)
+        }
     }
 
     fun clearAuthError() {

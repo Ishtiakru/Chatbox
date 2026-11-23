@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.HorizontalDivider
@@ -56,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,11 +71,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.AppTab
 import com.example.data.model.CoreAppTab
 import com.example.ui.components.AppUpdateDetailsDialog
 import com.example.ui.components.CustomMenuContentScreen
+import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.components.customMenuIconVector
 import com.example.ui.screens.AdminScreen
@@ -81,6 +85,7 @@ import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.DemoChatsScreen
 import com.example.ui.screens.LiveChatsScreen
+import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SairaAiScreen
 import com.example.ui.theme.ChatboxAccentViolet
 import com.example.ui.theme.ChatboxPrimary
@@ -90,6 +95,7 @@ import com.example.ui.theme.ChatboxUpdateGreen
 import com.example.ui.theme.LocalChatboxColors
 import com.example.ui.viewmodel.ChatboxAppViewModel
 import kotlinx.coroutines.delay
+import java.io.File
 
 private data class NavDestinationItem(
     val id: String,
@@ -114,6 +120,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val appUpdate by viewModel.appUpdate.collectAsState()
     val isAdmin by viewModel.isAdmin.collectAsState()
     val ownProfile by viewModel.ownProfile.collectAsState()
+    val userAvatarPath by viewModel.userAvatarPath.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val showProfileDialog by viewModel.showProfileDialog.collectAsState()
     val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
@@ -235,6 +242,10 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     add(NavDestinationItem("live", AppTab.Core(CoreAppTab.LIVE), "Live", Icons.Rounded.Groups))
                     add(NavDestinationItem("saira", AppTab.Core(CoreAppTab.SAIRA), "Saira", Icons.Rounded.AutoAwesome))
                     add(NavDestinationItem("calls", AppTab.Core(CoreAppTab.CALLS), "Calls", Icons.Rounded.Phone))
+                    add(NavDestinationItem("profile", AppTab.Core(CoreAppTab.PROFILE), "Profile", Icons.Rounded.Person))
+                    if (isAdmin) {
+                        add(NavDestinationItem("admin", AppTab.Core(CoreAppTab.ADMIN), "Admin", Icons.Rounded.Shield))
+                    }
                     dynamicConfig.customMenus.forEach { menu ->
                         add(
                             NavDestinationItem(
@@ -244,9 +255,6 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 icon = customMenuIconVector(menu.iconEnum)
                             )
                         )
-                    }
-                    if (isAdmin) {
-                        add(NavDestinationItem("admin", AppTab.Core(CoreAppTab.ADMIN), "Admin", Icons.Rounded.Shield))
                     }
                 }
             }
@@ -307,7 +315,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     liveChatRepo = viewModel.liveChatRepo,
                                     onQuickReactionChange = viewModel::setQuickReaction,
                                     onSetPeerLocationAllowed = viewModel::setPeerLocationAllowed,
-                                    onOpenProfile = { viewModel.openProfileDialog(true) },
+                                    onOpenProfile = { viewModel.selectTab(AppTab.Core(CoreAppTab.PROFILE)) },
                                     onOpenCalls = { viewModel.selectTab(AppTab.Core(CoreAppTab.CALLS)) },
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) }
                                 )
@@ -338,6 +346,33 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     appUpdateActive = appUpdate.active,
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                     onBackToConversations = { viewModel.selectTab(AppTab.Core(CoreAppTab.LIVE)) }
+                                )
+                                CoreAppTab.PROFILE -> ProfileScreen(
+                                    currentUserId = user.uid,
+                                    userEmail = user.email,
+                                    fallbackDisplayName = user.displayName,
+                                    ownProfile = ownProfile,
+                                    avatarPath = userAvatarPath,
+                                    isOnline = isOnline,
+                                    isAdmin = isAdmin,
+                                    loginLanguage = loginLanguage,
+                                    quickReaction = quickReaction,
+                                    oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                                    liveLocationEnabled = liveLocationEnabled,
+                                    appearance = appearance,
+                                    appUpdate = appUpdate,
+                                    liveChatRepo = viewModel.liveChatRepo,
+                                    onPickAvatarUri = viewModel::saveOwnAvatarFromUri,
+                                    onRemoveAvatar = viewModel::removeOwnAvatar,
+                                    onProfileUpdated = viewModel::updateOwnProfile,
+                                    onRetryEnsureProfile = viewModel::retryEnsureOwnProfile,
+                                    onQuickReactionChange = viewModel::setQuickReaction,
+                                    onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
+                                    onChangeLiveLocation = viewModel::setLiveLocationEnabled,
+                                    onLanguageSelected = viewModel::setLoginLanguage,
+                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) },
+                                    onNavigateTab = { target -> viewModel.selectTab(AppTab.Core(target)) },
+                                    onSignOut = viewModel::signOut
                                 )
                                 CoreAppTab.ADMIN -> AdminScreen(
                                     currentUserId = user.uid,
@@ -393,7 +428,15 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     NavigationRailItem(
                                         selected = selected,
                                         onClick = { viewModel.selectTab(item.tab) },
-                                        icon = { Icon(item.icon, contentDescription = item.label) },
+                                        icon = {
+                                            NavTabIcon(
+                                                item = item,
+                                                selected = selected,
+                                                displayName = ownProfile?.displayName ?: user.displayName ?: "U",
+                                                avatarPath = userAvatarPath,
+                                                tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                            )
+                                        },
                                         label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                         colors = NavigationRailItemDefaults.colors(
                                             selectedIconColor = ChatboxPrimary,
@@ -410,15 +453,31 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     }
                 } else {
                     val navBar: @Composable () -> Unit = {
-                        if (navItems.size <= 5) {
+                        if (navItems.size <= 6) {
                             NavigationBar(containerColor = colors.surface) {
                                 navItems.forEach { item ->
                                     val selected = isTabSelected(resolvedTab, item.tab)
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = { viewModel.selectTab(item.tab) },
-                                        icon = { Icon(item.icon, contentDescription = item.label) },
-                                        label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        icon = {
+                                            NavTabIcon(
+                                                item = item,
+                                                selected = selected,
+                                                displayName = ownProfile?.displayName ?: user.displayName ?: "U",
+                                                avatarPath = userAvatarPath,
+                                                tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = item.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = ChatboxPrimary,
                                             selectedTextColor = ChatboxPrimary,
@@ -452,11 +511,12 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                                 horizontalAlignment = Alignment.CenterHorizontally,
                                                 verticalArrangement = Arrangement.Center
                                             ) {
-                                                Icon(
-                                                    item.icon,
-                                                    contentDescription = item.label,
-                                                    tint = if (selected) ChatboxPrimary else colors.inkMuted,
-                                                    modifier = Modifier.size(20.dp)
+                                                NavTabIcon(
+                                                    item = item,
+                                                    selected = selected,
+                                                    displayName = ownProfile?.displayName ?: user.displayName ?: "U",
+                                                    avatarPath = userAvatarPath,
+                                                    tint = if (selected) ChatboxPrimary else colors.inkMuted
                                                 )
                                                 Spacer(Modifier.height(2.dp))
                                                 Text(
@@ -518,4 +578,51 @@ private fun isTabSelected(current: AppTab, candidate: AppTab): Boolean = when {
     current is AppTab.Core && candidate is AppTab.Core -> current.tab == candidate.tab
     current is AppTab.Custom && candidate is AppTab.Custom -> current.menu.id == candidate.menu.id
     else -> false
+}
+
+@Composable
+private fun NavTabIcon(
+    item: NavDestinationItem,
+    selected: Boolean,
+    displayName: String,
+    avatarPath: String?,
+    tint: Color
+) {
+    if (item.tab is AppTab.Core && item.tab.tab == CoreAppTab.PROFILE) {
+        val colors = LocalChatboxColors.current
+        val hasLocalAvatar = remember(avatarPath) {
+            !avatarPath.isNullOrBlank() && File(avatarPath).exists()
+        }
+        val ringColor = if (selected) ChatboxPrimary else colors.border
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .border(if (selected) 2.dp else 1.dp, ringColor, CircleShape)
+                .padding(1.5.dp)
+                .clip(CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasLocalAvatar) {
+                AsyncImage(
+                    model = File(avatarPath!!),
+                    contentDescription = item.label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                )
+            } else {
+                MessengerAvatar(
+                    label = displayName,
+                    size = 23.dp
+                )
+            }
+        }
+    } else {
+        Icon(
+            imageVector = item.icon,
+            contentDescription = item.label,
+            tint = tint,
+            modifier = Modifier.size(22.dp)
+        )
+    }
 }

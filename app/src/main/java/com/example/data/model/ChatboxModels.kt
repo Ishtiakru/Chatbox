@@ -39,7 +39,7 @@ sealed interface UiState<out T> {
 }
 
 enum class CoreAppTab {
-    DEMO, LIVE, SAIRA, CALLS, ADMIN
+    DEMO, LIVE, SAIRA, CALLS, PROFILE, ADMIN
 }
 
 sealed interface AppTab {
