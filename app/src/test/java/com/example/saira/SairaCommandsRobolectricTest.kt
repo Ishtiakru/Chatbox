@@ -306,6 +306,20 @@ class SairaCommandsRobolectricTest {
         assertEquals("WhatsApp", logs.first().platformLabel)
         assertTrue(logs.first().includedLocation)
 
+        // 3) Duplicate notification re-post with exact same text within window -> MUST be deduplicated
+        capturedReply = null
+        service.processNotification(buildSbn("com.whatsapp", "সজীব", "তোমার লোকেশন দাও, কই আছো?"))
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNull(capturedReply)
+
+        // 4) Immediate follow-up message from same contact (continuing conversation without 30s silence) -> MUST reply!
+        capturedReply = null
+        service.processNotification(buildSbn("com.whatsapp", "\u2068সজীব\u2069 (2 messages)", "কখন ফিরবে?"))
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNotNull(capturedReply)
+        assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertEquals(2, prefs.sairaAutoReplyLogs.first().size)
+
         application.unregisterReceiver(receiver)
     }
 

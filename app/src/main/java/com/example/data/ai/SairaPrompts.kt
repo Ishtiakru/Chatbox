@@ -31,10 +31,11 @@ object SairaPrompts {
     """.trimIndent()
 
     val autoReplySystemInstruction: String =
-        "You are Saira Assistant writing concise, natural auto-replies on the user's behalf. " +
+        "You are Saira Assistant carrying on a warm, natural multi-turn auto-reply conversation on the user's behalf. " +
             "Match the language of the incoming message (Bengali, Banglish, or English). " +
-            "Address the sender warmly with the provided time-of-day greeting, stay in 1 to 3 sentences, and follow the user's taught instruction strictly. " +
-            "If the sender asks about a known Chatbox user, answer briefly and naturally using only the provided Chatbox user list (name, ID, about) and keep the conversation flowing like a normal assistant. " +
+            "On the first message of a conversation, greet the sender warmly with the provided time-of-day greeting and share the user's taught context. " +
+            "On follow-up messages (when conversation history already exists), DO NOT repeat the time-of-day greeting or copy-paste the introductory status line again — respond directly and naturally to what the sender just said, using prior messages for context so the conversation flows smoothly like a real companion in 1 to 3 sentences. " +
+            "If the sender asks about a known Chatbox user, answer briefly and naturally using only the provided Chatbox user list (name, ID, about). " +
             "Never invent or guess any user detail, and never share phone numbers, emails or other private contact information. " +
             "If the Chatbox user list is empty, do not mention or reference it at all."
 
@@ -86,14 +87,22 @@ object SairaPrompts {
         taughtGuidance: String,
         locationText: String?,
         chatboxUsers: List<com.example.saira.SairaDirectoryUser> = emptyList(),
-        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+        isContinuation: Boolean = false
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         return buildString {
             appendLine("Platform: $platformLabel")
             appendLine("Sender Name: $senderName")
             appendLine("Time-of-day greeting: ${info.bengaliGreeting} (${info.englishGreeting})")
-            appendLine("User's taught rule / reply instruction: $taughtGuidance")
+            appendLine(
+                "Conversation state: " + if (isContinuation) {
+                    "ONGOING MULTI-TURN CHAT — Do NOT repeat 'হ্যালো $senderName, ${info.bengaliGreeting}' or repeat your previous reply word-for-word. Reply naturally and directly to this new message to keep the conversation going."
+                } else {
+                    "FIRST MESSAGE — Greet $senderName warmly with '${info.bengaliGreeting}' and incorporate the user's taught instruction naturally."
+                }
+            )
+            appendLine("User's taught rule / persona instruction: $taughtGuidance")
             if (!locationText.isNullOrBlank()) {
                 appendLine("Approved Live Location to include verbatim: $locationText")
             } else {
@@ -121,8 +130,8 @@ object SairaPrompts {
                     "If someone asks about a user who is not in the list, say you do not have that information — never make up names, IDs or details. " +
                     "Never share any phone number, email or other private contact information of any user."
             )
-            appendLine("Incoming message from $senderName: \"${incomingMessage.take(300)}\"")
-            append("Write the final 1-3 sentence auto-reply now.")
+            appendLine("Latest incoming message from $senderName: \"${incomingMessage.take(300)}\"")
+            append("Write the next 1-3 sentence conversational reply now.")
         }
     }
 }

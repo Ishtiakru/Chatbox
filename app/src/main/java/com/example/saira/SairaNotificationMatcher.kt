@@ -84,11 +84,16 @@ object SairaNotificationMatcher {
         senderName: String,
         rule: SairaNotificationRule,
         locationSnapshot: SharedLocationSnapshot?,
-        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+        isContinuation: Boolean = false
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         val guidance = rule.taughtReplyGuidance.trim()
-        val base = "হ্যালো $senderName, ${info.bengaliGreeting}! $guidance"
+        val base = if (isContinuation) {
+            "$senderName, $guidance"
+        } else {
+            "হ্যালো $senderName, ${info.bengaliGreeting}! $guidance"
+        }
         return if (locationSnapshot != null) {
             "$base\n${locationSnapshot.toShareText()}"
         } else {
@@ -97,20 +102,25 @@ object SairaNotificationMatcher {
     }
 
     internal fun cleanContactTitle(rawTitle: String?): String {
-        val trimmed = rawTitle?.trim().orEmpty()
+        val trimmed = stripBidiMarks(rawTitle).trim()
         if (trimmed.isEmpty()) return ""
-        // Strip unread counter suffixes like "Sajib (3 messages)" -> "Sajib"
-        val withoutCount = trimmed.replace(Regex("""\s*\(\d+\s*(?:messages?|msgs?)\)$""", RegexOption.IGNORE_CASE), "")
-        // Strip group prefix like "Family Group: Sajib" -> keep whole or after colon if needed
+        // Strip unread counter suffixes like "Sajib (3 messages)" or "Sajib (2টি মেসেজ)" -> "Sajib"
+        val withoutCount = trimmed.replace(
+            Regex("""\s*\(\d+\s*(?:messages?|msgs?|unread|টি মেসেজ|টি বার্তা)\)$""", RegexOption.IGNORE_CASE),
+            ""
+        )
         return withoutCount.trim()
     }
 
     internal fun namesMatch(ruleContact: String, notificationSender: String): Boolean {
-        val target = ruleContact.trim().lowercase()
-        val incoming = notificationSender.trim().lowercase()
+        val target = stripBidiMarks(ruleContact).trim().lowercase()
+        val incoming = cleanContactTitle(notificationSender).trim().lowercase()
         if (target.isEmpty() || incoming.isEmpty()) return false
         return incoming == target ||
             incoming.startsWith("$target:") ||
             incoming.endsWith(": $target")
     }
+
+    private fun stripBidiMarks(raw: String?): String =
+        raw.orEmpty().replace(Regex("[\u200E\u200F\u202A-\u202E\u2066-\u2069]"), "")
 }

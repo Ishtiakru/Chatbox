@@ -10,6 +10,8 @@ import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 private const val TAG = "AppCheckInit"
 
 private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
@@ -19,8 +21,14 @@ private const val TOKEN_SOURCE_PREFS = "chatbox_appcheck_meta"
 private const val KEY_HAS_TRUSTED_DEBUG_TOKEN = "has_trusted_debug_token"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
 
+private val appCheckConfigured = AtomicBoolean(false)
+
 @SuppressLint("ApplySharedPref")
 fun configureAppCheck(context: Context, intent: Intent?) {
+    val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
+    if (appCheckConfigured.get() && debugToken.isNullOrEmpty()) {
+        return
+    }
     try {
         if (FirebaseApp.getApps(context).isEmpty()) {
             FirebaseApp.initializeApp(context)
@@ -36,7 +44,6 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 TOKEN_SOURCE_PREFS,
                 Context.MODE_PRIVATE
             )
-            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
 
             if (!debugToken.isNullOrEmpty()) {
                 // Synchronous commit() ensures debug token is written before DebugAppCheckProviderFactory initializes
@@ -49,6 +56,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
                     DebugAppCheckProviderFactory.getInstance()
                 )
+                appCheckConfigured.set(true)
                 Log.d(TAG, "App Check debug secret configured from launch intent.")
             } else if (
                 metaPrefs.getBoolean(KEY_HAS_TRUSTED_DEBUG_TOKEN, false) &&
@@ -57,6 +65,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
                     DebugAppCheckProviderFactory.getInstance()
                 )
+                appCheckConfigured.set(true)
                 Log.d(TAG, "App Check debug secret reused from trusted local store.")
             } else {
                 // Sideloaded debug APK on a physical device has no harness debug token:
@@ -67,9 +76,12 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                     )
                     Log.w(TAG, "Fallback to DebugAppCheckProviderFactory without trusted token.")
                 }
+                appCheckConfigured.set(true)
             }
         } else {
-            installRecaptchaProvider(context)
+            if (installRecaptchaProvider(context)) {
+                appCheckConfigured.set(true)
+            }
         }
     } catch (e: Exception) {
         Log.e(TAG, "Failed to initialize Firebase App Check", e)

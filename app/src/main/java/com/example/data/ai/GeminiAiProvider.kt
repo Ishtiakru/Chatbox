@@ -1,5 +1,6 @@
 package com.example.data.ai
 
+import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.Chat
 import com.google.firebase.ai.GenerativeModel
@@ -18,8 +19,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Primary provider: Gemini through Firebase AI Logic (free tier).
- * Uses ultra-fast gemini-3.5-flash-lite by default for 1-2s Meta AI / Gemini style responses,
- * with automatic fallback to gemini-3.8-flash on non-quota model errors.
+ * Uses gemini-3.8-flash by default for natural multi-turn responses,
+ * with automatic fallback to gemini-3.5-flash-lite on non-quota model errors.
  */
 class GeminiAiProvider(
     private val modelName: String = DEFAULT_MODEL,
@@ -70,6 +71,7 @@ class GeminiAiProvider(
             if (AiErrorClassifier.isQuotaExhausted(e)) {
                 throw AiQuotaExhaustedException("Gemini quota exhausted", e)
             }
+            Log.w(TAG, "Primary model '$modelName' failed; attempting fallback '$fallbackModelName'", e)
             val backupName = fallbackModelName?.takeIf { it != modelName }
             if (backupName != null) {
                 return try {
@@ -163,10 +165,11 @@ class GeminiAiProvider(
     }
 
     companion object {
+        private const val TAG = "GeminiAiProvider"
         const val DEFAULT_ID = "gemini"
-        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
-        const val FALLBACK_MODEL = "gemini-3.8-flash"
+        const val DEFAULT_MODEL = "gemini-3.8-flash"
+        const val FALLBACK_MODEL = "gemini-3.5-flash-lite"
         const val FIRST_CHUNK_TIMEOUT_MS = 15_000L
-        const val TOTAL_TIMEOUT_MS = 35_000L
+        const val TOTAL_TIMEOUT_MS = 45_000L
     }
 }
