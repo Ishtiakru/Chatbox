@@ -152,9 +152,6 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         splashAppeared = true
-        if (currentUser == null) {
-            viewModel.trySilentSignIn(context)
-        }
         delay(1500)
         splashDone = true
     }
@@ -229,6 +226,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 onSaveRememberedPhone = viewModel::saveRememberedLoginPhone,
                 onLanguageSelected = viewModel::setLoginLanguage,
                 onGoogleSignIn = { viewModel.signInWithGoogle(context) },
+                onChooseGoogleAccount = { viewModel.signInWithGoogleWithAccountPicker(context) },
                 onSendPasswordReset = viewModel::sendPasswordReset
             )
             return@ChatboxTheme

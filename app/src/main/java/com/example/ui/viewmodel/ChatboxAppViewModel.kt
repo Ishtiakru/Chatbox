@@ -373,6 +373,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun signOut() {
         viewModelScope.launch {
+            _authError.value = null
             runCatching { prefs.saveSairaUserDirectory(emptyList()) }
             authRepo.signOut()
         }

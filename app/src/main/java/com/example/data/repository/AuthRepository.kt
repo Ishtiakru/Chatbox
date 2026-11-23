@@ -1,6 +1,8 @@
 package com.example.data.repository
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
@@ -8,6 +10,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -30,6 +33,12 @@ sealed interface AuthResult {
     data class Failure(val message: String) : AuthResult
 }
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 class AuthRepository(private val context: Context) {
     private val auth: FirebaseAuth = FirebaseProviders.auth()
 
@@ -50,9 +59,10 @@ class AuthRepository(private val context: Context) {
      * of a hard error) so the login screen can offer the user-facing Google account picker.
      */
     suspend fun trySilentGoogleSignIn(activityContext: Context): AuthResult {
+        val uiContext = activityContext.findActivity() ?: activityContext
         return try {
             val serverClientId = context.getString(R.string.default_web_client_id)
-            val credentialManager = CredentialManager.create(activityContext)
+            val credentialManager = CredentialManager.create(uiContext)
             val option = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(true)
                 .setServerClientId(serverClientId)
@@ -61,7 +71,7 @@ class AuthRepository(private val context: Context) {
             val request = GetCredentialRequest.Builder()
                 .addCredentialOption(option)
                 .build()
-            val result = credentialManager.getCredential(activityContext, request)
+            val result = credentialManager.getCredential(uiContext, request)
             signInWithCredential(result.credential)
         } catch (e: CancellationException) {
             throw e
@@ -76,25 +86,68 @@ class AuthRepository(private val context: Context) {
     }
 
     suspend fun signInWithGoogleInteractive(activityContext: Context): AuthResult {
+        val uiContext = activityContext.findActivity() ?: activityContext
         return try {
             val serverClientId = context.getString(R.string.default_web_client_id)
-            val credentialManager = CredentialManager.create(activityContext)
-            val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(signInOption)
-                .build()
-            val result = credentialManager.getCredential(activityContext, request)
+            val credentialManager = CredentialManager.create(uiContext)
+            // Clear any remembered Credential Manager selection so tapping Google always shows
+            // the Gmail account picker instead of silently reconnecting the previous account.
+            try {
+                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.d("AuthRepository", "Clear credential state skipped: ${e.message}")
+            }
+
+            val result = try {
+                val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(signInOption)
+                    .build()
+                credentialManager.getCredential(uiContext, request)
+            } catch (e: NoCredentialException) {
+                Log.w("AuthRepository", "GetSignInWithGoogleOption returned NoCredentialException; trying unfiltered picker.", e)
+                val fallbackPicker = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .setServerClientId(serverClientId)
+                    .build()
+                val fallbackReq = GetCredentialRequest.Builder()
+                    .addCredentialOption(fallbackPicker)
+                    .build()
+                credentialManager.getCredential(uiContext, fallbackReq)
+            } catch (e: GetCredentialUnsupportedException) {
+                Log.w("AuthRepository", "GetSignInWithGoogleOption unsupported; trying GetGoogleIdOption picker.", e)
+                val fallbackPicker = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .setServerClientId(serverClientId)
+                    .build()
+                val fallbackReq = GetCredentialRequest.Builder()
+                    .addCredentialOption(fallbackPicker)
+                    .build()
+                credentialManager.getCredential(uiContext, fallbackReq)
+            }
             signInWithCredential(result.credential)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: GetCredentialCancellationException) {
-            AuthResult.Cancelled
+        } catch (e: GetCredentialCancellationException) {
+            Log.w("AuthRepository", "Google Sign-In cancelled or dismissed: ${e.message}", e)
+            val msg = e.message.orEmpty().lowercase()
+            if (msg.contains("developer") || msg.contains("28444") || msg.contains("10:") || msg.contains("sha")) {
+                AuthResult.Failure(
+                    "Google Sign-In configuration mismatch (SHA-1/Web Client ID). Verify google-services.json matches the APK signing key."
+                )
+            } else {
+                AuthResult.Cancelled
+            }
         } catch (e: NoCredentialException) {
             Log.w("AuthRepository", "No Google credentials found on device", e)
-            AuthResult.Failure("No Google account found on this device. Add a Google account in device settings first.")
+            AuthResult.Failure("No Google account found on this device. Add a Google/Gmail account in device settings first.")
         } catch (e: GetCredentialException) {
             Log.e("AuthRepository", "Google sign-in credential error", e)
-            AuthResult.Failure(e.errorMessage?.toString() ?: "Google sign-in failed. Please try again.")
+            AuthResult.Failure(e.errorMessage?.toString() ?: e.localizedMessage ?: "Google sign-in failed. Please try again.")
         } catch (e: Exception) {
             Log.e("AuthRepository", "Google sign-in failed", e)
             AuthResult.Failure(e.localizedMessage ?: "Unable to complete Google Sign-In.")
@@ -107,9 +160,10 @@ class AuthRepository(private val context: Context) {
      * When [clearPrevious] is true the last remembered credential selection is cleared first.
      */
     suspend fun signInWithGoogleAccountPicker(activityContext: Context, clearPrevious: Boolean): AuthResult {
+        val uiContext = activityContext.findActivity() ?: activityContext
         return try {
             val serverClientId = context.getString(R.string.default_web_client_id)
-            val credentialManager = CredentialManager.create(activityContext)
+            val credentialManager = CredentialManager.create(uiContext)
             if (clearPrevious) {
                 try {
                     credentialManager.clearCredentialState(ClearCredentialStateRequest())
@@ -119,26 +173,43 @@ class AuthRepository(private val context: Context) {
                     Log.d("AuthRepository", "Clear credential state skipped: ${e.message}")
                 }
             }
-            val option = GetGoogleIdOption.Builder()
-                .setFilterByAuthorizedAccounts(false)
-                .setAutoSelectEnabled(false)
-                .setServerClientId(serverClientId)
-                .build()
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(option)
-                .build()
-            val result = credentialManager.getCredential(activityContext, request)
+            val result = try {
+                val option = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .setServerClientId(serverClientId)
+                    .build()
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(option)
+                    .build()
+                credentialManager.getCredential(uiContext, request)
+            } catch (e: NoCredentialException) {
+                Log.w("AuthRepository", "GetGoogleIdOption returned NoCredentialException; trying GetSignInWithGoogleOption.", e)
+                val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
+                val fallbackReq = GetCredentialRequest.Builder()
+                    .addCredentialOption(signInOption)
+                    .build()
+                credentialManager.getCredential(uiContext, fallbackReq)
+            }
             signInWithCredential(result.credential)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: GetCredentialCancellationException) {
-            AuthResult.Cancelled
+        } catch (e: GetCredentialCancellationException) {
+            Log.w("AuthRepository", "Google account picker cancelled or dismissed: ${e.message}", e)
+            val msg = e.message.orEmpty().lowercase()
+            if (msg.contains("developer") || msg.contains("28444") || msg.contains("10:") || msg.contains("sha")) {
+                AuthResult.Failure(
+                    "Google Sign-In configuration mismatch (SHA-1/Web Client ID). Verify google-services.json matches the APK signing key."
+                )
+            } else {
+                AuthResult.Cancelled
+            }
         } catch (e: NoCredentialException) {
             Log.w("AuthRepository", "No Google credentials found on device", e)
-            AuthResult.Failure("No Google account found on this device. Add a Google account in device settings first.")
+            AuthResult.Failure("No Google account found on this device. Add a Google/Gmail account in device settings first.")
         } catch (e: GetCredentialException) {
             Log.e("AuthRepository", "Google sign-in credential error", e)
-            AuthResult.Failure(e.errorMessage?.toString() ?: "Google sign-in failed. Please try again.")
+            AuthResult.Failure(e.errorMessage?.toString() ?: e.localizedMessage ?: "Google sign-in failed. Please try again.")
         } catch (e: Exception) {
             Log.e("AuthRepository", "Google sign-in failed", e)
             AuthResult.Failure(e.localizedMessage ?: "Unable to complete Google Sign-In.")

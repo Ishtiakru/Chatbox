@@ -104,6 +104,7 @@ fun AuthLoginScreen(
     onSaveRememberedPhone: (Boolean, String) -> Unit,
     onLanguageSelected: (String) -> Unit,
     onGoogleSignIn: () -> Unit,
+    onChooseGoogleAccount: () -> Unit = onGoogleSignIn,
     onSendPasswordReset: suspend (String) -> Result<Unit>
 ) {
     val bn = WorldLanguages.isBengali(languageCode)
@@ -475,6 +476,33 @@ fun AuthLoginScreen(
                         )
                     }
                 }
+
+                TextButton(
+                    onClick = onChooseGoogleAccount,
+                    enabled = !authLoading && isOnline,
+                    modifier = Modifier.testTag("choose_gmail_account_button")
+                ) {
+                    Text(
+                        text = if (bn) {
+                            "অন্য Gmail অ্যাকাউন্ট বাছাই করুন"
+                        } else {
+                            "Choose a different Gmail account"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ChatboxPrimary
+                    )
+                }
+                Text(
+                    text = if (bn) {
+                        "ফোনে লগইন থাকা যেকোনো Gmail অ্যাকাউন্ট তালিকা থেকে বেছে নিতে পারবেন।"
+                    } else {
+                        "Pick any Gmail account on this device without auto-connecting."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ChatboxInkSubtle,
+                    textAlign = TextAlign.Center
+                )
             }
 
             Text(
