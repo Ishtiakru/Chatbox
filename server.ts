@@ -280,9 +280,10 @@ async function generateTextWithFallback(
           markKeyCooldown(key);
           break;
         }
-        if (!isTransientGeminiError(error)) {
-          throw error;
+        if (model === MODEL_NAME || isTransientGeminiError(error)) {
+          continue;
         }
+        break;
       }
     }
   }
@@ -348,9 +349,10 @@ async function streamTextWithFallback(
         markKeyCooldown(attempt.apiKey);
         continue;
       }
-      if (emittedAny || !isTransientGeminiError(error)) {
-        throw error;
+      if (!emittedAny && (attempt.model === MODEL_NAME || isTransientGeminiError(error))) {
+        continue;
       }
+      throw error;
     }
   }
   if (lastError) {
