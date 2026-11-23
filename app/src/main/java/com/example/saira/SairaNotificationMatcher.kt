@@ -85,12 +85,23 @@ object SairaNotificationMatcher {
         rule: SairaNotificationRule,
         locationSnapshot: SharedLocationSnapshot?,
         hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
-        isContinuation: Boolean = false
+        isContinuation: Boolean = false,
+        incomingText: String = ""
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         val guidance = rule.taughtReplyGuidance.trim()
+        val lowerIncoming = incomingText.trim().lowercase()
         val base = if (isContinuation) {
-            "$senderName, $guidance"
+            when {
+                lowerIncoming.contains("?") ||
+                    lowerIncoming.contains("kemon") ||
+                    lowerIncoming.contains("কেমন") ||
+                    lowerIncoming.contains("kokhon") ||
+                    lowerIncoming.contains("কখন") ->
+                    "হ্যাঁ $senderName, আপনার প্রশ্নটি দেখেছি—$guidance"
+                else ->
+                    "$senderName, আপনার মেসেজটি পেয়েছি—$guidance"
+            }
         } else {
             "হ্যালো $senderName, ${info.bengaliGreeting}! $guidance"
         }
@@ -104,11 +115,23 @@ object SairaNotificationMatcher {
     internal fun cleanContactTitle(rawTitle: String?): String {
         val trimmed = stripBidiMarks(rawTitle).trim()
         if (trimmed.isEmpty()) return ""
-        // Strip unread counter suffixes like "Sajib (3 messages)" or "Sajib (2টি মেসেজ)" -> "Sajib"
-        val withoutCount = trimmed.replace(
-            Regex("""\s*\(\d+\s*(?:messages?|msgs?|unread|টি মেসেজ|টি বার্তা)\)$""", RegexOption.IGNORE_CASE),
-            ""
-        )
+        // Strip unread counter suffixes like "Sajib (3 messages)", "Sajib (2 new messages)",
+        // "Sajib (2)", "Sajib · 2 messages", or Bengali "Sajib (২টি মেসেজ)"
+        val withoutCount = trimmed
+            .replace(
+                Regex(
+                    """\s*\([\d\u09E6-\u09EF]+(?:\s*(?:new\s*)?(?:messages?|msgs?|unread|টি\s*(?:নতুন\s*)?(?:মেসেজ|বার্তা)))?\)$""",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            )
+            .replace(
+                Regex(
+                    """\s*[·•-]\s*[\d\u09E6-\u09EF]+\s*(?:new\s*)?(?:messages?|msgs?|unread|টি\s*(?:নতুন\s*)?(?:মেসেজ|বার্তা))$""",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            )
         return withoutCount.trim()
     }
 
@@ -118,7 +141,9 @@ object SairaNotificationMatcher {
         if (target.isEmpty() || incoming.isEmpty()) return false
         return incoming == target ||
             incoming.startsWith("$target:") ||
-            incoming.endsWith(": $target")
+            incoming.endsWith(": $target") ||
+            incoming.startsWith("$target (") ||
+            incoming.startsWith("$target ·")
     }
 
     private fun stripBidiMarks(raw: String?): String =

@@ -15,7 +15,7 @@ object SairaPrompts {
         - WhatsApp-style Profile & 6-Digit ID Code: Every user has a unique collision-safe 6-digit Chatbox ID code, About bio, and optional Phone Number. Friends can add each other by 6-digit ID or phone number.
         - Demo Conversations: Local offline sample conversations (Saira guide, Maya Rahman, Arif Hasan, Nora Ahmed, The good people) with global search and DataStore persistence.
         - Live Chats: Real-time direct messaging powered by Cloud Firestore, compressed photo sharing, recorded voice notes, permission- & consent-gated Live Location sharing, pending/active consent, and block/unblock protection.
-        - Saira AI: 4 dedicated capabilities: (1) 1-minute Chatbox absence check-in addressing the sender by name with time-aware greetings, (2) permission-gated WhatsApp & Messenger notification auto-reply for taught contacts, (3) permission- & contact-gated Live Location sharing, and (4) time-aware greetings with free Gemini AI + automatic backup provider failover.
+        - Saira AI: 4 dedicated capabilities: (1) 10-second Chatbox absence check-in addressing the sender by name with time-aware greetings, (2) permission-gated WhatsApp & Messenger notification auto-reply for taught contacts (stepping in after 10 seconds if unanswered and continuing naturally multi-turn), (3) permission- & contact-gated Live Location sharing, and (4) time-aware greetings with free Gemini AI + automatic backup provider failover.
         - Calls: Planned Voice and Video Calls preview screen.
         - Admin Panel & QE Coder: Owner-only live control dashboard to change theme, menu placement, custom menu bars via natural-language commands, and publish live app Update badges + versioned QE Coder release bundles (v${ChatboxConstants.APP_VERSION}).
     """.trimIndent()
@@ -70,14 +70,24 @@ object SairaPrompts {
         senderName: String,
         peerName: String,
         lastMessageText: String,
-        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+        isContinuation: Boolean = false
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
-        return """
-            "$senderName" sent a message to "$peerName" in Chatbox over 1 minute ago and hasn't received a reply yet:
+        return if (isContinuation) {
+            """
+            You are continuing a live Chatbox conversation while waiting for "$peerName" to reply.
+            The latest message from "$senderName" is:
+            "${lastMessageText.take(250)}"
+            Reply naturally and helpfully in 1-2 short sentences matching the language (Bengali, Banglish, or English) without repeating the initial greeting.
+            """.trimIndent()
+        } else {
+            """
+            "$senderName" sent a message to "$peerName" in Chatbox and hasn't received a reply within 10 seconds:
             "${lastMessageText.take(200)}"
-            Start directly by addressing "$senderName" by name in Bengali/English matching the message (for example: "হ্যালো $senderName! ${info.bengaliGreeting} ✨ ..."), acknowledge the time-of-day greeting (${info.bengaliGreeting} / ${info.englishGreeting}), and warmly offer to talk or assist while waiting for "$peerName". Keep it to 1-2 short sentences.
-        """.trimIndent()
+            Start directly by addressing "$senderName" by name in Bengali/English matching the message (for example: "হ্যালো $senderName! ${info.bengaliGreeting} ✨ ..."), acknowledge the time-of-day greeting (${info.bengaliGreeting} / ${info.englishGreeting}), and warmly offer to talk or answer questions while waiting for "$peerName". Keep it to 1-2 short sentences.
+            """.trimIndent()
+        }
     }
 
     fun buildNotificationAutoReplyPrompt(

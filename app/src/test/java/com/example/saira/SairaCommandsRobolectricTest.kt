@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.app.Notification
 import android.app.PendingIntent
+import android.app.Person
 import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -12,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.location.Location
 import android.location.LocationManager
+import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
 import android.service.notification.StatusBarNotification
@@ -192,6 +194,34 @@ class SairaCommandsRobolectricTest {
         )
         assertNotNull(msgMatch)
         assertEquals(SairaPlatform.MESSENGER, msgMatch!!.platform)
+
+        // Expanded WhatsApp/Messenger unread counter formats & bidi marks
+        val bowRule = SairaNotificationRule(
+            id = "r_bow",
+            contactName = "Bow Prodhan~🌸",
+            platform = SairaPlatform.ANY,
+            taughtReplyGuidance = "সজিব কাজে ব্যস্ত আছে কিছু বলার থাকলে আমাকে বলুন",
+            enabled = true
+        )
+        listOf(
+            "\u2068Bow Prodhan~🌸\u2069 (2 new messages)",
+            "Bow Prodhan~🌸 (2)",
+            "Bow Prodhan~🌸 · 3 messages",
+            "Bow Prodhan~🌸 (২টি নতুন মেসেজ)"
+        ).forEach { rawTitle ->
+            val m = SairaNotificationMatcher.match(
+                notifAutoReplyEnabled = true,
+                liveLocationEnabled = false,
+                locationPermissionGranted = false,
+                packageName = "com.whatsapp",
+                senderTitle = rawTitle,
+                incomingText = "Kothay acho?",
+                isGroupSummary = false,
+                rules = listOf(bowRule)
+            )
+            assertNotNull("Expected match for title: $rawTitle", m)
+            assertEquals("Bow Prodhan~🌸", m!!.normalizedSender)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -312,13 +342,85 @@ class SairaCommandsRobolectricTest {
         Shadows.shadowOf(application.mainLooper).idle()
         assertNull(capturedReply)
 
-        // 4) Immediate follow-up message from same contact (continuing conversation without 30s silence) -> MUST reply!
+        // 4) Immediate follow-up message from same contact (continuing conversation without 30s silence) -> MUST reply without repeating initial greeting!
         capturedReply = null
         service.processNotification(buildSbn("com.whatsapp", "\u2068সজীব\u2069 (2 messages)", "কখন ফিরবে?"))
         Shadows.shadowOf(application.mainLooper).idle()
         assertNotNull(capturedReply)
+        assertFalse(capturedReply!!.startsWith("হ্যালো সজীব,"))
         assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
         assertEquals(2, prefs.sairaAutoReplyLogs.first().size)
+
+        // 5) MessagingStyle notification where last message is a self-echo -> MUST skip; then new incoming message -> MUST reply!
+        fun buildMessagingStyleSbn(vararg msgs: Pair<String, String>): StatusBarNotification {
+            val remoteInput = RemoteInput.Builder("key_reply").setAllowFreeFormInput(true).build()
+            val pendingIntent = PendingIntent.getBroadcast(
+                application,
+                203,
+                Intent(replyActionIntent).setPackage(application.packageName),
+                PendingIntent.FLAG_MUTABLE
+            )
+            val action = Notification.Action.Builder(null, "Reply", pendingIntent)
+                .addRemoteInput(remoteInput)
+                .build()
+            val mePerson = Person.Builder().setName("You").setKey("self_key").build()
+            val peerPerson = Person.Builder().setName("সজীব").setKey("peer_sajib").build()
+            val bundles = msgs.mapIndexed { idx, (who, body) ->
+                Bundle().apply {
+                    putCharSequence("text", body)
+                    putLong("time", System.currentTimeMillis() + idx * 10L)
+                    putCharSequence("sender", who)
+                    putParcelable("sender_person", if (who == "You") mePerson else peerPerson)
+                }
+            }.toTypedArray()
+            val notif = Notification.Builder(application, "wa_ch")
+                .setContentTitle("সজীব (3 messages)")
+                .setContentText(msgs.last().second)
+                .addAction(action)
+                .build()
+            notif.extras.putParcelableArray(Notification.EXTRA_MESSAGES, bundles)
+            notif.extras.putParcelable(Notification.EXTRA_MESSAGING_PERSON, mePerson)
+            @Suppress("DEPRECATION")
+            return StatusBarNotification(
+                "com.whatsapp",
+                "com.whatsapp",
+                502,
+                null,
+                Process.myUid(),
+                0,
+                0,
+                notif,
+                Process.myUserHandle(),
+                System.currentTimeMillis()
+            )
+        }
+
+        capturedReply = null
+        service.processNotification(
+            buildMessagingStyleSbn(
+                "সজীব" to "কখন ফিরবে?",
+                "You" to (prefs.sairaAutoReplyLogs.first().first().sentReply)
+            )
+        )
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNull(capturedReply)
+
+        service.processNotification(
+            buildMessagingStyleSbn(
+                "সজীব" to "কখন ফিরবে?",
+                "You" to (prefs.sairaAutoReplyLogs.first().first().sentReply),
+                "সজীব" to "এখনো রাস্তায়?"
+            )
+        )
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNotNull(capturedReply)
+        assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertEquals(3, prefs.sairaAutoReplyLogs.first().size)
+
+        // 6) Scheduled 10s grace job cancelled cleanly when notification is removed (user opened/replied)
+        val pendingSbn = buildSbn("com.whatsapp", "সজীব", "চলে আসো")
+        service.onNotificationPosted(pendingSbn)
+        service.onNotificationRemoved(pendingSbn)
 
         application.unregisterReceiver(receiver)
     }

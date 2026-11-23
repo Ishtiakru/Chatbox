@@ -93,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.example.data.ai.AiChatMessage
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.ChatboxConstants
@@ -734,14 +735,18 @@ private fun LiveThreadPane(
         }
     }
 
-    // One-minute Saira companion banner state
+    // 10-second Saira companion state with continuous multi-turn Q&A
     var companionNotice by remember(conversation.id) { mutableStateOf<String?>(null) }
+    var companionHistory by remember(conversation.id) { mutableStateOf<List<AiChatMessage>>(emptyList()) }
+    var companionDraft by remember(conversation.id) { mutableStateOf("") }
+    var companionBusy by remember(conversation.id) { mutableStateOf(false) }
     var showLocationConsentDialog by remember(conversation.id) { mutableStateOf(false) }
     val latestMsg = combinedMessages.lastOrNull()
     val peerName = peerProfile?.displayName ?: peerUid.take(10)
     LaunchedEffect(latestMsg?.id, oneMinAutoReplyEnabled, conversation.status, isOnline, peerName) {
         if (!oneMinAutoReplyEnabled || conversation.status != "active") {
             companionNotice = null
+            companionHistory = emptyList()
             return@LaunchedEffect
         }
         val msg = latestMsg ?: return@LaunchedEffect
@@ -751,7 +756,7 @@ private fun LiveThreadPane(
         }
         val ageMs = msg.sentAt?.toDate()?.let { System.currentTimeMillis() - it.time } ?: 0L
         if (ageMs > 10 * 60_000L) return@LaunchedEffect
-        val waitMs = (60_000L - ageMs).coerceAtLeast(1_000L)
+        val waitMs = (10_000L - ageMs).coerceIn(1_000L, 10_000L)
         delay(waitMs)
 
         val senderName = if (msg.senderId == currentUserId) userDisplayName else peerName
@@ -766,16 +771,34 @@ private fun LiveThreadPane(
             return@LaunchedEffect
         }
 
+        val recentChatHistory = combinedMessages
+            .dropLast(1)
+            .takeLast(6)
+            .filter { it.body.isNotBlank() }
+            .map { m ->
+                val who = if (m.senderId == currentUserId) userDisplayName else peerName
+                AiChatMessage("user", "$who: ${m.body.take(200)}")
+            }
+        val fullHistory = (recentChatHistory + companionHistory).takeLast(12)
+        val isContinuation = companionHistory.isNotEmpty()
+        val msgText = msg.body.ifBlank { "[Media message]" }
+
         val aiReply = runCatching {
             val prompt = SairaPrompts.buildOneMinAbsencePrompt(
                 senderName = senderName,
                 peerName = recipientName,
-                lastMessageText = msg.body.ifBlank { "[Media message]" }
+                lastMessageText = msgText,
+                isContinuation = isContinuation
             )
-            SairaAiClient.complete(SairaPrompts.chatSystemInstruction, emptyList(), prompt)
+            SairaAiClient.complete(SairaPrompts.chatSystemInstruction, fullHistory, prompt)
         }.getOrNull()?.trim().orEmpty()
 
-        companionNotice = aiReply.ifEmpty { fallbackReply }
+        val resolved = aiReply.ifEmpty { fallbackReply }
+        companionNotice = resolved
+        companionHistory = (companionHistory + listOf(
+            AiChatMessage("user", "$senderName: $msgText"),
+            AiChatMessage("model", resolved)
+        )).takeLast(12)
     }
 
     // Zero-permission Android Photo Picker
@@ -1043,7 +1066,7 @@ private fun LiveThreadPane(
             }
         }
 
-        // 1-Minute Saira Companion Card
+        // 10-Second Interactive Saira Companion Card
         companionNotice?.let { note ->
             Surface(
                 color = Color(0xFFF7F5FB),
@@ -1051,20 +1074,76 @@ private fun LiveThreadPane(
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                Row(
+                Column(
                     modifier = Modifier.padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    SairaMetaOrb(size = 24.dp, animate = false)
-                    Text(
-                        text = note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.ink,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { companionNotice = null }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Dismiss companion note", modifier = Modifier.size(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SairaMetaOrb(size = 24.dp, animate = companionBusy)
+                        Text(
+                            text = note,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { companionNotice = null }) {
+                            Icon(Icons.Rounded.Close, contentDescription = "Dismiss companion note", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = companionDraft,
+                            onValueChange = { companionDraft = it.take(400) },
+                            enabled = !companionBusy,
+                            placeholder = { Text("Ask Saira anything while waiting…", style = MaterialTheme.typography.bodySmall) },
+                            singleLine = true,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("live_saira_companion_input")
+                        )
+                        IconButton(
+                            enabled = !companionBusy && companionDraft.isNotBlank() && isOnline,
+                            onClick = {
+                                val question = companionDraft.trim()
+                                if (question.isEmpty()) return@IconButton
+                                companionDraft = ""
+                                companionBusy = true
+                                scope.launch {
+                                    val prompt = SairaPrompts.buildCompanionPrompt(
+                                        userName = userDisplayName,
+                                        peerName = peerName,
+                                        userQuestion = question
+                                    )
+                                    val answer = runCatching {
+                                        SairaAiClient.complete(
+                                            systemInstruction = SairaPrompts.chatSystemInstruction,
+                                            history = companionHistory,
+                                            prompt = prompt
+                                        ).trim()
+                                    }.getOrNull().orEmpty()
+                                    if (answer.isNotEmpty()) {
+                                        companionNotice = answer
+                                        companionHistory = (companionHistory + listOf(
+                                            AiChatMessage("user", question),
+                                            AiChatMessage("model", answer)
+                                        )).takeLast(12)
+                                    } else {
+                                        companionNotice = "Saira উত্তর দিতে পারেনি—একটু পর আবার চেষ্টা করুন।"
+                                    }
+                                    companionBusy = false
+                                }
+                            },
+                            modifier = Modifier.testTag("live_saira_companion_send")
+                        ) {
+                            Icon(Icons.Rounded.Send, contentDescription = "Ask Saira", tint = ChatboxPrimary)
+                        }
                     }
                 }
             }

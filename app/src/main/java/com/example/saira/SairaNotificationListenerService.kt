@@ -21,6 +21,7 @@ import com.example.util.configureAppCheck
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -38,6 +39,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
     private val contactMutexes = ConcurrentHashMap<String, Mutex>()
     private val lastContactStates = ConcurrentHashMap<String, ContactReplyState>()
     private val conversationHistory = ConcurrentHashMap<String, ArrayDeque<AiChatMessage>>()
+    private val pendingReplyJobs = ConcurrentHashMap<String, PendingReplyEntry>()
 
     override fun onCreate() {
         super.onCreate()
@@ -49,9 +51,52 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val target = sbn ?: return
-        serviceScope.launch {
+        val notification = target.notification ?: return
+        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+        val extras = notification.extras ?: return
+        if (extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)) return
+        if (findReplyAction(notification) == null) return
+        if (SairaNotificationMatcher.platformForPackage(target.packageName) == null) return
+
+        val sbnKey = target.key ?: "${target.packageName}:${target.id}"
+        val nowMs = System.currentTimeMillis()
+        val previousPending = pendingReplyJobs.remove(sbnKey)
+        previousPending?.job?.cancel()
+        val firstSeenMs = previousPending?.firstSeenMs ?: nowMs
+
+        val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val cleanSender = SairaNotificationMatcher.cleanContactTitle(senderTitle)
+        val platform = SairaNotificationMatcher.platformForPackage(target.packageName)
+        val contactKey = if (platform != null && cleanSender.isNotEmpty()) {
+            "${platform.name}::${cleanSender.lowercase()}"
+        } else {
+            ""
+        }
+
+        val job = serviceScope.launch {
+            val prevState = if (contactKey.isNotEmpty()) lastContactStates[contactKey] else null
+            val isActiveConversation = prevState != null &&
+                (System.currentTimeMillis() - prevState.repliedAtMs) <= ACTIVE_CONVERSATION_WINDOW_MS
+
+            val targetDelayMs = if (isActiveConversation) {
+                CONTINUATION_DEBOUNCE_MS
+            } else {
+                // Wait up to 10 seconds from first message so owner can reply first;
+                // if owner does not answer within 10s, Saira steps in automatically.
+                val elapsedMs = (System.currentTimeMillis() - firstSeenMs).coerceAtLeast(0L)
+                (INITIAL_ABSENCE_WAIT_MS - elapsedMs).coerceAtLeast(CONTINUATION_DEBOUNCE_MS)
+            }
+            delay(targetDelayMs)
+            pendingReplyJobs.remove(sbnKey)
             processNotification(target)
         }
+        pendingReplyJobs[sbnKey] = PendingReplyEntry(firstSeenMs = firstSeenMs, job = job)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        val target = sbn ?: return
+        val sbnKey = target.key ?: "${target.packageName}:${target.id}"
+        pendingReplyJobs.remove(sbnKey)?.job?.cancel()
     }
 
     internal suspend fun processNotification(sbn: StatusBarNotification?) {
@@ -63,9 +108,6 @@ class SairaNotificationListenerService : NotificationListenerService() {
         if (isGroupSummary || isGroupConversation) return
 
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val payload = extractIncomingPayload(extras, notification.`when`) ?: return
-        if (isIgnoredSystemStatusText(payload.text)) return
-
         val replyAction = findReplyAction(notification) ?: return
         val packageName = sbn.packageName
 
@@ -75,6 +117,18 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val rules = prefs.sairaNotificationRules.first()
         val chatboxUsers = prefs.sairaUserDirectory.first()
         val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
+
+        val preliminaryPlatform = SairaNotificationMatcher.platformForPackage(packageName) ?: return
+        val preliminarySender = SairaNotificationMatcher.cleanContactTitle(senderTitle)
+        val preliminaryKey = "${preliminaryPlatform.name}::${preliminarySender.lowercase()}"
+        val prevStateHint = lastContactStates[preliminaryKey]
+
+        val payload = extractIncomingPayload(
+            extras = extras,
+            notificationWhenMs = notification.`when`,
+            lastSentReply = prevStateHint?.lastSentReply
+        ) ?: return
+        if (isIgnoredSystemStatusText(payload.text)) return
 
         val match = SairaNotificationMatcher.match(
             notifAutoReplyEnabled = notifEnabled,
@@ -168,7 +222,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
                         rule = match.rule,
                         locationSnapshot = locationSnapshot,
                         hourOfDay = hour,
-                        isContinuation = isContinuation
+                        isContinuation = isContinuation,
+                        incomingText = normalizedIncoming
                     )
                 }
             } else {
@@ -177,7 +232,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     rule = match.rule,
                     locationSnapshot = locationSnapshot,
                     hourOfDay = hour,
-                    isContinuation = isContinuation
+                    isContinuation = isContinuation,
+                    incomingText = normalizedIncoming
                 )
             }
 
@@ -230,28 +286,40 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 Log.e(TAG, "Saira AI auto-reply attempt ${attempt + 1} failed", e)
                 if (attempt == 0) {
                     runCatching { SairaAiClient.warmUp() }
-                    delay(400L)
+                    delay(500L)
                 }
             }
         }
         return ""
     }
 
-    private fun extractIncomingPayload(extras: Bundle, notificationWhenMs: Long): IncomingPayload? {
+    private fun extractIncomingPayload(
+        extras: Bundle,
+        notificationWhenMs: Long,
+        lastSentReply: String?
+    ): IncomingPayload? {
         @Suppress("DEPRECATION")
         val rawMessages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
         if (!rawMessages.isNullOrEmpty()) {
-            val selfPersonKey = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val selfPerson = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 @Suppress("DEPRECATION")
-                extras.getParcelable<Person>(Notification.EXTRA_MESSAGING_PERSON)?.key
+                extras.getParcelable<Person>(Notification.EXTRA_MESSAGING_PERSON)
             } else {
                 null
             }
+            val selfPersonKey = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) selfPerson?.key else null
+            val selfPersonName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                selfPerson?.name?.toString()?.trim().orEmpty()
+            } else {
+                ""
+            }
+
             val parsed = rawMessages.mapNotNull { item ->
                 val bundle = item as? Bundle ?: return@mapNotNull null
                 val msgText = bundle.getCharSequence("text")?.toString()?.trim().orEmpty()
                 if (msgText.isEmpty()) return@mapNotNull null
-                val timeMs = bundle.getLong("time", 0L)
+                val rawTimeMs = bundle.getLong("time", 0L)
+                val timeMs = if (rawTimeMs > 0L) rawTimeMs else notificationWhenMs
                 val senderPerson = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     @Suppress("DEPRECATION")
                     bundle.getParcelable<Person>("sender_person")
@@ -262,7 +330,12 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     ?.toString()
                     ?.trim()
                     .orEmpty()
-                val isSelf = (selfPersonKey != null && senderPerson?.key == selfPersonKey) ||
+                val matchesSelfPerson = (selfPersonKey != null && senderPerson?.key == selfPersonKey) ||
+                    (selfPersonName.isNotEmpty() && senderName.equals(selfPersonName, ignoreCase = true))
+                val matchesLastReply = !lastSentReply.isNullOrBlank() &&
+                    msgText.equals(lastSentReply.trim(), ignoreCase = true)
+                val isSelf = matchesSelfPerson ||
+                    matchesLastReply ||
                     senderName.equals("You", ignoreCase = true) ||
                     senderName.equals("Me", ignoreCase = true) ||
                     senderName == "আপনি"
@@ -271,11 +344,19 @@ class SairaNotificationListenerService : NotificationListenerService() {
             if (parsed.isNotEmpty()) {
                 // If WhatsApp/Messenger re-posted showing our own just-sent reply as the newest message, skip
                 if (parsed.last().isSelf) return null
-                val latestIncoming = parsed.lastOrNull { !it.isSelf }
-                if (latestIncoming != null) {
+                // Collect consecutive trailing unread incoming messages after any self message
+                val trailingIncoming = mutableListOf<ParsedMessageEntry>()
+                for (entry in parsed.asReversed()) {
+                    if (entry.isSelf) break
+                    trailingIncoming.add(entry)
+                }
+                if (trailingIncoming.isNotEmpty()) {
+                    val chronological = trailingIncoming.asReversed()
+                    val combinedText = chronological.joinToString("\n") { it.text }.take(450)
+                    val latestTimeMs = chronological.last().timeMs.takeIf { it > 0L } ?: notificationWhenMs
                     return IncomingPayload(
-                        text = latestIncoming.text,
-                        messageTimeMs = latestIncoming.timeMs
+                        text = combinedText,
+                        messageTimeMs = latestTimeMs
                     )
                 }
             }
@@ -333,8 +414,15 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        pendingReplyJobs.values.forEach { it.job.cancel() }
+        pendingReplyJobs.clear()
         serviceScope.cancel()
     }
+
+    private data class PendingReplyEntry(
+        val firstSeenMs: Long,
+        val job: Job
+    )
 
     private data class IncomingPayload(
         val text: String,
@@ -361,6 +449,9 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "SairaNotifListener"
+        private const val INITIAL_ABSENCE_WAIT_MS = 10_000L
+        private const val CONTINUATION_DEBOUNCE_MS = 1_500L
+        private const val ACTIVE_CONVERSATION_WINDOW_MS = 10 * 60_000L
         private const val MIN_REPLY_GAP_MS = 1_000L
         private const val DUPLICATE_TEXT_WINDOW_MS = 6_000L
         private const val ECHO_SUPPRESS_WINDOW_MS = 30_000L

@@ -272,12 +272,12 @@ fun ProfileChatsSettingsDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                             Text(
-                                text = "Saira 1-minute companion",
+                                text = "Saira 10-second companion",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = colors.ink
                             )
                             Text(
-                                text = "Offer a polite waiting reply if you don't respond within 1 minute.",
+                                text = "Respond warmly if there is no reply within 10 seconds.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.inkMuted
                             )

@@ -267,7 +267,7 @@ fun ProfileScreen(
             ProfileMenuRow(
                 id = "chats",
                 title = "Chats",
-                subtitle = "Quick reaction ($quickReaction), Saira 1-minute companion",
+                subtitle = "Quick reaction ($quickReaction), Saira 10-second companion",
                 icon = Icons.Rounded.ChatBubbleOutline,
                 onClick = { activeSheet = ProfileSheet.CHATS }
             ),

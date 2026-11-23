@@ -490,7 +490,7 @@ fun SairaAiScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "দিন-রাতের সময় বুঝে সম্ভাষণ ও ফ্রি AI-এর মাধ্যমে দ্রুত উত্তর, চ্যাটবক্সে ১ মিনিটের অপেক্ষা সঙ্গী, এবং অনুমতিসাপেক্ষে WhatsApp ও Messenger অটো-রিপ্লাই / লোকেশন শেয়ারিং।",
+                        text = "দিন-রাতের সময় বুঝে সম্ভাষণ ও ফ্রি AI-এর মাধ্যমে দ্রুত উত্তর, চ্যাটবক্সে ১০ সেকেন্ডের অপেক্ষা সঙ্গী, এবং অনুমতিসাপেক্ষে WhatsApp ও Messenger অটো-রিপ্লাই / লোকেশন শেয়ারিং।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted,
                         textAlign = TextAlign.Center,
@@ -851,7 +851,7 @@ private fun AutoReplyAndBackupTab(
             }
         }
 
-        // 1. 1-Minute Chatbox Absence Greeting
+        // 1. 10-Second Chatbox Absence Greeting
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
@@ -866,9 +866,9 @@ private fun AutoReplyAndBackupTab(
             ) {
                 Icon(Icons.Rounded.Schedule, contentDescription = null, tint = ChatboxPrimary)
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("চ্যাটবক্সে ১ মিনিটের অপেক্ষা", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                    Text("চ্যাটবক্সে ১০ সেকেন্ডের অপেক্ষা", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                     Text(
-                        "কেউ মেসেজ পাঠালে প্রাপক ১ মিনিটের মধ্যে সাড়া না দিলে সায়রা প্রেরকের নাম ধরে (যেমন: \"হ্যালো সজীব...\") সময় অনুযায়ী সম্ভাষণ জানিয়ে কথা বলা শুরু করবে।",
+                        "কেউ মেসেজ পাঠালে প্রাপক ১০ সেকেন্ডের মধ্যে সাড়া না দিলে সায়রা প্রেরকের নাম ধরে কথা বলা শুরু করবে এবং প্রশ্ন করলে উত্তর চালিয়ে যাবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted
                     )
@@ -900,7 +900,7 @@ private fun AutoReplyAndBackupTab(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("অনুমতিসাপেক্ষে WhatsApp ও Messenger রিপ্লাই", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                         Text(
-                            "আপনি নিচে যার নাম ও নির্ধারিত মেসেজ/কমান্ড সেট করবেন, শুধু তার নোটিফিকেশন এলেই সায়রা রিপ্লাই দেবে।",
+                            "নির্ধারিত কন্টাক্ট মেসেজ পাঠানোর ১০ সেকেন্ডের মধ্যে আপনি উত্তর না দিলে সায়রা স্বয়ংক্রিয়ভাবে উত্তর দেবে এবং পরবর্তী মেসেজগুলোতেও কথোপকথন চালিয়ে যাবে।",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkMuted
                         )
