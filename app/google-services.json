@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "631361942963",
+    "project_id": "gen-lang-client-0251556445",
+    "storage_bucket": "gen-lang-client-0251556445.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:631361942963:android:df33fc4de070a1ee5047c6",
+        "android_client_info": {
+          "package_name": "com.aistudio.chatbox.kxmpzq"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "631361942963-qmhcvs2n6psqfupsupa0sc6mhkb5goau.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.chatbox.kxmpzq",
+            "certificate_hash": "beb9455297100446f5069a0acc2d33250a15c759"
+          }
+        },
+        {
+          "client_id": "631361942963-99bslibg97repllfjgh1bfgka6lr3vru.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAf-pTP6AGYkZ73hiCT428IdaKCfjRvJug"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "631361942963-99bslibg97repllfjgh1bfgka6lr3vru.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
