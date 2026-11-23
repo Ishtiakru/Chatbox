@@ -24,6 +24,10 @@ class AppPreferencesRepository(private val context: Context) {
     private val sairaChatboxOneMinEnabledKey = booleanPreferencesKey("saira_chatbox_one_min_enabled_v1")
     private val rememberMeEnabledKey = booleanPreferencesKey("login_remember_me_v1")
     private val rememberedPhoneKey = stringPreferencesKey("login_remembered_phone_v1")
+    private val aiFallbackProviderKindKey = stringPreferencesKey("ai_fallback_provider_v1")
+    private val aiFallbackApiKeyKey = stringPreferencesKey("ai_fallback_api_key_v1")
+    private val aiFallbackBaseUrlKey = stringPreferencesKey("ai_fallback_base_url_v1")
+    private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
@@ -70,6 +74,26 @@ class AppPreferencesRepository(private val context: Context) {
             }
         }
 
+    val aiFallbackProviderKind: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[aiFallbackProviderKindKey] ?: "groq"
+        }
+
+    val aiFallbackApiKey: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[aiFallbackApiKeyKey].orEmpty()
+        }
+
+    val aiFallbackBaseUrl: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[aiFallbackBaseUrlKey].orEmpty()
+        }
+
+    val aiFallbackModel: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[aiFallbackModelKey].orEmpty()
+        }
+
     suspend fun setLoginLanguage(languageCode: String) {
         val normalized = com.example.data.model.WorldLanguages.normalizeCode(languageCode)
         context.appDataStore.edit { prefs ->
@@ -100,6 +124,20 @@ class AppPreferencesRepository(private val context: Context) {
     suspend fun setSairaChatboxOneMinEnabled(enabled: Boolean) {
         context.appDataStore.edit { prefs ->
             prefs[sairaChatboxOneMinEnabledKey] = enabled
+        }
+    }
+
+    suspend fun saveAiFallbackConfig(
+        providerKindId: String,
+        apiKey: String,
+        baseUrl: String,
+        model: String
+    ) {
+        context.appDataStore.edit { prefs ->
+            prefs[aiFallbackProviderKindKey] = providerKindId
+            prefs[aiFallbackApiKeyKey] = apiKey.trim()
+            prefs[aiFallbackBaseUrlKey] = baseUrl.trim()
+            prefs[aiFallbackModelKey] = model.trim()
         }
     }
 

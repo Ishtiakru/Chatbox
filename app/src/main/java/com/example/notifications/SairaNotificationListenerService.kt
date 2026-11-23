@@ -3,6 +3,7 @@ package com.example.notifications
 import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -107,6 +108,22 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
         fun componentName(context: Context): ComponentName {
             return ComponentName(context, SairaNotificationListenerService::class.java)
+        }
+
+        /**
+         * The listener component ships disabled (keeps install-time scanners calm).
+         * It is switched on right before the user opens the Notification Access screen.
+         */
+        fun ensureComponentEnabled(context: Context) {
+            runCatching {
+                context.packageManager.setComponentEnabledSetting(
+                    componentName(context),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+                )
+            }.onFailure { error ->
+                Log.w(TAG, "Failed enabling notification listener component", error)
+            }
         }
     }
 }

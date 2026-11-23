@@ -73,6 +73,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.model.AiExchange
 import com.example.notifications.SairaNotificationListenerService
 import com.example.saira.SairaNotificationRule
@@ -105,7 +106,13 @@ fun SairaAiScreen(
     onRuleGuidanceChange: (String) -> Unit = {},
     onAddNotificationRule: () -> Unit = {},
     onToggleNotificationRule: (String, Boolean) -> Unit = { _, _ -> },
-    onDeleteNotificationRule: (String) -> Unit = {}
+    onDeleteNotificationRule: (String) -> Unit = {},
+    onFallbackKindChange: (AiFallbackProviderKind) -> Unit = {},
+    onFallbackApiKeyChange: (String) -> Unit = {},
+    onFallbackBaseUrlChange: (String) -> Unit = {},
+    onFallbackModelChange: (String) -> Unit = {},
+    onSaveFallbackConfig: () -> Unit = {},
+    onClearAiNotice: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -272,6 +279,7 @@ fun SairaAiScreen(
                         uiState = uiState,
                         notificationAccessGranted = notificationAccessGranted,
                         onOpenNotificationSettings = {
+                            SairaNotificationListenerService.Helper.ensureComponentEnabled(context)
                             context.startActivity(
                                 Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -285,6 +293,12 @@ fun SairaAiScreen(
                         onAddNotificationRule = onAddNotificationRule,
                         onToggleNotificationRule = onToggleNotificationRule,
                         onDeleteNotificationRule = onDeleteNotificationRule,
+                        onFallbackKindChange = onFallbackKindChange,
+                        onFallbackApiKeyChange = onFallbackApiKeyChange,
+                        onFallbackBaseUrlChange = onFallbackBaseUrlChange,
+                        onFallbackModelChange = onFallbackModelChange,
+                        onSaveFallbackConfig = onSaveFallbackConfig,
+                        onClearAiNotice = onClearAiNotice,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                     )
                 }
@@ -474,6 +488,12 @@ private fun SairaAutoReplyTab(
     onAddNotificationRule: () -> Unit,
     onToggleNotificationRule: (String, Boolean) -> Unit,
     onDeleteNotificationRule: (String) -> Unit,
+    onFallbackKindChange: (AiFallbackProviderKind) -> Unit,
+    onFallbackApiKeyChange: (String) -> Unit,
+    onFallbackBaseUrlChange: (String) -> Unit,
+    onFallbackModelChange: (String) -> Unit,
+    onSaveFallbackConfig: () -> Unit,
+    onClearAiNotice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -658,6 +678,122 @@ private fun SairaAutoReplyTab(
                     onToggle = { enabled -> onToggleNotificationRule(rule.id, enabled) },
                     onDelete = { onDeleteNotificationRule(rule.id) }
                 )
+            }
+        }
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("saira_backup_ai_card")
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Backup AI (free quota backup)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "When Gemini's free quota ends, Saira automatically switches to this provider — no tap needed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                val effectiveModel = uiState.aiFallbackModel.ifBlank { uiState.aiFallbackKind.defaultModel }
+                ChatboxNoticeBanner(
+                    text = if (uiState.isBackupAiConfigured) {
+                        "Backup AI ready · ${uiState.aiFallbackKind.label} · $effectiveModel"
+                    } else {
+                        "Add a free API key: Groq → console.groq.com/keys · OpenRouter → openrouter.ai/keys"
+                    },
+                    isError = false
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AiFallbackProviderKind.entries.forEach { kind ->
+                        FilterChip(
+                            selected = uiState.aiFallbackKind == kind,
+                            onClick = { onFallbackKindChange(kind) },
+                            label = { Text(kind.label) }
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = uiState.aiFallbackApiKey,
+                    onValueChange = onFallbackApiKeyChange,
+                    label = { Text("Backup AI API key") },
+                    placeholder = { Text("gsk_...") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_fallback_key_input")
+                )
+
+                OutlinedTextField(
+                    value = uiState.aiFallbackModel,
+                    onValueChange = onFallbackModelChange,
+                    label = { Text("Model (edit if the default is retired)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_fallback_model_input")
+                )
+
+                if (uiState.aiFallbackKind == AiFallbackProviderKind.CUSTOM) {
+                    OutlinedTextField(
+                        value = uiState.aiFallbackBaseUrl,
+                        onValueChange = onFallbackBaseUrlChange,
+                        label = { Text("Base URL (OpenAI-compatible, /v1)") },
+                        placeholder = { Text("https://your-host/v1") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Button(
+                    onClick = onSaveFallbackConfig,
+                    enabled = uiState.aiFallbackApiKey.isNotBlank(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("saira_save_backup_ai_button")
+                ) {
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text("Save Backup AI")
+                }
+
+                if (uiState.aiNotice.isNotBlank()) {
+                    ChatboxNoticeBanner(
+                        text = uiState.aiNotice,
+                        isError = false,
+                        actionLabel = "Dismiss",
+                        onAction = onClearAiNotice
+                    )
+                }
             }
         }
         Spacer(modifier = Modifier.height(8.dp))

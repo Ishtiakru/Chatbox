@@ -483,7 +483,21 @@ private fun AuthenticatedAppShell(
                     },
                     onDeleteNotificationRule = { ruleId ->
                         sairaAiViewModel.deleteNotificationRule(ruleId)
-                    }
+                    },
+                    onFallbackKindChange = { kind ->
+                        sairaAiViewModel.updateFallbackKind(kind)
+                    },
+                    onFallbackApiKeyChange = { key ->
+                        sairaAiViewModel.updateFallbackApiKey(key)
+                    },
+                    onFallbackBaseUrlChange = { url ->
+                        sairaAiViewModel.updateFallbackBaseUrl(url)
+                    },
+                    onFallbackModelChange = { model ->
+                        sairaAiViewModel.updateFallbackModel(model)
+                    },
+                    onSaveFallbackConfig = { sairaAiViewModel.saveFallbackConfig() },
+                    onClearAiNotice = { sairaAiViewModel.clearAiNotice() }
                 )
             }
             composable<CallsRoute> {
