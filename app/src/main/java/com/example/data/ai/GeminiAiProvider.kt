@@ -7,29 +7,46 @@ import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 
-/** Primary provider: Gemini through Firebase AI Logic (free tier). */
+/**
+ * Primary provider: Gemini through Firebase AI Logic (free tier).
+ * Uses ultra-fast gemini-3.5-flash-lite by default for 1-2s Meta AI / Gemini style responses,
+ * with automatic fallback to gemini-3.8-flash on non-quota model errors.
+ */
 class GeminiAiProvider(
     private val modelName: String = DEFAULT_MODEL,
+    private val fallbackModelName: String? = FALLBACK_MODEL,
     private val maxOutputTokens: Int = 1024,
     override val id: String = DEFAULT_ID
 ) : AiProvider {
 
     private val modelCache = ConcurrentHashMap<String, GenerativeModel>()
 
-    private fun model(systemInstruction: String): GenerativeModel {
+    private fun model(name: String, systemInstruction: String): GenerativeModel {
         val tokens = maxOutputTokens
-        return modelCache.getOrPut(systemInstruction) {
+        val cacheKey = "$name::$systemInstruction"
+        return modelCache.getOrPut(cacheKey) {
             Firebase.ai.generativeModel(
-                modelName = modelName,
-                generationConfig = generationConfig { maxOutputTokens = tokens },
+                modelName = name,
+                generationConfig = generationConfig {
+                    temperature = 0.7f
+                    maxOutputTokens = tokens
+                },
                 systemInstruction = content { text(systemInstruction) }
             )
         }
+    }
+
+    fun warmUp(systemInstruction: String) {
+        runCatching { model(modelName, systemInstruction) }
     }
 
     private fun historyContent(history: List<AiChatMessage>) =
@@ -41,13 +58,35 @@ class GeminiAiProvider(
         prompt: String
     ): String {
         return try {
-            val chat: Chat = model(systemInstruction).startChat(history = historyContent(history))
-            chat.sendMessage(prompt).text?.trim().orEmpty()
+            withTimeout(TOTAL_TIMEOUT_MS) {
+                val chat: Chat = model(modelName, systemInstruction).startChat(history = historyContent(history))
+                chat.sendMessage(prompt).text?.trim().orEmpty()
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AiUnavailableException("Gemini took too long to respond. Please try again.", e)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             if (AiErrorClassifier.isQuotaExhausted(e)) {
                 throw AiQuotaExhaustedException("Gemini quota exhausted", e)
+            }
+            val backupName = fallbackModelName?.takeIf { it != modelName }
+            if (backupName != null) {
+                return try {
+                    withTimeout(TOTAL_TIMEOUT_MS) {
+                        val chat: Chat = model(backupName, systemInstruction).startChat(history = historyContent(history))
+                        chat.sendMessage(prompt).text?.trim().orEmpty()
+                    }
+                } catch (e2: TimeoutCancellationException) {
+                    throw AiUnavailableException("Gemini took too long to respond. Please try again.", e2)
+                } catch (e2: CancellationException) {
+                    throw e2
+                } catch (e2: Throwable) {
+                    if (AiErrorClassifier.isQuotaExhausted(e2)) {
+                        throw AiQuotaExhaustedException("Gemini quota exhausted", e2)
+                    }
+                    throw e2
+                }
             }
             throw e
         }
@@ -57,21 +96,77 @@ class GeminiAiProvider(
         systemInstruction: String,
         history: List<AiChatMessage>,
         prompt: String
-    ): Flow<String> {
-        val chat = model(systemInstruction).startChat(history = historyContent(history))
-        return chat.sendMessageStream(prompt)
-            .mapNotNull { chunk -> chunk.text }
-            .catch { e ->
-                if (e is CancellationException) throw e
+    ): Flow<String> = channelFlow {
+        val candidateModels = buildList {
+            add(modelName)
+            fallbackModelName?.takeIf { it != modelName }?.let { add(it) }
+        }
+        val convertedHistory = historyContent(history)
+        var lastError: Throwable? = null
+        var succeeded = false
+
+        for (candidate in candidateModels) {
+            var emittedAny = false
+            var timedOutOnFirstChunk = false
+            try {
+                withTimeout(TOTAL_TIMEOUT_MS) {
+                    val chat = model(candidate, systemInstruction).startChat(history = convertedHistory)
+                    coroutineScope {
+                        val streamJob = launch {
+                            chat.sendMessageStream(prompt).collect { chunk ->
+                                val text = chunk.text
+                                if (!text.isNullOrEmpty()) {
+                                    emittedAny = true
+                                    send(text)
+                                }
+                            }
+                        }
+                        val watchdog = launch {
+                            delay(FIRST_CHUNK_TIMEOUT_MS)
+                            if (!emittedAny) {
+                                timedOutOnFirstChunk = true
+                                streamJob.cancel()
+                            }
+                        }
+                        streamJob.join()
+                        watchdog.cancel()
+                    }
+                }
+                if (timedOutOnFirstChunk && !emittedAny) {
+                    lastError = AiUnavailableException(
+                        "Saira AI took too long to respond. Check your internet connection and try again."
+                    )
+                    continue
+                }
+                succeeded = true
+                break
+            } catch (e: TimeoutCancellationException) {
+                lastError = AiUnavailableException(
+                    "Saira AI response timed out. Please try again.",
+                    e
+                )
+                if (emittedAny) break
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
                 if (AiErrorClassifier.isQuotaExhausted(e)) {
                     throw AiQuotaExhaustedException("Gemini quota exhausted", e)
                 }
-                throw e
+                lastError = e
+                if (emittedAny) break
             }
+        }
+
+        if (!succeeded && lastError != null) {
+            throw lastError
+        }
     }
 
     companion object {
         const val DEFAULT_ID = "gemini"
-        const val DEFAULT_MODEL = "gemini-3.8-flash"
+        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
+        const val FALLBACK_MODEL = "gemini-3.8-flash"
+        const val FIRST_CHUNK_TIMEOUT_MS = 15_000L
+        const val TOTAL_TIMEOUT_MS = 45_000L
     }
 }

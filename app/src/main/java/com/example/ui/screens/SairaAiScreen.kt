@@ -104,8 +104,10 @@ import com.example.ui.theme.MetaOrbIndigo
 import com.example.ui.theme.MetaOrbPurple
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlin.random.Random
 
 private const val SESSION_ROLLOVER_LIMIT = 20
@@ -160,6 +162,10 @@ fun SairaAiScreen(
     val savedSessions by remember(currentUserId) {
         sessionRepo.observeSessions(currentUserId)
     }.collectAsState(initial = emptyList())
+
+    LaunchedEffect(Unit) {
+        SairaAiClient.warmUp()
+    }
 
     if (showHistoryDialog) {
         BackHandler { showHistoryDialog = false }
@@ -243,16 +249,20 @@ fun SairaAiScreen(
         activeJob = scope.launch {
             val accumulated = StringBuilder()
             try {
-                SairaAiClient.stream(
-                    systemInstruction = SairaPrompts.chatSystemInstruction,
-                    history = historyForModel,
-                    prompt = turnPrompt
-                ).collect { chunk ->
-                    accumulated.append(chunk)
-                    val currentText = accumulated.toString()
-                    exchanges = exchanges.map { item ->
-                        if (item.id == exId) item.copy(answer = currentText, isStreaming = true)
-                        else item
+                withTimeout(50_000L) {
+                    SairaAiClient.stream(
+                        systemInstruction = SairaPrompts.chatSystemInstruction,
+                        history = historyForModel,
+                        prompt = turnPrompt
+                    ).collect { chunk ->
+                        if (chunk.isNotEmpty()) {
+                            accumulated.append(chunk)
+                            val currentText = accumulated.toString()
+                            exchanges = exchanges.map { item ->
+                                if (item.id == exId) item.copy(answer = currentText, isStreaming = true)
+                                else item
+                            }
+                        }
                     }
                 }
                 val finalAnswer = accumulated.toString().trim()
@@ -277,6 +287,12 @@ fun SairaAiScreen(
                     if (draft.isEmpty()) draft = question
                     errorMessage = "Saira returned an empty response. Please try again."
                 }
+            } catch (e: TimeoutCancellationException) {
+                exchanges = exchanges
+                    .filter { it.id != exId || it.answer.isNotEmpty() }
+                    .map { it.copy(isStreaming = false) }
+                if (accumulated.isEmpty() && draft.isEmpty()) draft = question
+                errorMessage = e.message ?: "Saira AI timed out. Please try again."
             } catch (_: CancellationException) {
                 exchanges = exchanges
                     .filter { it.id != exId || it.answer.isNotEmpty() }

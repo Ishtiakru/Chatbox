@@ -27,19 +27,32 @@ class AiRouter(
         history: List<AiChatMessage>,
         prompt: String
     ): String {
+        var primaryQuotaExhausted = false
+        var primaryNonQuotaError: Exception? = null
+
         if (!cooldowns.isCooling(primary.id, now())) {
             try {
                 return primary.generate(systemInstruction, history, prompt)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AiQuotaExhaustedException) {
+                primaryQuotaExhausted = true
                 markCooldown(primary.id, e)
             } catch (e: Exception) {
+                primaryNonQuotaError = e
                 log("Primary AI provider failed; switching to backup", e)
             }
+        } else {
+            primaryQuotaExhausted = true
         }
 
-        val backup = fallback() ?: throw AiUnavailableException(NO_BACKUP_MESSAGE)
+        val backup = fallback() ?: throw (
+            if (primaryQuotaExhausted || primaryNonQuotaError == null) {
+                AiUnavailableException(NO_BACKUP_MESSAGE, primaryNonQuotaError)
+            } else {
+                primaryNonQuotaError
+            }
+        )
         if (cooldowns.isCooling(backup.id, now())) {
             throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE)
         }
@@ -60,6 +73,8 @@ class AiRouter(
         prompt: String
     ): Flow<String> = flow {
         var finishedByPrimary = false
+        var primaryQuotaExhausted = false
+        var primaryNonQuotaError: Exception? = null
 
         if (!cooldowns.isCooling(primary.id, now())) {
             var emitted = false
@@ -72,17 +87,27 @@ class AiRouter(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AiQuotaExhaustedException) {
+                primaryQuotaExhausted = true
                 markCooldown(primary.id, e)
                 finishedByPrimary = emitted
             } catch (e: Exception) {
+                primaryNonQuotaError = e
                 log("Primary AI stream failed; switching to backup", e)
                 finishedByPrimary = emitted
             }
+        } else {
+            primaryQuotaExhausted = true
         }
 
         if (finishedByPrimary) return@flow
 
-        val backup = fallback() ?: throw AiUnavailableException(NO_BACKUP_MESSAGE)
+        val backup = fallback() ?: throw (
+            if (primaryQuotaExhausted || primaryNonQuotaError == null) {
+                AiUnavailableException(NO_BACKUP_MESSAGE, primaryNonQuotaError)
+            } else {
+                primaryNonQuotaError
+            }
+        )
         if (cooldowns.isCooling(backup.id, now())) {
             throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE)
         }
