@@ -1,5 +1,8 @@
 package com.example.ui
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +50,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -54,6 +60,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -116,13 +123,25 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val fallbackModel by viewModel.aiFallbackModel.collectAsState()
 
     var splashDone by remember { mutableStateOf(false) }
+    var splashAppeared by remember { mutableStateOf(false) }
+    val splashAlpha by animateFloatAsState(
+        targetValue = if (splashAppeared) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "splashAlpha"
+    )
+    val splashScale by animateFloatAsState(
+        targetValue = if (splashAppeared) 1f else 0.88f,
+        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        label = "splashScale"
+    )
 
     LaunchedEffect(Unit) {
-        delay(450)
-        splashDone = true
+        splashAppeared = true
         if (currentUser == null) {
             viewModel.trySilentSignIn(context)
         }
+        delay(1500)
+        splashDone = true
     }
 
     ChatboxTheme(useLavenderTheme = appearance.theme == "lavender") {
@@ -131,17 +150,32 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(colors.background),
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                ChatboxSoftLavender,
+                                colors.background,
+                                ChatboxSoftLavender.copy(alpha = 0.65f)
+                            )
+                        )
+                    )
+                    .testTag("launch_splash_screen"),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .alpha(splashAlpha)
+                        .scale(splashScale)
+                        .padding(horizontal = 32.dp)
+                ) {
                     Surface(
                         modifier = Modifier
-                            .size(92.dp)
-                            .border(2.dp, ChatboxAccentViolet.copy(alpha = 0.35f), CircleShape),
+                            .size(112.dp)
+                            .border(2.5.dp, ChatboxAccentViolet.copy(alpha = 0.45f), CircleShape),
                         shape = CircleShape,
                         color = Color.White,
-                        shadowElevation = 4.dp
+                        shadowElevation = 8.dp
                     ) {
                         Image(
                             painter = painterResource(R.drawable.chatbox_logo_lavender),
@@ -150,16 +184,17 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             modifier = Modifier.fillMaxSize()
                         )
                     }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(18.dp))
                     Text(
                         text = stringResource(R.string.app_name),
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
                         color = colors.ink
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
                         text = stringResource(R.string.app_tagline),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = colors.inkSubtle
                     )
                 }

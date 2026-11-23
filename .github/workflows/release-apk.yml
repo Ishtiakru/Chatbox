@@ -2,13 +2,15 @@ name: Build Signed Chatbox APK & Publish GitHub Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       version_name:
         description: 'Release version name (e.g. 1.0.1)'
-        required: true
+        required: false
         default: '1.0.1'
 
 permissions:
@@ -39,30 +41,64 @@ jobs:
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --no-daemon
 
-      - name: Restore fixed release keystore (keeps SHA-1 & SHA-256 identical forever)
+      - name: Determine release version & tag
+        id: meta
+        run: |
+          BASE_VER=$(grep -E 'versionName\s*=' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1)
+          BASE_VER="${BASE_VER:-1.0.0}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            VER="${TAG#v}"
+          elif [ -n "${{ github.event.inputs.version_name }}" ]; then
+            VER="${{ github.event.inputs.version_name }}"
+            VER="${VER#v}"
+            TAG="v${VER}"
+          else
+            VER="${BASE_VER}.${{ github.run_number }}"
+            TAG="v${VER}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve fixed keystore (GitHub Secret or repo release.keystore)
+        id: ks
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64 secret. Run scripts/setup-fixed-keystore.sh or the Generate Permanent Keystore workflow once and add the secret so SHA never changes."
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "${{ runner.temp }}/chatbox-release.jks"
+            STORE_PATH="${{ runner.temp }}/chatbox-release.jks"
+            STORE_PASS="$ANDROID_KEYSTORE_PASSWORD"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            KEY_PASS="$ANDROID_KEY_PASSWORD"
+          elif [ -f "release.keystore" ] && [ -f "keystore.properties" ]; then
+            STORE_PATH="$(pwd)/release.keystore"
+            STORE_PASS=$(grep '^storePassword=' keystore.properties | cut -d'=' -f2-)
+            KEY_ALIAS=$(grep '^keyAlias=' keystore.properties | cut -d'=' -f2-)
+            KEY_PASS=$(grep '^keyPassword=' keystore.properties | cut -d'=' -f2-)
+          else
+            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64 secret and release.keystore."
             exit 1
           fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "${{ runner.temp }}/chatbox-release.jks"
-          keytool -list -v -keystore "${{ runner.temp }}/chatbox-release.jks" \
-            -alias "$ANDROID_KEY_ALIAS" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" | grep -E "SHA1:|SHA256:"
+          echo "::add-mask::$STORE_PASS"
+          echo "::add-mask::$KEY_PASS"
+          echo "store_path=$STORE_PATH" >> "$GITHUB_OUTPUT"
+          echo "store_pass=$STORE_PASS" >> "$GITHUB_OUTPUT"
+          echo "key_alias=$KEY_ALIAS" >> "$GITHUB_OUTPUT"
+          echo "key_pass=$KEY_PASS" >> "$GITHUB_OUTPUT"
+          keytool -list -v -keystore "$STORE_PATH" -alias "$KEY_ALIAS" -storepass "$STORE_PASS" | grep -E "SHA1:|SHA256:"
 
       - name: Build & sign Native Android Release APK
         env:
-          VERSION_NAME: ${{ github.event.inputs.version_name || github.ref_name || '1.0.1' }}
-          KEYSTORE_PATH: ${{ runner.temp }}/chatbox-release.jks
-          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          CLEAN_VER: ${{ steps.meta.outputs.version }}
+          KEYSTORE_PATH: ${{ steps.ks.outputs.store_path }}
+          KEYSTORE_PASS: ${{ steps.ks.outputs.store_pass }}
+          KEY_ALIAS: ${{ steps.ks.outputs.key_alias }}
+          KEY_PASS: ${{ steps.ks.outputs.key_pass }}
         run: |
-          CLEAN_VER="${VERSION_NAME#v}"
           gradle :app:assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
@@ -86,7 +122,7 @@ jobs:
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name != '' && startsWith(github.ref_name, 'v') && github.ref_name || format('v{0}', github.event.inputs.version_name || '1.0.1') }}
-          name: Chatbox Release
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Chatbox ${{ steps.meta.outputs.tag }}
           files: chatbox-v*.apk
           generate_release_notes: true

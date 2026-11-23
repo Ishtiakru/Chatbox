@@ -19,6 +19,5 @@
    - `ANDROID_KEY_ALIAS` — `chatbox`
    - `ANDROID_KEY_PASSWORD` — key password
 4. **Release Signed APK on GitHub Automatically**:
-   - Push this repository to GitHub.
-   - Push a version tag (`git tag v1.0.1 && git push origin v1.0.1`) OR run **Actions → Build Signed Chatbox APK & Publish GitHub Release → Run workflow**.
-   - GitHub Actions runs `:app:testDebugUnitTest`, compiles `:app:assembleRelease` signed with your permanent keystore, verifies certificates, and publishes `chatbox-v<version>.apk` to **GitHub Releases**.
+   - Push this repository to GitHub (via AI Studio's **Push to GitHub** menu or `git push`).
+   - Pushing to `main`, pushing a version tag (`v*`), or running **Actions → Build Signed Chatbox APK & Publish GitHub Release → Run workflow** automatically runs `:app:testDebugUnitTest`, compiles `:app:assembleRelease` signed with the fixed keystore, and publishes `chatbox-v<version>.apk` to **GitHub Releases**.
