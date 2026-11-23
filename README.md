@@ -4,8 +4,7 @@ A native Android rewrite of **Chatbox** (`Saira / Chatbox`) built with Kotlin, J
 
 ## Features
 
-- **Lavender Login & Bilingual Greeting**: `বাংলা (BD)` / `English (US)` toggle, Google Sign-In via Jetpack Credential Manager, and Guest Demo mode.
-- **Demo Conversations**: Local sample chats (`Saira` offline Bengali/English guide, `Maya Rahman`, `Arif Hasan`, `Nora Ahmed`, `The good people`) persisted in DataStore, with search, emoji insertion, and adaptive 1/2/3-pane layouts.
+- **Lavender Login & Bilingual Greeting**: `বাংলা (BD)` / `English (US)` toggle and Google Sign-In via Jetpack Credential Manager.
 - **Live Chats (Firestore)**: Real-time 1:1 conversations (`profiles`, `conversations`, `messages`, `userBlocks`) with Chatbox ID sharing, consent-based message requests (`pending` / `active` / `closed`), server pagination (`Load earlier messages`), per-conversation in-memory drafts, and peer blocking.
 - **Push Notifications (FCM)**: Android client registers device FCM tokens in owner-private `userFcmTokens/{ownerId}/devices/{deviceId}`, requests `POST_NOTIFICATIONS` on Android 13+, suppresses foreground banners for the active open thread, and deep-links tapped notifications into the conversation.
 - **Saira AI (Firebase AI Logic)**: Streaming Q&A grounded in curated Chatbox app knowledge using `gemini-3.8-flash` and Firebase App Check.

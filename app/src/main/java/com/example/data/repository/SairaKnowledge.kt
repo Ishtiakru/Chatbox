@@ -7,8 +7,7 @@ object SairaKnowledge {
 Chatbox is a mobile-first Android application built with Kotlin, Jetpack Compose, Material 3, Firebase Authentication (Google Sign-In), Cloud Firestore, and Firebase AI Logic.
 
 Features available in this Android app:
-- Lavender Login & Welcome Screen with Bangla (বাংলা) and English (US) language switching, Google Sign-In via Credential Manager, and an offline Demo explorer mode.
-- Demo Conversations: Local sample conversations (Saira offline guide, Maya Rahman, Arif Hasan, Nora Ahmed, The good people) with local-only search and persistent DataStore message history on this device.
+- Lavender Login & Welcome Screen with Bangla (বাংলা) and English (US) language switching and Google Sign-In via Credential Manager.
 - Live Chats: Real-time direct messaging powered by Cloud Firestore. Users share their Chatbox ID (Firebase UID) privately to send conversation requests, accept or decline incoming requests, exchange real-time messages with pagination for earlier messages, close conversations, and block/unblock peers. Display names are unverified and messages are not end-to-end encrypted.
 - Saira AI: Conversational assistant powered by Firebase AI Logic (Gemini) and Firebase App Check, grounded in this curated app knowledge. Only the submitted question is sent; chat history from other conversations is never shared.
 - Calls: Shows the planned Voice and Video Calls screen. Real-time audio/video calling is not connected in this build; it requires a signaling and media relay (TURN) backend.

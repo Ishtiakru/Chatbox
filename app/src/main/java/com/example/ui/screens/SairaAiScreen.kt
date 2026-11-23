@@ -95,7 +95,6 @@ fun SairaAiScreen(
     appUpdateActive: Boolean = false,
     onAppUpdateClick: () -> Unit = {},
     onSignIn: () -> Unit,
-    onOpenOfflineDemo: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSubmitQuestion: () -> Unit,
     onResetChat: () -> Unit = {},
@@ -225,12 +224,10 @@ fun SairaAiScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 SignInRequiredCard(
                     title = "Sign in to talk to Saira Assistant.",
-                    body = "AI questions require a signed-in Google account. The offline Saira guide remains available in Demo.",
+                    body = "AI questions require a signed-in Google account.",
                     icon = Icons.Rounded.AutoAwesome,
                     isBusy = authBusy,
                     onSignIn = onSignIn,
-                    secondaryButtonLabel = "Open offline guide in Demo",
-                    onSecondaryClick = onOpenOfflineDemo,
                     testTagPrefix = "saira_ai"
                 )
             } else {

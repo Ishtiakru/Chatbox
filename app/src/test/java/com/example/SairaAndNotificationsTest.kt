@@ -16,7 +16,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
-import com.example.data.repository.DemoPreferencesRepository
+import com.example.data.repository.AppPreferencesRepository
 import com.example.saira.SairaAssistantEngine
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
@@ -167,7 +167,7 @@ class SairaAndNotificationsTest {
     @Test
     fun `SairaAiViewModel manages rules and persists settings to DataStore`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = DemoPreferencesRepository(context)
+        val prefs = AppPreferencesRepository(context)
         val vm = SairaAiViewModel(preferencesRepository = prefs)
 
         vm.updateRuleContactDraft("Rahima")
@@ -211,7 +211,6 @@ class SairaAndNotificationsTest {
                     ),
                     isOnline = false,
                     onSignIn = {},
-                    onOpenOfflineDemo = {},
                     onDraftChange = {},
                     onSubmitQuestion = {}
                 )

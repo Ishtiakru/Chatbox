@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Shield
@@ -66,6 +65,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.BuildConfig
 import com.example.R
 import com.example.data.auth.attemptAutoSignIn
 import com.example.data.auth.authStateFlow
@@ -73,8 +73,8 @@ import com.example.data.auth.onGoogleSignInClicked
 import com.example.data.auth.signOutUser
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.SparkAppearance
+import com.example.data.repository.AppPreferencesRepository
 import com.example.data.repository.ChatMediaStorageRepository
-import com.example.data.repository.DemoPreferencesRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.NetworkConnectivityObserver
 import com.example.data.repository.SparkAdminRepository
@@ -85,7 +85,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import com.example.data.model.DemoCatalog
+import com.example.ui.components.AboutChatboxDialog
 import com.example.ui.components.AppUpdateDetailsDialog
 import com.example.ui.components.AuthErrorDialog
 import com.example.ui.components.ChatboxLogoWithUpdateBadge
@@ -93,15 +93,12 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.screens.AdminScreen
 import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
-import com.example.ui.screens.DemoChatsScreen
 import com.example.ui.screens.LiveChatsScreen
 import com.example.ui.screens.SairaAiScreen
 import com.example.ui.theme.ChatboxLavenderLogo
 import com.example.ui.theme.ChatboxLoginCanvasBottom
 import com.example.ui.theme.ChatboxLoginCanvasTop
 import com.example.ui.theme.ChatboxTheme
-import com.example.ui.viewmodel.DemoChatViewModel
-import com.example.ui.viewmodel.DemoModal
 import com.example.ui.viewmodel.LiveChatViewModel
 import com.example.ui.viewmodel.LiveScreenMode
 import com.example.ui.viewmodel.SairaAiViewModel
@@ -112,9 +109,6 @@ import com.google.firebase.auth.auth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
-
-@Serializable
-data object DemoRoute
 
 @Serializable
 data object LiveRoute
@@ -137,7 +131,6 @@ private data class NavTabItem(
 )
 
 private val appNavTabs = listOf(
-    NavTabItem(DemoRoute, "Demo", "Demo", Icons.Rounded.ChatBubbleOutline, "nav_demo"),
     NavTabItem(LiveRoute, "Live chats", "Live", Icons.Rounded.Group, "nav_live"),
     NavTabItem(SairaAiRoute, "Saira AI", "Saira", Icons.Rounded.AutoAwesome, "nav_saira_ai"),
     NavTabItem(CallsRoute, "Calls", "Calls", Icons.Rounded.Phone, "nav_calls"),
@@ -165,21 +158,10 @@ fun ChatboxAppRoot(
     var authError by rememberSaveable { mutableStateOf<String?>(null) }
     var splashDone by rememberSaveable { mutableStateOf(false) }
 
-    val prefsRepo = remember(context) { DemoPreferencesRepository(context.applicationContext) }
+    val prefsRepo = remember(context) { AppPreferencesRepository(context.applicationContext) }
     val rememberMeEnabled by prefsRepo.rememberMeEnabled.collectAsStateWithLifecycle(initialValue = false)
     val rememberedPhone by prefsRepo.rememberedPhone.collectAsStateWithLifecycle(initialValue = "")
-
-    val demoViewModel: DemoChatViewModel = viewModel(
-        factory = remember(context) {
-            object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return DemoChatViewModel(prefsRepo) as T
-                }
-            }
-        }
-    )
-    val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
+    val loginLanguage by prefsRepo.loginLanguage.collectAsStateWithLifecycle(initialValue = "en-US")
 
     val sairaAiViewModel: SairaAiViewModel = viewModel(
         factory = remember(context) {
@@ -187,7 +169,7 @@ fun ChatboxAppRoot(
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     return SairaAiViewModel(
-                        preferencesRepository = DemoPreferencesRepository(context.applicationContext)
+                        preferencesRepository = AppPreferencesRepository(context.applicationContext)
                     ) as T
                 }
             }
@@ -262,7 +244,7 @@ fun ChatboxAppRoot(
     } else if (signedInUser == null) {
         ChatboxTheme(lavenderAppearance = false) {
             AuthLoginScreen(
-                language = demoUiState.loginLanguage,
+                language = loginLanguage,
                 authReady = authReady,
                 authLoading = authLoading,
                 isOnline = isOnline,
@@ -273,7 +255,9 @@ fun ChatboxAppRoot(
                         prefsRepo.saveRememberedLoginPhone(rememberMe, phone)
                     }
                 },
-                onLanguageSelected = { demoViewModel.setLoginLanguage(it) },
+                onLanguageSelected = { languageCode ->
+                    scope.launch { prefsRepo.setLoginLanguage(languageCode) }
+                },
                 onGoogleSignIn = startSignIn
             )
         }
@@ -292,7 +276,7 @@ fun ChatboxAppRoot(
                                 mediaRepository = ChatMediaStorageRepository(context.applicationContext),
                                 voiceRecorder = VoiceNoteRecorder(context.applicationContext),
                                 connectivityObserver = connectivityObserver,
-                                preferencesRepository = DemoPreferencesRepository(context.applicationContext)
+                                preferencesRepository = AppPreferencesRepository(context.applicationContext)
                             ) as T
                         }
                     }
@@ -315,7 +299,6 @@ fun ChatboxAppRoot(
             )
 
             val appearance by adminViewModel.appearance.collectAsStateWithLifecycle()
-            val welcomeBanner by adminViewModel.welcomeBanner.collectAsStateWithLifecycle()
 
             LaunchedEffect(signedInUser.uid) {
                 FcmTokenRepository(context.applicationContext).syncCurrentToken()
@@ -326,11 +309,9 @@ fun ChatboxAppRoot(
                     user = signedInUser,
                     isOnline = isOnline,
                     appearance = appearance,
-                    welcomeBanner = welcomeBanner,
                     authLoading = authLoading,
                     pendingConversationId = pendingConversationId,
                     onConsumePendingConversation = onConsumePendingConversation,
-                    demoViewModel = demoViewModel,
                     sairaAiViewModel = sairaAiViewModel,
                     liveViewModel = liveViewModel,
                     adminViewModel = adminViewModel,
@@ -348,11 +329,9 @@ private fun AuthenticatedAppShell(
     user: FirebaseUser,
     isOnline: Boolean,
     appearance: SparkAppearance,
-    welcomeBanner: String,
     authLoading: Boolean,
     pendingConversationId: String?,
     onConsumePendingConversation: () -> Unit,
-    demoViewModel: DemoChatViewModel,
     sairaAiViewModel: SairaAiViewModel,
     liveViewModel: LiveChatViewModel,
     adminViewModel: SparkAdminViewModel,
@@ -362,13 +341,12 @@ private fun AuthenticatedAppShell(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val prefsRepo = remember(context) { DemoPreferencesRepository(context.applicationContext) }
+    val prefsRepo = remember(context) { AppPreferencesRepository(context.applicationContext) }
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val isAdminTab = backStackEntry?.destination?.hasRoute<AdminRoute>() == true
     val isLiveTab = backStackEntry?.destination?.hasRoute<LiveRoute>() == true
 
-    val demoUiState by demoViewModel.uiState.collectAsStateWithLifecycle()
     val aiUiState by sairaAiViewModel.uiState.collectAsStateWithLifecycle()
     val conversationsState by liveViewModel.conversationsState.collectAsStateWithLifecycle()
     val blockedIds by liveViewModel.blockedIdsState.collectAsStateWithLifecycle()
@@ -381,13 +359,18 @@ private fun AuthenticatedAppShell(
     val appUpdate by adminViewModel.appUpdate.collectAsStateWithLifecycle()
     val quickReaction by prefsRepo.quickReaction.collectAsStateWithLifecycle(initialValue = "💜")
     var showAppUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    var showAboutDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showAppUpdateDialog && appUpdate.active) {
         AppUpdateDetailsDialog(
             appUpdate = appUpdate,
-            currentVersion = DemoCatalog.APP_VERSION,
+            currentVersion = BuildConfig.VERSION_NAME,
             onDismiss = { showAppUpdateDialog = false }
         )
+    }
+
+    if (showAboutDialog) {
+        AboutChatboxDialog(onDismiss = { showAboutDialog = false })
     }
 
     LaunchedEffect(pendingConversationId) {
@@ -421,36 +404,13 @@ private fun AuthenticatedAppShell(
         userDisplayName = user.displayName,
         appUpdateActive = appUpdate.active,
         onAppUpdateClick = { showAppUpdateDialog = true },
-        onAboutClick = {
-            navigateToTab(navController, DemoRoute)
-            demoViewModel.showModal(DemoModal.ABOUT)
-        }
+        onAboutClick = { showAboutDialog = true }
     ) {
         NavHost(
             navController = navController,
             startDestination = LiveRoute,
             modifier = Modifier.fillMaxSize()
         ) {
-            composable<DemoRoute> {
-                DemoChatsScreen(
-                    uiState = demoUiState,
-                    publicWelcomeBanner = welcomeBanner,
-                    userDisplayName = user.displayName,
-                    userEmail = user.email,
-                    isSignedIn = true,
-                    authBusy = authLoading,
-                    isOnline = isOnline,
-                    appUpdateActive = appUpdate.active,
-                    onAppUpdateClick = { showAppUpdateDialog = true },
-                    onSelectContact = { demoViewModel.selectContact(it) },
-                    onSearchChange = { demoViewModel.updateSearch(it) },
-                    onDraftChange = { demoViewModel.updateDraft(it) },
-                    onAppendEmoji = { demoViewModel.appendEmoji() },
-                    onSendMessage = { demoViewModel.sendMessage() },
-                    onShowModal = { demoViewModel.showModal(it) },
-                    onAccountAction = onSignOut
-                )
-            }
             composable<LiveRoute> {
                 LiveChatsScreen(
                     currentUserId = user.uid,
@@ -509,10 +469,6 @@ private fun AuthenticatedAppShell(
                     appUpdateActive = appUpdate.active,
                     onAppUpdateClick = { showAppUpdateDialog = true },
                     onSignIn = onSignIn,
-                    onOpenOfflineDemo = {
-                        demoViewModel.selectContact("saira")
-                        navigateToTab(navController, DemoRoute)
-                    },
                     onDraftChange = { sairaAiViewModel.updateDraft(it) },
                     onSubmitQuestion = { sairaAiViewModel.submitQuestion() },
                     onResetChat = { sairaAiViewModel.resetChat() },

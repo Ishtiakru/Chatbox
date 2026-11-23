@@ -130,6 +130,9 @@ jobs:
       - name: Build Debug & Release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
 
+      - name: Compile unit tests
+        run: gradle :app:compileDebugUnitTestKotlin --no-daemon
+
       - name: Prepare & optionally sign APKs
         id: sign_apk
         env:
