@@ -1,0 +1,84 @@
+package com.example
+
+import com.example.data.DemoCatalog
+import com.example.data.SparkAdminCommands
+import com.example.data.SparkCommandProposal
+import com.example.data.model.ChatboxConstants
+import com.example.data.model.WorldLanguages
+import com.example.data.repository.LiveChatRepository
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ChatboxLogicTest {
+
+    @Test
+    fun `world languages normalize and detect Bengali cleanly`() {
+        assertEquals("bn-BD", WorldLanguages.normalizeCode("bn-BD"))
+        assertEquals("bn-BD", WorldLanguages.normalizeCode("bn"))
+        assertEquals("en-US", WorldLanguages.normalizeCode("unknown-XX"))
+        assertTrue(WorldLanguages.isBengali("bn-BD"))
+        assertTrue(WorldLanguages.isBengali("bn-IN"))
+        assertFalse(WorldLanguages.isBengali("en-US"))
+    }
+
+    @Test
+    fun `spark admin commands parse English and Bengali dashboard inputs`() {
+        assertEquals(
+            SparkCommandProposal.SetTheme("lavender"),
+            SparkAdminCommands.parse("আমার হোম পেজটা ল্যাভেন্ডার কালার করো")
+        )
+        assertEquals(
+            SparkCommandProposal.SetTheme("default"),
+            SparkAdminCommands.parse("theme: default")
+        )
+        assertEquals(
+            SparkCommandProposal.SetMenu("top"),
+            SparkAdminCommands.parse("মেনুবার উপরে নিয়ে আসো")
+        )
+        assertEquals(
+            SparkCommandProposal.SetMenu("bottom"),
+            SparkAdminCommands.parse("menu: bottom")
+        )
+        assertEquals(
+            SparkCommandProposal.SetAppUpdate(
+                active = true,
+                version = "1.2.0",
+                note = "Fast build",
+                downloadUrl = "https://github.com/Ishtiakru/Chatbox/releases/tag/v1.2.0"
+            ),
+            SparkAdminCommands.parse(
+                "update: 1.2.0 | Fast build | https://github.com/Ishtiakru/Chatbox/releases/tag/v1.2.0"
+            )
+        )
+        assertEquals(
+            SparkCommandProposal.SetAppUpdate(active = false, version = "", note = "", downloadUrl = ""),
+            SparkAdminCommands.parse("update: off")
+        )
+        assertTrue(SparkAdminCommands.isValidSparkTarget("Partner.Admin@gmail.com"))
+        assertFalse(SparkAdminCommands.isValidSparkTarget("user@yahoo.com"))
+    }
+
+    @Test
+    fun `whatsapp style short id and phone helpers produce deterministic valid keys`() {
+        val shortId1 = LiveChatRepository.deterministicSixDigitSeed("user_uid_alpha")
+        val shortId2 = LiveChatRepository.deterministicSixDigitSeed("user_uid_alpha")
+        assertEquals(shortId1, shortId2)
+        assertTrue(ChatboxConstants.VALID_SHORT_ID_REGEX.matches(shortId1))
+
+        assertEquals("uidA_uidB", LiveChatRepository.buildConversationId("uidB", "uidA"))
+        assertEquals("8801712345678", LiveChatRepository.normalizePhoneDigits("+880 1712-345678"))
+
+        val bdCandidates = LiveChatRepository.buildPhoneLookupCandidates("01712345678")
+        assertTrue("01712345678" in bdCandidates)
+        assertTrue("8801712345678" in bdCandidates)
+    }
+
+    @Test
+    fun `offline saira demo guide replies in Bengali for core topics`() {
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("অ্যাডমিন প্যানেল").contains("অ্যাডমিন"))
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
+        assertTrue(DemoCatalog.getSairaOfflineGuideReply("firebase").contains("Firebase"))
+    }
+}

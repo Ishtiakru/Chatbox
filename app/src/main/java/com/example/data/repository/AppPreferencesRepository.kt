@@ -7,6 +7,9 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.data.DemoCatalog
+import com.example.data.model.DemoMessage
+import com.example.data.model.WorldLanguages
 import com.example.saira.SairaNotificationRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,10 +31,11 @@ class AppPreferencesRepository(private val context: Context) {
     private val aiFallbackApiKeyKey = stringPreferencesKey("ai_fallback_api_key_v1")
     private val aiFallbackBaseUrlKey = stringPreferencesKey("ai_fallback_base_url_v1")
     private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
+    private val demoMessagesKey = stringPreferencesKey("demo_messages_v1")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
-            com.example.data.model.WorldLanguages.normalizeCode(prefs[loginLanguageKey] ?: "en-US")
+            WorldLanguages.normalizeCode(prefs[loginLanguageKey] ?: "en-US")
         }
 
     val quickReaction: Flow<String> =
@@ -94,8 +98,19 @@ class AppPreferencesRepository(private val context: Context) {
             prefs[aiFallbackModelKey].orEmpty()
         }
 
+    val demoMessages: Flow<Map<String, List<DemoMessage>>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[demoMessagesKey] ?: return@map DemoCatalog.defaultSeeds
+            try {
+                val decoded = json.decodeFromString<Map<String, List<DemoMessage>>>(raw)
+                DemoCatalog.defaultSeeds + decoded
+            } catch (_: Exception) {
+                DemoCatalog.defaultSeeds
+            }
+        }
+
     suspend fun setLoginLanguage(languageCode: String) {
-        val normalized = com.example.data.model.WorldLanguages.normalizeCode(languageCode)
+        val normalized = WorldLanguages.normalizeCode(languageCode)
         context.appDataStore.edit { prefs ->
             prefs[loginLanguageKey] = normalized
         }
@@ -150,6 +165,13 @@ class AppPreferencesRepository(private val context: Context) {
             } else {
                 prefs.remove(rememberedPhoneKey)
             }
+        }
+    }
+
+    suspend fun saveDemoMessages(messagesByContact: Map<String, List<DemoMessage>>) {
+        val encoded = json.encodeToString(messagesByContact)
+        context.appDataStore.edit { prefs ->
+            prefs[demoMessagesKey] = encoded
         }
     }
 }

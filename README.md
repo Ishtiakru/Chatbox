@@ -1,29 +1,27 @@
-# Chatbox (React + TypeScript + Express + Firebase)
+# Chatbox (Native Android — Kotlin + Jetpack Compose + Firebase)
 
-A responsive messaging and companion web application for **Chatbox** (`Saira / Chatbox`), rewritten from the Android Kotlin/Compose codebase into React, TypeScript, Tailwind CSS, Vite, Express, Firebase Auth, Cloud Firestore, Firebase Storage, and server-side Gemini AI (`@google/genai`).
+A native Android messaging and AI companion application for **Chatbox** (`Saira / Chatbox`), built with Kotlin, Jetpack Compose (Material 3), Navigation/Adaptive Window Size Classes, Firebase Authentication (Google Sign-In via Credential Manager), Cloud Firestore, Firebase Storage, Firebase AI Logic (with App Check & automatic OpenAI-compatible backup failover), and Spark Admin Studio.
 
 ## Features
 
-- **Lavender Auth & World Languages**: Launch splash screen, 52 world languages selector (`English (US)`, `বাংলা (বাংলাদেশ)`, and more), phone/password form preferences with "Remember me" & password reset helper, and Google Sign-In (`signInWithPopup`).
-- **Demo Conversations**: Local sample chats (`Saira` offline Bengali/English guide, `Maya Rahman`, `Arif Hasan`, `Nora Ahmed`, `The good people`) persisted in `localStorage`, with live search highlighting, emoji insertion, and adaptive multi-pane layout.
-- **Live Chats (Firestore & Storage)**: Real-time 1:1 conversations (`profiles`, `conversations`, `messages`, `userBlocks`) with Chatbox ID sharing, consent-based message requests (`pending` / `active` / `closed`), server pagination (`Load earlier messages`), browser-compressed image attachments, browser `MediaRecorder` voice notes with waveform playback, customizable quick reactions, thread search, and peer blocking.
-- **Saira AI (`@google/genai`)**: Server-side streaming assistant (`/api/saira/chat`) using `gemini-4-hydrogen`, grounded in curated Chatbox knowledge with time-aware greetings (`Good Morning`/`Afternoon`/`Evening`/`Good Night`), plus Auto-Reply settings (`1-Min Absence Auto-Reply` in Live chats and taught contact rules).
-- **Calls (Planned)**: Orbital calling preview screen linking back to active conversations.
-- **Spark Admin Studio**: Owner and Gmail delegate controls protected by `firestore.rules` and recent Google re-authentication (`theme: lavender/default`, `menu: top/bottom`, `welcome:`, `update:` green badge notices, and Gmail delegation management).
+- **Persistent Google Sign-In & World Languages**: Lavender launch experience, 52 world languages (`English (US)`, `বাংলা (বাংলাদেশ)`, and more), saved preferences via DataStore, and native Google Sign-In (`CredentialManager`) backed by a permanent keystore SHA setup so login stays stable across updates.
+- **WhatsApp-Style Profile & 6-Digit IDs**: Automatic unique 6-digit Chatbox ID (`shortIds/{id}`), About bio, and private phone directory linking (`phoneDirectory/{digits}`, `users/{uid}/private/profile`) so users can connect by 6-digit ID, phone number, or UID.
+- **Demo Conversations**: Local sample chats (`Saira` offline guide, `Maya Rahman`, `Arif Hasan`, `Nora Ahmed`, `The good people`) persisted in DataStore Preferences with live search, emoji quick-insert, and adaptive layout.
+- **Live Chats (Firestore & Storage)**: Real-time 1:1 messaging (`conversations`, `messages`, `userBlocks`) with consent requests (`pending` / `active` / `closed`), pagination (`Load earlier messages`), compressed photo uploads, m4a voice notes with duration playback, custom reactions, and user blocking.
+- **Always-On Saira AI (Meta AI Inspired UI)**: Animated multi-ring gradient orb, streaming Gemini responses via `Firebase.ai` (zero client API key), automatic 20-turn session rollover with Firestore history (`users/{uid}/sairaSessions`), live absence & contact auto-reply rules, and `AiRouter` automatic failover + cooldown tracking for backup OpenAI-compatible providers (Groq, OpenRouter, or custom).
+- **Spark Admin Studio & QE Coder (Admin Only)**: Accessible exclusively to the owner Gmail and active `sparkDelegations`. Includes a natural-language Dashboard (EN/BN commands or Firebase AI structured JSON plan to add custom navigation tabs, change app title/welcome/theme/menu placement) and **QE Coder**, which packages a single latest release ZIP (auto-deleting previous ZIP files) and publishes the green `Update` badge pill beside the top Chatbox logo.
 
-## Running Locally
+## Building & Testing Locally
 
-1. Copy `.env.example` to `.env` and set `GEMINI_API_KEY`.
-2. Install dependencies:
+1. Run unit tests:
    ```bash
-   npm install
+   gradle :app:testDebugUnitTest
    ```
-3. Start the full-stack development server (port `3000`):
+2. Build debug APK:
    ```bash
-   npm run dev
+   gradle :app:assembleDebug
    ```
-4. Build and lint:
+3. Run Firestore security rules tests against emulator (`port 8085`):
    ```bash
-   npm run lint
-   npm run build
+   FIRESTORE_EMULATOR_HOST="127.0.0.1:8085" node --test firestore.test.cjs
    ```

@@ -6,10 +6,6 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      app_url:
-        description: 'Live Chatbox HTTPS URL for the Android app'
-        required: true
-        default: 'https://ais-pre-4jxsyz44wyo3rzr3s2afz6-247983508059.asia-northeast1.run.app'
       version_name:
         description: 'Release version name (e.g. 1.0.1)'
         required: true
@@ -26,43 +22,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Setup Java 17
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install dependencies, lint & verify web build
-        run: |
-          npm ci
-          npm run lint
-          npm run build
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon
 
       - name: Restore fixed release keystore (keeps SHA-1 & SHA-256 identical forever)
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64 secret. Run scripts/setup-fixed-keystore.sh once and add the secret to GitHub so SHA never changes."
+            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64 secret. Run scripts/setup-fixed-keystore.sh or the Generate Permanent Keystore workflow once and add the secret so SHA never changes."
             exit 1
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "${{ runner.temp }}/chatbox-release.jks"
           keytool -list -v -keystore "${{ runner.temp }}/chatbox-release.jks" \
-            -alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
-            -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | grep -E "SHA1:|SHA256:"
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" | grep -E "SHA1:|SHA256:"
 
-      - name: Build & sign Android APK with fixed keystore (TWA)
+      - name: Build & sign Native Android Release APK
         env:
-          APP_URL: ${{ github.event.inputs.app_url || 'https://ais-pre-4jxsyz44wyo3rzr3s2afz6-247983508059.asia-northeast1.run.app' }}
           VERSION_NAME: ${{ github.event.inputs.version_name || github.ref_name || '1.0.1' }}
           KEYSTORE_PATH: ${{ runner.temp }}/chatbox-release.jks
           KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -70,44 +63,19 @@ jobs:
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           CLEAN_VER="${VERSION_NAME#v}"
-          npx --yes @bubblewrap/cli init \
-            --manifest="$APP_URL/manifest.webmanifest" \
-            --directory=android-twa || true
+          gradle :app:assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
 
-          mkdir -p android-twa
-          cat > android-twa/twa-manifest.json <<EOF
-          {
-            "packageId": "com.chatbox.saira",
-            "host": "$(echo "$APP_URL" | sed -E 's#https?://([^/]+).*#\1#')",
-            "name": "Chatbox",
-            "launcherName": "Chatbox",
-            "display": "standalone",
-            "themeColor": "#8b5cf6",
-            "navigationColor": "#f7f5fb",
-            "backgroundColor": "#ffffff",
-            "enableNotifications": true,
-            "startUrl": "/",
-            "iconUrl": "$APP_URL/assets/chatbox_logo_lavender.jpg",
-            "signingKey": {
-              "path": "$KEYSTORE_PATH",
-              "alias": "$KEY_ALIAS"
-            },
-            "appVersionName": "$CLEAN_VER",
-            "appVersionCode": ${{ github.run_number }},
-            "fallbackType": "customtabs"
-          }
-          EOF
-
-          cd android-twa
-          npx --yes @bubblewrap/cli update --skipPwaValidation || npx --yes @bubblewrap/cli init --manifest="$APP_URL" --skipPwaValidation
-          BUBBLEWRAP_KEYSTORE_PASSWORD="$KEYSTORE_PASS" BUBBLEWRAP_KEY_PASSWORD="$KEY_PASS" \
-            npx --yes @bubblewrap/cli build --skipPwaValidation
-
-          APK_SOURCE=$(find . -name "app-release-signed.apk" | head -n 1)
+          APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$APK_SOURCE" ]; then
-            APK_SOURCE=$(find . -name "*.apk" | head -n 1)
+            echo "ERROR: Built release APK not found."
+            exit 1
           fi
-          cp "$APK_SOURCE" "../chatbox-v${CLEAN_VER}.apk"
+          cp "$APK_SOURCE" "chatbox-v${CLEAN_VER}.apk"
+          "${ANDROID_HOME}/build-tools/"$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)/apksigner verify --print-certs "chatbox-v${CLEAN_VER}.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -6,7 +6,9 @@ import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.mapNotNull
 import java.util.concurrent.ConcurrentHashMap
 
@@ -38,8 +40,17 @@ class GeminiAiProvider(
         history: List<AiChatMessage>,
         prompt: String
     ): String {
-        val chat: Chat = model(systemInstruction).startChat(history = historyContent(history))
-        return chat.sendMessage(prompt).text?.trim().orEmpty()
+        return try {
+            val chat: Chat = model(systemInstruction).startChat(history = historyContent(history))
+            chat.sendMessage(prompt).text?.trim().orEmpty()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (AiErrorClassifier.isQuotaExhausted(e)) {
+                throw AiQuotaExhaustedException("Gemini quota exhausted", e)
+            }
+            throw e
+        }
     }
 
     override fun stream(
@@ -48,7 +59,15 @@ class GeminiAiProvider(
         prompt: String
     ): Flow<String> {
         val chat = model(systemInstruction).startChat(history = historyContent(history))
-        return chat.sendMessageStream(prompt).mapNotNull { chunk -> chunk.text }
+        return chat.sendMessageStream(prompt)
+            .mapNotNull { chunk -> chunk.text }
+            .catch { e ->
+                if (e is CancellationException) throw e
+                if (AiErrorClassifier.isQuotaExhausted(e)) {
+                    throw AiQuotaExhaustedException("Gemini quota exhausted", e)
+                }
+                throw e
+            }
     }
 
     companion object {

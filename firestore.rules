@@ -6,7 +6,7 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null && ('email_verified' in request.auth.token && request.auth.token.email_verified == true);
     }
 
     function incoming() {
@@ -52,7 +52,7 @@ service cloud.firestore {
       return data.keys().hasAll(['createdAt'])
         && data.keys().hasOnly(['createdAt'])
         && data.createdAt is timestamp
-        && data.createdAt == request.time;
+        && data.createdAt <= request.time;
     }
 
     function isValidFcmDevice(data) {
@@ -63,7 +63,7 @@ service cloud.firestore {
         && data.token.size() <= 512
         && data.platform in ['android', 'web']
         && data.updatedAt is timestamp
-        && data.updatedAt == request.time;
+        && data.updatedAt <= request.time;
     }
 
     function isValidProfile(data, uid) {
@@ -98,7 +98,7 @@ service cloud.firestore {
         && data.phoneNumber is string
         && data.phoneNumber.size() <= 24
         && data.updatedAt is timestamp
-        && data.updatedAt == request.time;
+        && data.updatedAt <= request.time;
     }
 
     function isValidConversation(data) {
@@ -112,7 +112,7 @@ service cloud.firestore {
         && data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128
         && data.status in ['pending', 'active', 'closed']
         && data.createdAt is timestamp && data.createdAt <= request.time
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidOptionalImageUrl(data) {
@@ -155,7 +155,7 @@ service cloud.firestore {
           || ('imageUrl' in data && data.imageUrl is string && data.imageUrl.size() > 0)
           || ('audioUrl' in data && data.audioUrl is string && data.audioUrl.size() > 0)
         )
-        && data.sentAt is timestamp && data.sentAt == request.time;
+        && data.sentAt is timestamp && data.sentAt <= request.time;
     }
 
     function verifiedGoogle() {
@@ -208,8 +208,8 @@ service cloud.firestore {
         && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128
         && data.email is string && data.email.size() > 0 && data.email.size() <= 128
         && data.pendingEmail is string && data.pendingEmail == ''
-        && data.createdAt is timestamp && data.createdAt == request.time
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.createdAt is timestamp && data.createdAt <= request.time
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSparkDelegation(data) {
@@ -220,7 +220,7 @@ service cloud.firestore {
         && data.invitedBy is string && data.invitedBy.size() > 0 && data.invitedBy.size() <= 128
         && data.status in ['invited', 'active', 'revoked']
         && data.createdAt is timestamp && data.createdAt <= request.time
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSparkPublic(data) {
@@ -228,7 +228,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['welcome', 'updatedAt', 'updatedBy'])
         && data.welcome is string && data.welcome.size() > 0 && data.welcome.size() <= 160
         && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSparkAppearance(appearance, data) {
@@ -237,7 +237,7 @@ service cloud.firestore {
         && ((appearance == 'sparkTheme' && data.value in ['default', 'lavender'])
           || (appearance == 'sparkMenu' && data.value in ['bottom', 'top']))
         && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidCustomMenuItem(item) {
@@ -257,9 +257,13 @@ service cloud.firestore {
         && data.appTitle is string && data.appTitle.size() > 0 && data.appTitle.size() <= 40
         && data.homeAnnouncement is string && data.homeAnnouncement.size() <= 240
         && data.customMenus is list && data.customMenus.size() <= 5
-        && (data.customMenus.size() == 0 || isValidCustomMenuItem(data.customMenus[0]))
+        && (data.customMenus.size() < 1 || isValidCustomMenuItem(data.customMenus[0]))
+        && (data.customMenus.size() < 2 || isValidCustomMenuItem(data.customMenus[1]))
+        && (data.customMenus.size() < 3 || isValidCustomMenuItem(data.customMenus[2]))
+        && (data.customMenus.size() < 4 || isValidCustomMenuItem(data.customMenus[3]))
+        && (data.customMenus.size() < 5 || isValidCustomMenuItem(data.customMenus[4]))
         && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSparkUpdate(data) {
@@ -271,7 +275,7 @@ service cloud.firestore {
         && data.downloadUrl is string && data.downloadUrl.size() <= 512
         && (data.downloadUrl == '' || data.downloadUrl.matches('^https://.*'))
         && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSairaSession(data) {
@@ -281,7 +285,7 @@ service cloud.firestore {
         && data.lastPreview is string && data.lastPreview.size() <= 240
         && data.exchangeCount is int && data.exchangeCount >= 0 && data.exchangeCount <= 5000
         && data.createdAt is timestamp && data.createdAt <= request.time
-        && data.updatedAt is timestamp && data.updatedAt == request.time;
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidSairaExchange(data) {
@@ -290,7 +294,7 @@ service cloud.firestore {
         && data.question is string && data.question.size() > 0 && data.question.size() <= 2000
         && data.answer is string && data.answer.size() > 0 && data.answer.size() <= 12000
         && data.sequence is int && data.sequence >= 0 && data.sequence <= 100000
-        && data.createdAt is timestamp && data.createdAt == request.time;
+        && data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
     match /profiles/{uid} {
@@ -391,7 +395,7 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && isValidId(conversationId)
         && isValidConversation(incoming())
-        && incoming().createdAt == request.time
+        && incoming().createdAt <= request.time
         && request.auth.uid in incoming().participants
         && incoming().createdBy == request.auth.uid
         && incoming().status == 'pending'
@@ -438,7 +442,7 @@ service cloud.firestore {
         && isValidId(sessionId)
         && request.auth.uid == userId
         && isValidSairaSession(incoming())
-        && incoming().createdAt == request.time;
+        && incoming().createdAt <= request.time;
       allow update: if isSignedIn()
         && isValidId(userId)
         && isValidId(sessionId)
@@ -497,7 +501,7 @@ service cloud.firestore {
         && recentlyAuthenticated()
         && validPendingEmail(email)
         && isValidSparkDelegation(incoming())
-        && incoming().createdAt == request.time
+        && incoming().createdAt <= request.time
         && email != get(sparkAdminPath()).data.email
         && incoming().email == email
         && incoming().uid == ''
