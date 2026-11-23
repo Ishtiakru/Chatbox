@@ -133,7 +133,20 @@ jobs:
           PY
 
       - name: Build Debug & Release APKs
-        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
+        run: |
+          set +e
+          gradle :app:assembleDebug :app:assembleRelease --no-daemon 2>&1 | tee build-output.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            grep -E "^e: |error:|Error:|What went wrong|Caused by:|Execution failed|Lint found|FAILURE" build-output.log \
+              | head -60 \
+              | while IFS= read -r line; do
+                  echo "::error::${line}"
+                done
+            echo "Gradle build failed with exit code $status"
+            exit "$status"
+          fi
 
       - name: Compile unit tests
         run: gradle :app:compileDebugUnitTestKotlin --no-daemon

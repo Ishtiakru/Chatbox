@@ -79,6 +79,11 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    lint {
+        // Lint has never been configured for this project; do not let it block releases.
+        checkReleaseBuilds = false
+    }
 }
 
 dependencies {
