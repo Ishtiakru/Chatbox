@@ -64,6 +64,24 @@ jobs:
             fi
           fi
 
+      - name: Prepare google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -f app/google-services.json ]; then
+            echo "Using repository app/google-services.json."
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
+            echo "Decoded app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
+          elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Created app/google-services.json from GOOGLE_SERVICES_JSON secret."
+          else
+            echo "::error::Missing app/google-services.json! AI Studio omits google-services.json when pushing to GitHub. Add a repository secret named GOOGLE_SERVICES_JSON (paste the contents of app/google-services.json) in GitHub -> Settings -> Secrets and variables -> Actions, then re-run this workflow."
+            exit 1
+          fi
+
       - name: Build Debug & Release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
 
