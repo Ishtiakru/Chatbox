@@ -774,6 +774,9 @@ private fun AutoReplyAndBackupTab(
     var notifAccessGranted by remember {
         mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
     }
+    var batteryUnrestricted by remember {
+        mutableStateOf(SairaNotificationListenerService.isBatteryOptimizationIgnored(context))
+    }
     var locationPermGranted by remember {
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
     }
@@ -782,6 +785,7 @@ private fun AutoReplyAndBackupTab(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
+                batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
                 locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
             }
         }
@@ -941,6 +945,40 @@ private fun AutoReplyAndBackupTab(
                         Text(if (notifAccessGranted) "সেটিংস দেখুন" else "অনুমতি দিন")
                     }
                 }
+                HorizontalDivider(color = colors.border)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (batteryUnrestricted) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
+                            contentDescription = null,
+                            tint = if (batteryUnrestricted) ChatboxUpdateGreen else colors.inkSubtle,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (batteryUnrestricted) {
+                                "স্ক্রিন অফ অবস্থায় সচল (Battery Unrestricted)"
+                            } else {
+                                "স্ক্রিন অফে মেসেজ পড়তে Battery Unrestricted দিন"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (batteryUnrestricted) ChatboxUpdateGreen else colors.inkMuted
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { SairaNotificationListenerService.openBatteryOptimizationSettings(context) },
+                        modifier = Modifier.testTag("saira_battery_optimization_button")
+                    ) {
+                        Text(if (batteryUnrestricted) "ব্যাটারি সেটিংস" else "অনুমতি দিন")
+                    }
+                }
             }
         }
 
@@ -1048,7 +1086,7 @@ private fun AutoReplyAndBackupTab(
                 OutlinedTextField(
                     value = guidanceDraft,
                     onValueChange = { guidanceDraft = it.take(400) },
-                    label = { Text("মেসেজ এলে কী রিপ্লাই দেবে বা কী কমান্ড পালন করবে?") },
+                    label = { Text("১ম মেসেজ (বক্সের টেক্সট — পরের মেসেজ সায়রা পড়ে উত্তর দেবে)") },
                     minLines = 2,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1077,7 +1115,7 @@ private fun AutoReplyAndBackupTab(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "ফ্রি AI ব্যবহার করে স্বাভাবিক রিপ্লাই তৈরি করুন",
+                        text = "পরবর্তী মেসেজগুলোতে ফ্রি AI দিয়ে বুদ্ধিমত্তার সাথে উত্তর দিন",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.ink,
                         modifier = Modifier.weight(1f)

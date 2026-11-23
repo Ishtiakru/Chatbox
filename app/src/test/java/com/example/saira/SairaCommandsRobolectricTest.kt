@@ -342,16 +342,17 @@ class SairaCommandsRobolectricTest {
         Shadows.shadowOf(application.mainLooper).idle()
         assertNull(capturedReply)
 
-        // 4) Immediate follow-up message from same contact (continuing conversation without 30s silence) -> MUST reply without repeating initial greeting!
+        // 4) Immediate follow-up message from same contact -> MUST NOT repeat 1st box SMS and MUST read & answer the question!
         capturedReply = null
         service.processNotification(buildSbn("com.whatsapp", "\u2068সজীব\u2069 (2 messages)", "কখন ফিরবে?"))
         Shadows.shadowOf(application.mainLooper).idle()
         assertNotNull(capturedReply)
         assertFalse(capturedReply!!.startsWith("হ্যালো সজীব,"))
-        assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertFalse(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertTrue(capturedReply!!.contains("সজীব"))
         assertEquals(2, prefs.sairaAutoReplyLogs.first().size)
 
-        // 5) MessagingStyle notification where last message is a self-echo -> MUST skip; then new incoming message -> MUST reply!
+        // 5) MessagingStyle notification where last message is a self-echo -> MUST skip; then new incoming message -> MUST reply intelligently!
         fun buildMessagingStyleSbn(vararg msgs: Pair<String, String>): StatusBarNotification {
             val remoteInput = RemoteInput.Builder("key_reply").setAllowFreeFormInput(true).build()
             val pendingIntent = PendingIntent.getBroadcast(
@@ -409,15 +410,31 @@ class SairaCommandsRobolectricTest {
             buildMessagingStyleSbn(
                 "সজীব" to "কখন ফিরবে?",
                 "You" to (prefs.sairaAutoReplyLogs.first().first().sentReply),
-                "সজীব" to "এখনো রাস্তায়?"
+                "সজীব" to "কেমন আছো?"
             )
         )
         Shadows.shadowOf(application.mainLooper).idle()
         assertNotNull(capturedReply)
-        assertTrue(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertFalse(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertTrue(capturedReply!!.contains("সায়রা"))
         assertEquals(3, prefs.sairaAutoReplyLogs.first().size)
 
-        // 6) Scheduled 10s grace job cancelled cleanly when notification is removed (user opened/replied)
+        // 6) InboxStyle grouped notification when screen is off (EXTRA_TEXT = "2 new messages", real text in EXTRA_TEXT_LINES)
+        capturedReply = null
+        val groupedSbn = buildSbn("com.whatsapp", "সজীব (2 messages)", "2 new messages").also { sbn ->
+            sbn.notification.extras.putCharSequenceArray(
+                Notification.EXTRA_TEXT_LINES,
+                arrayOf("সজীব: তুমি কি করছো?")
+            )
+        }
+        service.processNotification(groupedSbn)
+        Shadows.shadowOf(application.mainLooper).idle()
+        assertNotNull(capturedReply)
+        assertFalse(capturedReply!!.contains("আমি একটু বাইরে আছি।"))
+        assertEquals(4, prefs.sairaAutoReplyLogs.first().size)
+
+        // 7) Listener lifecycle + scheduled 10s grace job cancelled cleanly when notification is removed
+        service.onListenerConnected()
         val pendingSbn = buildSbn("com.whatsapp", "সজীব", "চলে আসো")
         service.onNotificationPosted(pendingSbn)
         service.onNotificationRemoved(pendingSbn)

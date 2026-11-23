@@ -80,6 +80,20 @@ object SairaNotificationMatcher {
         )
     }
 
+    fun buildFirstBoxReply(
+        senderName: String,
+        rule: SairaNotificationRule,
+        locationSnapshot: SharedLocationSnapshot?,
+        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    ): String = buildDeterministicReply(
+        senderName = senderName,
+        rule = rule,
+        locationSnapshot = locationSnapshot,
+        hourOfDay = hourOfDay,
+        isContinuation = false,
+        incomingText = ""
+    )
+
     fun buildDeterministicReply(
         senderName: String,
         rule: SairaNotificationRule,
@@ -90,17 +104,37 @@ object SairaNotificationMatcher {
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         val guidance = rule.taughtReplyGuidance.trim()
-        val lowerIncoming = incomingText.trim().lowercase()
+        val rawIncoming = incomingText.trim()
+        val lowerIncoming = rawIncoming.lowercase()
         val base = if (isContinuation) {
             when {
-                lowerIncoming.contains("?") ||
-                    lowerIncoming.contains("kemon") ||
+                locationSnapshot != null ->
+                    "হ্যাঁ $senderName, এই মুহূর্তের অনুমোদিত লোকেশন নিচে দিলাম:"
+                lowerIncoming.contains("kemon") ||
                     lowerIncoming.contains("কেমন") ||
-                    lowerIncoming.contains("kokhon") ||
-                    lowerIncoming.contains("কখন") ->
-                    "হ্যাঁ $senderName, আপনার প্রশ্নটি দেখেছি—$guidance"
+                    lowerIncoming.contains("how are") ->
+                    "ভালো আছি $senderName! আমি সায়রা বলছি—আপনি কেমন আছেন? কিছু জানাতে বা জিজ্ঞাসা করতে চাইলে লিখুন।"
+                lowerIncoming.contains("ki kor") ||
+                    lowerIncoming.contains("কী কর") ||
+                    lowerIncoming.contains("কি কর") ||
+                    lowerIncoming.contains("what are you") ->
+                    "আমি সায়রা, এখন মেসেজগুলো দেখছি। আপনার জরুরি কোনো কথা বা প্রশ্ন থাকলে আমাকে বলুন।"
+                lowerIncoming.contains("kokhon") ||
+                    lowerIncoming.contains("কখন") ||
+                    lowerIncoming.contains("when") ||
+                    lowerIncoming.contains("kothay") ||
+                    lowerIncoming.contains("কোথায়") ||
+                    lowerIncoming.contains("কোথায়") ||
+                    lowerIncoming.contains("koi") ||
+                    lowerIncoming.contains("কই") ||
+                    lowerIncoming.contains("where") ->
+                    "ঠিক কখন বা কোথায় আছেন তা এই মুহূর্তে নিশ্চিত জানা নেই $senderName—ফ্রি হলেই আপনার সাথে যোগাযোগ করা হবে। অন্য কিছু জানতে চাইলে বলুন।"
+                lowerIncoming in setOf("ok", "okay", "accha", "আচ্ছা", "hm", "hmm", "thanks", "thank you", "ধন্যবাদ") ->
+                    "ঠিক আছে $senderName, প্রয়োজনে আবার মেসেজ দেবেন। ভালো থাকবেন!"
+                rawIncoming.contains("?") || rawIncoming.contains("কে") || rawIncoming.contains("কী") || rawIncoming.contains("কি") ->
+                    "হ্যাঁ $senderName, আপনার \"${rawIncoming.take(60)}\" প্রশ্নটি পড়েছি—এই মুহূর্তে ইন্টারনেট বা AI সংযোগ ধীর থাকায় বিস্তারিত জানানো যাচ্ছে না, কিছুক্ষণ পর চেষ্টা করুন অথবা বার্তা রেখে যান।"
                 else ->
-                    "$senderName, আপনার মেসেজটি পেয়েছি—$guidance"
+                    "বুঝেছি $senderName, আপনার \"${rawIncoming.take(60)}\" বার্তাটি রেখে দিলাম—আরও কিছু বলার থাকলে নির্দ্বিধায় লিখুন।"
             }
         } else {
             "হ্যালো $senderName, ${info.bengaliGreeting}! $guidance"

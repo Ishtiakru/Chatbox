@@ -6,8 +6,10 @@ import android.app.RemoteInput
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -18,6 +20,7 @@ import com.example.data.ai.SairaPrompts
 import com.example.data.repository.AppPreferencesRepository
 import com.example.util.NetworkMonitor
 import com.example.util.configureAppCheck
+import com.google.firebase.appcheck.FirebaseAppCheck
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +32,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
@@ -49,6 +54,21 @@ class SairaNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        configureAppCheck(applicationContext, null)
+        serviceScope.launch {
+            SairaAiClient.warmUp()
+        }
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        runCatching {
+            requestRebind(ComponentName(this, SairaNotificationListenerService::class.java))
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val target = sbn ?: return
         val notification = target.notification ?: return
@@ -62,6 +82,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val nowMs = System.currentTimeMillis()
         val previousPending = pendingReplyJobs.remove(sbnKey)
         previousPending?.job?.cancel()
+        releaseWakeLock(previousPending?.wakeLock)
         val firstSeenMs = previousPending?.firstSeenMs ?: nowMs
 
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -73,30 +94,44 @@ class SairaNotificationListenerService : NotificationListenerService() {
             ""
         }
 
-        val job = serviceScope.launch {
-            val prevState = if (contactKey.isNotEmpty()) lastContactStates[contactKey] else null
-            val isActiveConversation = prevState != null &&
-                (System.currentTimeMillis() - prevState.repliedAtMs) <= ACTIVE_CONVERSATION_WINDOW_MS
+        // Keep CPU awake while the screen is off during the 10s wait, AI reply call, and RemoteInput dispatch
+        val wakeLock = acquirePartialWakeLock(PENDING_WAKE_LOCK_TIMEOUT_MS)
 
-            val targetDelayMs = if (isActiveConversation) {
-                CONTINUATION_DEBOUNCE_MS
-            } else {
-                // Wait up to 10 seconds from first message so owner can reply first;
-                // if owner does not answer within 10s, Saira steps in automatically.
-                val elapsedMs = (System.currentTimeMillis() - firstSeenMs).coerceAtLeast(0L)
-                (INITIAL_ABSENCE_WAIT_MS - elapsedMs).coerceAtLeast(CONTINUATION_DEBOUNCE_MS)
+        val job = serviceScope.launch {
+            try {
+                val prevState = if (contactKey.isNotEmpty()) lastContactStates[contactKey] else null
+                val isActiveConversation = prevState != null &&
+                    (System.currentTimeMillis() - prevState.repliedAtMs) <= ACTIVE_CONVERSATION_WINDOW_MS
+
+                val targetDelayMs = if (isActiveConversation) {
+                    CONTINUATION_DEBOUNCE_MS
+                } else {
+                    // Wait up to 10 seconds from first message so owner can reply first;
+                    // if owner does not answer within 10s, Saira steps in automatically.
+                    val elapsedMs = (System.currentTimeMillis() - firstSeenMs).coerceAtLeast(0L)
+                    (INITIAL_ABSENCE_WAIT_MS - elapsedMs).coerceAtLeast(CONTINUATION_DEBOUNCE_MS)
+                }
+                delay(targetDelayMs)
+                pendingReplyJobs.remove(sbnKey)
+                processNotification(target)
+            } finally {
+                releaseWakeLock(wakeLock)
             }
-            delay(targetDelayMs)
-            pendingReplyJobs.remove(sbnKey)
-            processNotification(target)
         }
-        pendingReplyJobs[sbnKey] = PendingReplyEntry(firstSeenMs = firstSeenMs, job = job)
+        pendingReplyJobs[sbnKey] = PendingReplyEntry(
+            firstSeenMs = firstSeenMs,
+            job = job,
+            wakeLock = wakeLock
+        )
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val target = sbn ?: return
         val sbnKey = target.key ?: "${target.packageName}:${target.id}"
-        pendingReplyJobs.remove(sbnKey)?.job?.cancel()
+        pendingReplyJobs.remove(sbnKey)?.let { entry ->
+            entry.job.cancel()
+            releaseWakeLock(entry.wakeLock)
+        }
     }
 
     internal suspend fun processNotification(sbn: StatusBarNotification?) {
@@ -111,160 +146,187 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val replyAction = findReplyAction(notification) ?: return
         val packageName = sbn.packageName
 
-        val prefs = AppPreferencesRepository(applicationContext)
-        val notifEnabled = prefs.sairaNotifReplyEnabled.first()
-        val locationEnabled = prefs.sairaLiveLocationEnabled.first()
-        val rules = prefs.sairaNotificationRules.first()
-        val chatboxUsers = prefs.sairaUserDirectory.first()
-        val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
+        val processWakeLock = acquirePartialWakeLock(PROCESS_WAKE_LOCK_TIMEOUT_MS)
+        try {
+            val prefs = AppPreferencesRepository(applicationContext)
+            val notifEnabled = prefs.sairaNotifReplyEnabled.first()
+            val locationEnabled = prefs.sairaLiveLocationEnabled.first()
+            val rules = prefs.sairaNotificationRules.first()
+            val chatboxUsers = prefs.sairaUserDirectory.first()
+            val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
 
-        val preliminaryPlatform = SairaNotificationMatcher.platformForPackage(packageName) ?: return
-        val preliminarySender = SairaNotificationMatcher.cleanContactTitle(senderTitle)
-        val preliminaryKey = "${preliminaryPlatform.name}::${preliminarySender.lowercase()}"
-        val prevStateHint = lastContactStates[preliminaryKey]
+            val preliminaryPlatform = SairaNotificationMatcher.platformForPackage(packageName) ?: return
+            val preliminarySender = SairaNotificationMatcher.cleanContactTitle(senderTitle)
+            val preliminaryKey = "${preliminaryPlatform.name}::${preliminarySender.lowercase()}"
+            val prevStateHint = lastContactStates[preliminaryKey]
 
-        val payload = extractIncomingPayload(
-            extras = extras,
-            notificationWhenMs = notification.`when`,
-            lastSentReply = prevStateHint?.lastSentReply
-        ) ?: return
-        if (isIgnoredSystemStatusText(payload.text)) return
+            val payload = extractIncomingPayload(
+                extras = extras,
+                notificationWhenMs = notification.`when`,
+                lastSentReply = prevStateHint?.lastSentReply,
+                senderNameHint = preliminarySender
+            ) ?: return
+            if (isIgnoredSystemStatusText(payload.text)) return
 
-        val match = SairaNotificationMatcher.match(
-            notifAutoReplyEnabled = notifEnabled,
-            liveLocationEnabled = locationEnabled,
-            locationPermissionGranted = hasLocPerm,
-            packageName = packageName,
-            senderTitle = senderTitle,
-            incomingText = payload.text,
-            isGroupSummary = isGroupSummary,
-            rules = rules
-        ) ?: return
+            val match = SairaNotificationMatcher.match(
+                notifAutoReplyEnabled = notifEnabled,
+                liveLocationEnabled = locationEnabled,
+                locationPermissionGranted = hasLocPerm,
+                packageName = packageName,
+                senderTitle = senderTitle,
+                incomingText = payload.text,
+                isGroupSummary = isGroupSummary,
+                rules = rules
+            ) ?: return
 
-        val contactKey = "${match.platform.name}::${match.normalizedSender.lowercase()}"
-        val mutex = contactMutexes.getOrPut(contactKey) { Mutex() }
+            val contactKey = "${match.platform.name}::${match.normalizedSender.lowercase()}"
+            val mutex = contactMutexes.getOrPut(contactKey) { Mutex() }
 
-        mutex.withLock {
-            val nowMs = System.currentTimeMillis()
-            val prevState = lastContactStates[contactKey]
-            val normalizedIncoming = payload.text.trim()
-            val fingerprint = "${normalizedIncoming.lowercase()}::${payload.messageTimeMs}"
+            mutex.withLock {
+                val nowMs = System.currentTimeMillis()
+                val prevState = lastContactStates[contactKey]
+                val normalizedIncoming = payload.text.trim()
+                val fingerprint = "${normalizedIncoming.lowercase()}::${payload.messageTimeMs}"
 
-            if (prevState != null) {
-                // Skip self-reply echoes or duplicate notification updates for the exact same message
-                if (normalizedIncoming.equals(prevState.lastSentReply.trim(), ignoreCase = true) &&
-                    nowMs - prevState.repliedAtMs < ECHO_SUPPRESS_WINDOW_MS
-                ) {
-                    return
-                }
-                if (fingerprint == prevState.lastFingerprint) {
-                    return
-                }
-                if (normalizedIncoming.equals(prevState.lastIncomingText, ignoreCase = true) &&
-                    nowMs - prevState.repliedAtMs < DUPLICATE_TEXT_WINDOW_MS
-                ) {
-                    return
-                }
-                val sinceLastReply = nowMs - prevState.repliedAtMs
-                if (sinceLastReply in 0 until MIN_REPLY_GAP_MS) {
-                    delay(MIN_REPLY_GAP_MS - sinceLastReply)
-                }
-            }
-
-            val historyDeque = conversationHistory.getOrPut(contactKey) { ArrayDeque() }
-            if (historyDeque.isEmpty()) {
-                val recentLogs = runCatching { prefs.sairaAutoReplyLogs.first() }.getOrDefault(emptyList())
-                val cutoffMs = nowMs - HISTORY_RETENTION_MS
-                recentLogs
-                    .asSequence()
-                    .filter {
-                        it.contactName.equals(match.normalizedSender, ignoreCase = true) &&
-                            it.platformLabel == match.platform.label &&
-                            it.timestampMs >= cutoffMs &&
-                            it.incomingPreview.isNotBlank() &&
-                            it.sentReply.isNotBlank()
+                if (prevState != null) {
+                    // Skip self-reply echoes or duplicate notification updates for the exact same message
+                    if (normalizedIncoming.equals(prevState.lastSentReply.trim(), ignoreCase = true) &&
+                        nowMs - prevState.repliedAtMs < ECHO_SUPPRESS_WINDOW_MS
+                    ) {
+                        return@withLock
                     }
-                    .take(MAX_HISTORY_TURNS)
-                    .toList()
-                    .asReversed()
-                    .forEach { entry ->
-                        historyDeque.addLast(AiChatMessage("user", entry.incomingPreview))
-                        historyDeque.addLast(AiChatMessage("model", entry.sentReply))
+                    if (fingerprint == prevState.lastFingerprint) {
+                        return@withLock
                     }
-            }
+                    if (normalizedIncoming.equals(prevState.lastIncomingText, ignoreCase = true) &&
+                        nowMs - prevState.repliedAtMs < DUPLICATE_TEXT_WINDOW_MS
+                    ) {
+                        return@withLock
+                    }
+                    val sinceLastReply = nowMs - prevState.repliedAtMs
+                    if (sinceLastReply in 0 until MIN_REPLY_GAP_MS) {
+                        delay(MIN_REPLY_GAP_MS - sinceLastReply)
+                    }
+                }
 
-            val historySnapshot = historyDeque.toList()
-            val isContinuation = historySnapshot.isNotEmpty()
+                val historyDeque = conversationHistory.getOrPut(contactKey) { ArrayDeque() }
+                if (historyDeque.isEmpty()) {
+                    val recentLogs = runCatching { prefs.sairaAutoReplyLogs.first() }.getOrDefault(emptyList())
+                    val cutoffMs = nowMs - ACTIVE_CONVERSATION_WINDOW_MS
+                    recentLogs
+                        .asSequence()
+                        .filter {
+                            it.contactName.equals(match.normalizedSender, ignoreCase = true) &&
+                                it.platformLabel == match.platform.label &&
+                                it.timestampMs >= cutoffMs &&
+                                it.incomingPreview.isNotBlank() &&
+                                it.sentReply.isNotBlank()
+                        }
+                        .take(MAX_HISTORY_TURNS)
+                        .toList()
+                        .asReversed()
+                        .forEach { entry ->
+                            historyDeque.addLast(AiChatMessage("user", entry.incomingPreview))
+                            historyDeque.addLast(AiChatMessage("model", entry.sentReply))
+                        }
+                } else if (prevState != null && nowMs - prevState.repliedAtMs > ACTIVE_CONVERSATION_WINDOW_MS) {
+                    // Start a fresh conversation turn after prolonged inactivity so the box SMS greets them again
+                    historyDeque.clear()
+                }
 
-            val locationSnapshot = if (match.shouldAttachLocation) {
-                SairaLocationHelper.getBestAvailableLocation(applicationContext)
-            } else {
-                null
-            }
+                val historySnapshot = historyDeque.toList()
+                val isContinuation = historySnapshot.isNotEmpty()
 
-            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-            val finalReply = if (match.rule.useAiReply && NetworkMonitor.isCurrentlyConnected(applicationContext)) {
-                configureAppCheck(applicationContext, null)
-                val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
-                    senderName = match.normalizedSender,
-                    platformLabel = match.platform.label,
-                    incomingMessage = normalizedIncoming,
-                    taughtGuidance = match.rule.taughtReplyGuidance,
-                    locationText = locationSnapshot?.toShareText(),
-                    chatboxUsers = chatboxUsers,
-                    hourOfDay = hour,
-                    isContinuation = isContinuation
-                )
-                val aiAttempt = requestAiAutoReplyWithRetry(historySnapshot, prompt)
-                aiAttempt.ifEmpty {
+                val locationSnapshot = if (match.shouldAttachLocation) {
+                    SairaLocationHelper.getBestAvailableLocation(applicationContext)
+                } else {
+                    null
+                }
+
+                val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                val finalReply = if (!isContinuation) {
+                    // Turn 1: Always send the owner's designated box message as the first SMS
+                    SairaNotificationMatcher.buildFirstBoxReply(
+                        senderName = match.normalizedSender,
+                        rule = match.rule,
+                        locationSnapshot = locationSnapshot,
+                        hourOfDay = hour
+                    )
+                } else if (match.rule.useAiReply) {
+                    // Turn 2+: Read the user's new SMS and respond intelligently according to what they asked
+                    var connected = NetworkMonitor.isCurrentlyConnected(applicationContext)
+                    if (!connected) {
+                        delay(RADIO_WAKE_RETRY_MS)
+                        connected = NetworkMonitor.isCurrentlyConnected(applicationContext)
+                    }
+                    val aiAttempt = if (connected) {
+                        configureAppCheck(applicationContext, null)
+                        val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
+                            senderName = match.normalizedSender,
+                            platformLabel = match.platform.label,
+                            incomingMessage = normalizedIncoming,
+                            taughtGuidance = match.rule.taughtReplyGuidance,
+                            locationText = locationSnapshot?.toShareText(),
+                            chatboxUsers = chatboxUsers,
+                            hourOfDay = hour,
+                            isContinuation = true
+                        )
+                        requestAiAutoReplyWithRetry(historySnapshot, prompt)
+                    } else {
+                        ""
+                    }
+                    aiAttempt.ifEmpty {
+                        SairaNotificationMatcher.buildDeterministicReply(
+                            senderName = match.normalizedSender,
+                            rule = match.rule,
+                            locationSnapshot = locationSnapshot,
+                            hourOfDay = hour,
+                            isContinuation = true,
+                            incomingText = normalizedIncoming
+                        )
+                    }
+                } else {
                     SairaNotificationMatcher.buildDeterministicReply(
                         senderName = match.normalizedSender,
                         rule = match.rule,
                         locationSnapshot = locationSnapshot,
                         hourOfDay = hour,
-                        isContinuation = isContinuation,
+                        isContinuation = true,
                         incomingText = normalizedIncoming
                     )
                 }
-            } else {
-                SairaNotificationMatcher.buildDeterministicReply(
-                    senderName = match.normalizedSender,
-                    rule = match.rule,
-                    locationSnapshot = locationSnapshot,
-                    hourOfDay = hour,
-                    isContinuation = isContinuation,
-                    incomingText = normalizedIncoming
-                )
-            }
 
-            val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
-            if (sentOk) {
-                val sentAtMs = System.currentTimeMillis()
-                lastContactStates[contactKey] = ContactReplyState(
-                    lastFingerprint = fingerprint,
-                    lastIncomingText = normalizedIncoming,
-                    lastSentReply = finalReply,
-                    repliedAtMs = sentAtMs
-                )
-
-                historyDeque.addLast(AiChatMessage("user", normalizedIncoming.take(300)))
-                historyDeque.addLast(AiChatMessage("model", finalReply.take(400)))
-                while (historyDeque.size > MAX_HISTORY_MESSAGES) {
-                    historyDeque.removeFirst()
-                }
-
-                prefs.appendAutoReplyLog(
-                    SairaAutoReplyLog(
-                        id = "log_${sentAtMs}_${Random.nextInt(100, 999)}",
-                        contactName = match.normalizedSender,
-                        platformLabel = match.platform.label,
-                        incomingPreview = normalizedIncoming.take(120),
-                        sentReply = finalReply.take(280),
-                        includedLocation = locationSnapshot != null,
-                        timestampMs = sentAtMs
+                val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
+                if (sentOk) {
+                    val sentAtMs = System.currentTimeMillis()
+                    lastContactStates[contactKey] = ContactReplyState(
+                        lastFingerprint = fingerprint,
+                        lastIncomingText = normalizedIncoming,
+                        lastSentReply = finalReply,
+                        repliedAtMs = sentAtMs
                     )
-                )
+
+                    historyDeque.addLast(AiChatMessage("user", normalizedIncoming.take(300)))
+                    historyDeque.addLast(AiChatMessage("model", finalReply.take(400)))
+                    while (historyDeque.size > MAX_HISTORY_MESSAGES) {
+                        historyDeque.removeFirst()
+                    }
+
+                    prefs.appendAutoReplyLog(
+                        SairaAutoReplyLog(
+                            id = "log_${sentAtMs}_${Random.nextInt(100, 999)}",
+                            contactName = match.normalizedSender,
+                            platformLabel = match.platform.label,
+                            incomingPreview = normalizedIncoming.take(120),
+                            sentReply = finalReply.take(280),
+                            includedLocation = locationSnapshot != null,
+                            timestampMs = sentAtMs
+                        )
+                    )
+                }
             }
+        } finally {
+            releaseWakeLock(processWakeLock)
         }
     }
 
@@ -285,8 +347,13 @@ class SairaNotificationListenerService : NotificationListenerService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Saira AI auto-reply attempt ${attempt + 1} failed", e)
                 if (attempt == 0) {
+                    runCatching {
+                        withTimeoutOrNull(6_000L) {
+                            FirebaseAppCheck.getInstance().getAppCheckToken(true).await()
+                        }
+                    }
                     runCatching { SairaAiClient.warmUp() }
-                    delay(500L)
+                    delay(600L)
                 }
             }
         }
@@ -296,7 +363,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
     private fun extractIncomingPayload(
         extras: Bundle,
         notificationWhenMs: Long,
-        lastSentReply: String?
+        lastSentReply: String?,
+        senderNameHint: String
     ): IncomingPayload? {
         @Suppress("DEPRECATION")
         val rawMessages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
@@ -362,15 +430,55 @@ class SairaNotificationListenerService : NotificationListenerService() {
             }
         }
 
-        val fallbackText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-            ?: return null
+        // Fallback for InboxStyle multi-line notifications (common when multiple messages arrive while screen is off)
+        val rawLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        if (!rawLines.isNullOrEmpty()) {
+            val cleanedLines = rawLines.mapNotNull { line ->
+                val text = line?.toString()?.trim().orEmpty()
+                if (text.isEmpty() || isIgnoredSystemStatusText(text)) return@mapNotNull null
+                val isSelfLine = text.startsWith("You:", ignoreCase = true) ||
+                    text.startsWith("Me:", ignoreCase = true) ||
+                    text.startsWith("আপনি:") ||
+                    (!lastSentReply.isNullOrBlank() && text.equals(lastSentReply.trim(), ignoreCase = true))
+                text to isSelfLine
+            }
+            if (cleanedLines.isNotEmpty()) {
+                if (cleanedLines.last().second) return null
+                val trailing = mutableListOf<String>()
+                for ((lineText, isSelfLine) in cleanedLines.asReversed()) {
+                    if (isSelfLine) break
+                    trailing.add(stripSenderPrefix(lineText, senderNameHint))
+                }
+                if (trailing.isNotEmpty()) {
+                    return IncomingPayload(
+                        text = trailing.asReversed().joinToString("\n").take(450),
+                        messageTimeMs = notificationWhenMs
+                    )
+                }
+            }
+        }
+
+        val primaryText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
+        val resolvedText = when {
+            bigText.isNotEmpty() && (primaryText.isEmpty() || isIgnoredSystemStatusText(primaryText)) -> bigText
+            primaryText.isNotEmpty() && !isIgnoredSystemStatusText(primaryText) -> primaryText
+            bigText.isNotEmpty() && !isIgnoredSystemStatusText(bigText) -> bigText
+            else -> return null
+        }
 
         return IncomingPayload(
-            text = fallbackText,
+            text = stripSenderPrefix(resolvedText, senderNameHint),
             messageTimeMs = notificationWhenMs
         )
+    }
+
+    private fun stripSenderPrefix(text: String, senderNameHint: String): String {
+        val clean = text.trim()
+        if (senderNameHint.isNotBlank() && clean.startsWith("$senderNameHint:", ignoreCase = true)) {
+            return clean.substring(senderNameHint.length + 1).trim().ifEmpty { clean }
+        }
+        return clean
     }
 
     private fun isIgnoredSystemStatusText(text: String): Boolean {
@@ -412,16 +520,39 @@ class SairaNotificationListenerService : NotificationListenerService() {
         return null
     }
 
+    private fun acquirePartialWakeLock(timeoutMs: Long): PowerManager.WakeLock? {
+        return runCatching {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return null
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+                setReferenceCounted(false)
+                acquire(timeoutMs)
+            }
+        }.getOrNull()
+    }
+
+    private fun releaseWakeLock(wakeLock: PowerManager.WakeLock?) {
+        if (wakeLock == null) return
+        runCatching {
+            if (wakeLock.isHeld) {
+                wakeLock.release()
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        pendingReplyJobs.values.forEach { it.job.cancel() }
+        pendingReplyJobs.values.forEach { entry ->
+            entry.job.cancel()
+            releaseWakeLock(entry.wakeLock)
+        }
         pendingReplyJobs.clear()
         serviceScope.cancel()
     }
 
     private data class PendingReplyEntry(
         val firstSeenMs: Long,
-        val job: Job
+        val job: Job,
+        val wakeLock: PowerManager.WakeLock?
     )
 
     private data class IncomingPayload(
@@ -449,13 +580,16 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "SairaNotifListener"
+        private const val WAKE_LOCK_TAG = "Chatbox:SairaAutoReplyWakeLock"
+        private const val PENDING_WAKE_LOCK_TIMEOUT_MS = 75_000L
+        private const val PROCESS_WAKE_LOCK_TIMEOUT_MS = 60_000L
+        private const val RADIO_WAKE_RETRY_MS = 1_200L
         private const val INITIAL_ABSENCE_WAIT_MS = 10_000L
         private const val CONTINUATION_DEBOUNCE_MS = 1_500L
-        private const val ACTIVE_CONVERSATION_WINDOW_MS = 10 * 60_000L
+        private const val ACTIVE_CONVERSATION_WINDOW_MS = 15 * 60_000L
         private const val MIN_REPLY_GAP_MS = 1_000L
         private const val DUPLICATE_TEXT_WINDOW_MS = 6_000L
         private const val ECHO_SUPPRESS_WINDOW_MS = 30_000L
-        private const val HISTORY_RETENTION_MS = 2 * 60 * 60_000L
         private const val MAX_HISTORY_TURNS = 7
         private const val MAX_HISTORY_MESSAGES = MAX_HISTORY_TURNS * 2
 
@@ -493,6 +627,25 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             runCatching { context.startActivity(intent) }
+        }
+
+        fun isBatteryOptimizationIgnored(context: Context): Boolean {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
+            return pm.isIgnoringBatteryOptimizations(context.packageName)
+        }
+
+        fun openBatteryOptimizationSettings(context: Context) {
+            val settingsIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { context.startActivity(settingsIntent) }
+                .onFailure {
+                    val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { context.startActivity(appDetails) }
+                }
         }
     }
 }
