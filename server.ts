@@ -413,7 +413,7 @@ function readCurrentReleaseManifest(): StoredQeRelease | null {
 }
 
 function addProjectFilesToZip(zip: JSZip, rootDir: string): number {
-  const ALLOWED_ROOT_DIRS = new Set(['src', 'public']);
+  const ALLOWED_ROOT_DIRS = new Set(['src', 'public', '.github', 'scripts']);
   const ALLOWED_ROOT_FILES = new Set([
     'package.json',
     'package-lock.json',
@@ -424,7 +424,9 @@ function addProjectFilesToZip(zip: JSZip, rootDir: string): number {
     'eslint.config.js',
     'firestore.rules',
     'firebase-blueprint.json',
+    'firebase-applet-config.json',
     'metadata.json',
+    'APK_GITHUB_RELEASE_GUIDE.md',
     '.env.example',
   ]);
 
@@ -469,7 +471,36 @@ function addProjectFilesToZip(zip: JSZip, rootDir: string): number {
 
 async function startServer() {
   const app = express();
+  app.use((_req, res, next) => {
+    // Allow Firebase Google Sign-In popup windows to keep opener communication intact
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
+
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    const packageName = (process.env.ANDROID_PACKAGE_NAME || 'com.chatbox.saira').trim();
+    const rawFingerprints = (process.env.ANDROID_SHA256_FINGERPRINT || '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/.test(s));
+
+    if (rawFingerprints.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    res.json([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: {
+          namespace: 'android_app',
+          package_name: packageName,
+          sha256_cert_fingerprints: rawFingerprints,
+        },
+      },
+    ]);
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });

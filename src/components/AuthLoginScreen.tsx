@@ -352,6 +352,19 @@ export function AuthLoginScreen({
               ? 'Google দিয়ে চালিয়ে যান'
               : 'Continue with Google'}
         </button>
+
+        {typeof window !== 'undefined' && window.self !== window.top && (
+          <a
+            href={window.location.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2.5 text-xs font-medium text-[#7658b4] hover:underline"
+          >
+            {bn
+              ? 'লগইনে সমস্যা হলে নতুন ব্রাউজার ট্যাবে খুলুন'
+              : 'Having trouble signing in inside preview? Open in browser tab'}
+          </a>
+        )}
       </div>
 
       {/* Footer Note */}

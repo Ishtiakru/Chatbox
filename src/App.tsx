@@ -9,12 +9,15 @@ import {
   X,
 } from 'lucide-react';
 import {
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User,
 } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
+import { ensureOwnProfile } from './services/liveChatService';
 import {
   BOOTSTRAPPED_OWNER_EMAILS,
   DEFAULT_SPARK_DYNAMIC_CONFIG,
@@ -119,7 +122,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    void getRedirectResult(auth)
+      .then((res) => {
+        if (mounted && res?.user) {
+          setCurrentUser(res.user);
+        }
+      })
+      .catch(() => undefined);
+
     const unsub = onAuthStateChanged(auth, (user) => {
+      if (!mounted) return;
       setCurrentUser(user);
       setAuthReady(true);
       if (!user) {
@@ -128,12 +141,28 @@ export function App() {
         setProfileModalOpen(false);
       }
     });
-    const fallbackTimer = window.setTimeout(() => setAuthReady(true), 1500);
+    const fallbackTimer = window.setTimeout(() => {
+      if (mounted) setAuthReady(true);
+    }, 1500);
     return () => {
+      mounted = false;
       unsub();
       window.clearTimeout(fallbackTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+    ensureOwnProfile(currentUser.uid, currentUser.displayName)
+      .then((profile) => {
+        if (active) setOwnProfile(profile);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -223,7 +252,13 @@ export function App() {
     setAuthLoading(true);
     setAuthError(null);
     const bn = isBengaliLanguage(loginLanguage);
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
     try {
+      await auth.authStateReady();
+      if (auth.currentUser) {
+        setCurrentUser(auth.currentUser);
+        return;
+      }
       const credential = await signInWithPopup(auth, googleProvider);
       if (credential.user) {
         setCurrentUser(credential.user);
@@ -239,6 +274,18 @@ export function App() {
           : '';
       if (code.includes('cancelled-popup-request')) {
         return;
+      }
+      if (
+        !inIframe &&
+        (code.includes('popup-blocked') ||
+          code.includes('operation-not-supported-in-this-environment'))
+      ) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch {
+          // Fall through to helpful error message
+        }
       }
       if (code.includes('popup-closed-by-user')) {
         setAuthError(
