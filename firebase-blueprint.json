@@ -254,6 +254,61 @@
         }
       },
       "required": ["token", "platform", "updatedAt"]
+    },
+    "SairaChatSession": {
+      "title": "SairaChatSession",
+      "description": "Owner-private saved Saira Assistant conversation session header so users can browse and resume past chats.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Session title derived from the opening prompt (1..120 chars)."
+        },
+        "lastPreview": {
+          "type": "string",
+          "description": "Short preview of the latest reply or exchange (0..240 chars)."
+        },
+        "exchangeCount": {
+          "type": "integer",
+          "description": "Number of completed Q&A exchanges in this session (0..5000)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["title", "lastPreview", "exchangeCount", "createdAt", "updatedAt"]
+    },
+    "SairaSessionExchange": {
+      "title": "SairaSessionExchange",
+      "description": "Immutable saved prompt-and-reply exchange inside a user's Saira Assistant chat session.",
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "User prompt text (1..2000 chars)."
+        },
+        "answer": {
+          "type": "string",
+          "description": "Assistant reply text (1..12000 chars)."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Zero-based exchange order index within the session (0..100000)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written with FieldValue.serverTimestamp()."
+        }
+      },
+      "required": ["question", "answer", "sequence", "createdAt"]
     }
   },
   "firestore": {
@@ -272,6 +327,14 @@
     "/conversations/{conversationId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/ChatMessage" },
       "description": "Messages belonging to a direct conversation."
+    },
+    "/users/{userId}/sairaSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/SairaChatSession" },
+      "description": "Owner-private saved Saira Assistant conversation sessions."
+    },
+    "/users/{userId}/sairaSessions/{sessionId}/exchanges/{exchangeId}": {
+      "schema": { "$ref": "#/entities/SairaSessionExchange" },
+      "description": "Ordered prompt-and-response exchanges inside a saved Saira Assistant session."
     },
     "/sparkAdmin/current": {
       "schema": { "$ref": "#/entities/SparkAdmin" },

@@ -456,3 +456,129 @@ test("FCM device tokens are private to the owner and validate token payload", as
   await assertSucceeds(aliceDb.collection("userFcmTokens").doc(ALICE_UID).collection("devices").doc(deviceId).delete());
 });
 
+test("Saira chat sessions & exchanges enforce owner isolation, parent gate, immutability, and schema bounds", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const sessionRef = aliceDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_01");
+  const ex1Ref = sessionRef.collection("exchanges").doc("ex_01");
+  const ex2Ref = sessionRef.collection("exchanges").doc("ex_02");
+  const now = new Date(Date.now() - 2000);
+
+  // Unauthenticated denied
+  await assertFails(unauthDb.collection("users").doc(ALICE_UID).collection("sairaSessions").get());
+  await assertFails(
+    unauthDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_01").set({
+      title: "Unauth session",
+      lastPreview: "Hi",
+      exchangeCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  // Orphan exchange without parent session rejected
+  await assertFails(
+    ex1Ref.set({
+      question: "Hello Saira",
+      answer: "Good Evening! How can I help?",
+      sequence: 0,
+      createdAt: now,
+    })
+  );
+
+  // Atomic batch creates session + first exchange (exercises existsAfter)
+  const batch = aliceDb.batch();
+  batch.set(sessionRef, {
+    title: "Evening greeting & study help",
+    lastPreview: "Good Evening! How can I help?",
+    exchangeCount: 1,
+    createdAt: now,
+    updatedAt: now,
+  });
+  batch.set(ex1Ref, {
+    question: "Hello Saira",
+    answer: "Good Evening! How can I help?",
+    sequence: 0,
+    createdAt: now,
+  });
+  await assertSucceeds(batch.commit());
+
+  // Subsequent exchange + session header update succeed
+  const later = new Date(Date.now() - 1000);
+  const batch2 = aliceDb.batch();
+  batch2.update(sessionRef, {
+    lastPreview: "Here is the summary...",
+    exchangeCount: 2,
+    updatedAt: later,
+  });
+  batch2.set(ex2Ref, {
+    question: "Summarize offline SMS rules",
+    answer: "Here is the summary...",
+    sequence: 1,
+    createdAt: later,
+  });
+  await assertSucceeds(batch2.commit());
+
+  // Owner queries matching Kotlin repository succeed (list sessions + ordered exchanges)
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("sairaSessions").orderBy("updatedAt", "desc").limit(50).get()
+  );
+  await assertSucceeds(
+    sessionRef.collection("exchanges").orderBy("sequence", "asc").get()
+  );
+
+  // Bob cannot get, list, create, update, or delete Alice's sessions or exchanges
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("sairaSessions").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_01").get());
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_01").collection("exchanges").get()
+  );
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_02").set({
+      title: "Hijack",
+      lastPreview: "No",
+      exchangeCount: 1,
+      createdAt: later,
+      updatedAt: later,
+    })
+  );
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_01").delete());
+
+  // Schema bounds & immutability guards
+  await assertFails(ex1Ref.update({ answer: "Tampered" }));
+  await assertFails(
+    sessionRef.update({
+      createdAt: new Date(Date.now() - 500),
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_bad_id").set({
+      id: "session_bad_id",
+      title: "Has @DocumentId field",
+      lastPreview: "No",
+      exchangeCount: 1,
+      createdAt: later,
+      updatedAt: later,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("sairaSessions").doc("session_future").set({
+      title: "Future",
+      lastPreview: "No",
+      exchangeCount: 1,
+      createdAt: new Date(Date.now() + 60000),
+      updatedAt: new Date(Date.now() + 60000),
+    })
+  );
+
+  // Owner cleanup batch delete succeeds
+  const delBatch = aliceDb.batch();
+  delBatch.delete(ex1Ref);
+  delBatch.delete(ex2Ref);
+  delBatch.delete(sessionRef);
+  await assertSucceeds(delBatch.commit());
+});
+

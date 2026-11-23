@@ -217,6 +217,25 @@ service cloud.firestore {
         && data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidSairaSession(data) {
+      return data.keys().hasAll(['title', 'lastPreview', 'exchangeCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'lastPreview', 'exchangeCount', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 120
+        && data.lastPreview is string && data.lastPreview.size() <= 240
+        && data.exchangeCount is int && data.exchangeCount >= 0 && data.exchangeCount <= 5000
+        && data.createdAt is timestamp && data.createdAt <= request.time
+        && data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSairaExchange(data) {
+      return data.keys().hasAll(['question', 'answer', 'sequence', 'createdAt'])
+        && data.keys().hasOnly(['question', 'answer', 'sequence', 'createdAt'])
+        && data.question is string && data.question.size() > 0 && data.question.size() <= 2000
+        && data.answer is string && data.answer.size() > 0 && data.answer.size() <= 12000
+        && data.sequence is int && data.sequence >= 0 && data.sequence <= 100000
+        && data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     match /profiles/{uid} {
       allow get: if isSignedIn() && isValidId(uid);
       allow list: if false;
@@ -295,6 +314,60 @@ service cloud.firestore {
           && isValidMessage(incoming())
           && incoming().senderId == request.auth.uid;
         allow update, delete: if false;
+      }
+    }
+
+    match /users/{userId}/sairaSessions/{sessionId} {
+      allow get: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(sessionId)
+        && request.auth.uid == userId;
+      allow list: if isSignedIn()
+        && isValidId(userId)
+        && request.auth.uid == userId;
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(sessionId)
+        && request.auth.uid == userId
+        && isValidSairaSession(incoming());
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(sessionId)
+        && request.auth.uid == userId
+        && isValidSairaSession(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'lastPreview', 'exchangeCount', 'updatedAt']);
+      allow delete: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(sessionId)
+        && request.auth.uid == userId;
+
+      match /exchanges/{exchangeId} {
+        allow get: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(sessionId)
+          && isValidId(exchangeId)
+          && request.auth.uid == userId;
+        allow list: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(sessionId)
+          && request.auth.uid == userId;
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(sessionId)
+          && isValidId(exchangeId)
+          && request.auth.uid == userId
+          && isValidSairaExchange(incoming())
+          && (
+            exists(/databases/$(database)/documents/users/$(userId)/sairaSessions/$(sessionId))
+            || existsAfter(/databases/$(database)/documents/users/$(userId)/sairaSessions/$(sessionId))
+          );
+        allow update: if false;
+        allow delete: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(sessionId)
+          && isValidId(exchangeId)
+          && request.auth.uid == userId;
       }
     }
 
