@@ -44,6 +44,11 @@ class AuthRepository(private val context: Context) {
 
     fun currentUser(): FirebaseUser? = auth.currentUser
 
+    /**
+     * Keeps a silent sign-in limited to the single authorized account that Credential Manager
+     * is allowed to auto-select. On any failure it still returns [AuthResult.Cancelled] (instead
+     * of a hard error) so the login screen can offer the user-facing Google account picker.
+     */
     suspend fun trySilentGoogleSignIn(activityContext: Context): AuthResult {
         return try {
             val serverClientId = context.getString(R.string.default_web_client_id)
@@ -77,6 +82,50 @@ class AuthRepository(private val context: Context) {
             val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
             val request = GetCredentialRequest.Builder()
                 .addCredentialOption(signInOption)
+                .build()
+            val result = credentialManager.getCredential(activityContext, request)
+            signInWithCredential(result.credential)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: GetCredentialCancellationException) {
+            AuthResult.Cancelled
+        } catch (e: NoCredentialException) {
+            Log.w("AuthRepository", "No Google credentials found on device", e)
+            AuthResult.Failure("No Google account found on this device. Add a Google account in device settings first.")
+        } catch (e: GetCredentialException) {
+            Log.e("AuthRepository", "Google sign-in credential error", e)
+            AuthResult.Failure(e.errorMessage?.toString() ?: "Google sign-in failed. Please try again.")
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Google sign-in failed", e)
+            AuthResult.Failure(e.localizedMessage ?: "Unable to complete Google Sign-In.")
+        }
+    }
+
+    /**
+     * Shows the system Google account picker listing every Google account on the device,
+     * so the user can pick a different Gmail than the previously selected one.
+     * When [clearPrevious] is true the last remembered credential selection is cleared first.
+     */
+    suspend fun signInWithGoogleAccountPicker(activityContext: Context, clearPrevious: Boolean): AuthResult {
+        return try {
+            val serverClientId = context.getString(R.string.default_web_client_id)
+            val credentialManager = CredentialManager.create(activityContext)
+            if (clearPrevious) {
+                try {
+                    credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.d("AuthRepository", "Clear credential state skipped: ${e.message}")
+                }
+            }
+            val option = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setAutoSelectEnabled(false)
+                .setServerClientId(serverClientId)
+                .build()
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(option)
                 .build()
             val result = credentialManager.getCredential(activityContext, request)
             signInWithCredential(result.credential)
