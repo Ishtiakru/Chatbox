@@ -213,6 +213,23 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun signInWithGoogleWithAccountPicker(activityContext: Context) {
+        if (_authLoading.value) return
+        viewModelScope.launch {
+            _authLoading.value = true
+            _authError.value = null
+            try {
+                when (val res = authRepo.signInWithGoogleAccountPicker(activityContext, clearPrevious = true)) {
+                    is AuthResult.Success -> _authError.value = null
+                    is AuthResult.Cancelled -> _authError.value = null
+                    is AuthResult.Failure -> _authError.value = res.message
+                }
+            } finally {
+                _authLoading.value = false
+            }
+        }
+    }
+
     fun trySilentSignIn(activityContext: Context) {
         if (currentUser.value != null || _authLoading.value) return
         viewModelScope.launch {
