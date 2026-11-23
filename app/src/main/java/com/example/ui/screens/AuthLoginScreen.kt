@@ -449,6 +449,29 @@ fun AuthLoginScreen(
                         .testTag("login_password_input")
                 )
 
+                if (!isCreateAccountMode) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp)
+                    ) {
+                        TextButton(
+                            onClick = { showForgotPasswordDialog = true },
+                            enabled = isOnline,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .minimumInteractiveComponentSize()
+                                .testTag("forgot_password_button")
+                        ) {
+                            Text(
+                                text = if (bn) "পাসওয়ার্ড ভুলে গেছেন?" else "Forgot password?",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = if (isOnline) ChatboxLoginPrimary else ChatboxLoginTextSecondary
+                            )
+                        }
+                    }
+                }
+
                 AnimatedVisibility(visible = isCreateAccountMode) {
                     Column {
                         Spacer(modifier = Modifier.height(10.dp))
@@ -573,23 +596,8 @@ fun AuthLoginScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                if (!isCreateAccountMode) {
-                    TextButton(
-                        onClick = { showForgotPasswordDialog = true },
-                        enabled = isOnline,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("forgot_password_button")
-                    ) {
-                        Text(
-                            text = if (bn) "পাসওয়ার্ড ভুলে গেছেন?" else "Forgot password?",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = if (isOnline) ChatboxLoginTextPrimary else ChatboxLoginTextSecondary
-                        )
-                    }
-                } else {
+                if (isCreateAccountMode) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     TextButton(
                         onClick = {
                             isCreateAccountMode = false
@@ -1067,29 +1075,22 @@ private fun ForgotPasswordGmailDialog(
 
     fun submitReset() {
         if (busy) return
-        if (!isOnline) {
-            errorMessage = if (isBengali) {
-                "পাসওয়ার্ড রিসেট ইমেল পাঠাতে ইন্টারনেট সংযোগ প্রয়োজন।"
-            } else {
-                "An internet connection is required to send a reset email."
-            }
+        val result = validateResetRequestInput(
+            rawEmail = gmailInput,
+            isOnline = isOnline,
+            isBengali = isBengali
+        )
+        if (result.errorMessage != null) {
+            errorMessage = result.errorMessage
             return
         }
-        val trimmed = gmailInput.trim()
-        if (trimmed.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmed).matches()) {
-            errorMessage = if (isBengali) {
-                "সঠিক ইমেল / Gmail ঠিকানা দিন।"
-            } else {
-                "Please enter a valid email address."
-            }
-            return
-        }
+        val trimmed = result.normalizedEmail ?: return
         busy = true
         errorMessage = null
         scope.launch {
-            val result = onSendReset(trimmed)
+            val sendResult = onSendReset(trimmed)
             busy = false
-            result.onSuccess {
+            sendResult.onSuccess {
                 sentToEmail = trimmed
             }.onFailure { err ->
                 errorMessage = err.localizedMessage ?: if (isBengali) {
@@ -1117,84 +1118,28 @@ private fun ForgotPasswordGmailDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = if (isBengali) {
-                        "আপনার ফোনের Gmail বা অ্যাকাউন্ট ইমেল ঠিকানা দিন। Firebase-এর মাধ্যমে পাসওয়ার্ড রিসেট লিংক পাঠানো হবে।"
-                    } else {
-                        "Enter your account email or Gmail address below to receive a Firebase password reset link."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = gmailInput,
-                    onValueChange = {
-                        gmailInput = it
-                        errorMessage = null
-                        sentToEmail = null
-                    },
-                    enabled = !busy,
-                    isError = !errorMessage.isNullOrBlank(),
-                    singleLine = true,
-                    label = { Text(if (isBengali) "আপনার ইমেল / Gmail" else "Email / Gmail address") },
-                    placeholder = { Text("name@gmail.com") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(onSend = { submitReset() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("forgot_password_email_input")
-                )
-                if (!errorMessage.isNullOrBlank()) {
-                    Text(
-                        text = errorMessage.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.testTag("forgot_password_error_text")
-                    )
-                }
-                if (!sentToEmail.isNullOrBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = ChatboxLavenderLogo.copy(alpha = 0.1f)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = if (isBengali) {
-                                    "$sentToEmail ঠিকানায় পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। Gmail ইনবক্স বা Spam ফোল্ডার চেক করুন।"
-                                } else {
-                                    "Password reset link sent to $sentToEmail. Check your Gmail inbox or Spam folder."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    if (!onOpenGmail()) {
-                                        errorMessage = if (isBengali) {
-                                            "এই ডিভাইসে Gmail বা ইমেল অ্যাপ খোলা যায়নি।"
-                                        } else {
-                                            "Unable to open Gmail or an email app on this device."
-                                        }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("open_gmail_button")
-                            ) {
-                                Text(if (isBengali) "Gmail খুলুন" else "Open Gmail")
-                            }
+            ForgotPasswordResetFields(
+                gmailInput = gmailInput,
+                busy = busy,
+                errorMessage = errorMessage,
+                sentToEmail = sentToEmail,
+                isBengali = isBengali,
+                onGmailChange = {
+                    gmailInput = it
+                    errorMessage = null
+                    sentToEmail = null
+                },
+                onSubmit = { submitReset() },
+                onOpenGmail = {
+                    if (!onOpenGmail()) {
+                        errorMessage = if (isBengali) {
+                            "এই ডিভাইসে Gmail বা ইমেল অ্যাপ খোলা যায়নি।"
+                        } else {
+                            "Unable to open Gmail or an email app on this device."
                         }
                     }
                 }
-            }
+            )
         },
         confirmButton = {
             Button(
@@ -1221,3 +1166,115 @@ private fun ForgotPasswordGmailDialog(
         }
     )
 }
+
+internal data class ResetEmailValidationResult(
+    val normalizedEmail: String? = null,
+    val errorMessage: String? = null
+)
+
+internal fun validateResetRequestInput(
+    rawEmail: String,
+    isOnline: Boolean,
+    isBengali: Boolean
+): ResetEmailValidationResult {
+    if (!isOnline) {
+        return ResetEmailValidationResult(
+            errorMessage = if (isBengali) {
+                "পাসওয়ার্ড রিসেট ইমেল পাঠাতে ইন্টারনেট সংযোগ প্রয়োজন।"
+            } else {
+                "An internet connection is required to send a reset email."
+            }
+        )
+    }
+    val trimmed = rawEmail.trim()
+    if (trimmed.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmed).matches()) {
+        return ResetEmailValidationResult(
+            errorMessage = if (isBengali) {
+                "সঠিক ইমেল / Gmail ঠিকানা দিন।"
+            } else {
+                "Please enter a valid email address."
+            }
+        )
+    }
+    return ResetEmailValidationResult(normalizedEmail = trimmed)
+}
+
+@Composable
+internal fun ForgotPasswordResetFields(
+    gmailInput: String,
+    busy: Boolean,
+    errorMessage: String?,
+    sentToEmail: String?,
+    isBengali: Boolean,
+    onGmailChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onOpenGmail: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = if (isBengali) {
+                "আপনার ফোনের Gmail বা অ্যাকাউন্ট ইমেল ঠিকানা দিন। Firebase-এর মাধ্যমে পাসওয়ার্ড রিসেট লিংক পাঠানো হবে।"
+            } else {
+                "Enter your account email or Gmail address below to receive a Firebase password reset link."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = gmailInput,
+            onValueChange = onGmailChange,
+            enabled = !busy,
+            isError = !errorMessage.isNullOrBlank(),
+            singleLine = true,
+            label = { Text(if (isBengali) "আপনার ইমেল / Gmail" else "Email / Gmail address") },
+            placeholder = { Text("name@gmail.com") },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Send
+            ),
+            keyboardActions = KeyboardActions(onSend = { onSubmit() }),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("forgot_password_email_input")
+        )
+        if (!errorMessage.isNullOrBlank()) {
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("forgot_password_error_text")
+            )
+        }
+        if (!sentToEmail.isNullOrBlank()) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = ChatboxLavenderLogo.copy(alpha = 0.1f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = if (isBengali) {
+                            "$sentToEmail ঠিকানায় পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। Gmail ইনবক্স বা Spam ফোল্ডার চেক করুন।"
+                        } else {
+                            "Password reset link sent to $sentToEmail. Check your Gmail inbox or Spam folder."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    OutlinedButton(
+                        onClick = onOpenGmail,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .testTag("open_gmail_button")
+                    ) {
+                        Text(if (isBengali) "Gmail খুলুন" else "Open Gmail")
+                    }
+                }
+            }
+        }
+    }
+}
+

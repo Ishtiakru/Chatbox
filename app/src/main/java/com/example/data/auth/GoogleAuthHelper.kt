@@ -108,7 +108,7 @@ fun onGoogleSignInClicked(
         .build()
     scope.launch {
         try {
-            val activity = context as? Activity
+            val activity = context.findActivity()
                 ?: throw IllegalStateException("Activity context required for Google Sign-In")
             val cred = credentialManager.getCredential(activity, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -142,7 +142,7 @@ suspend fun reauthenticateCurrentGoogleUser(
         val request = GetCredentialRequest.Builder()
             .addCredentialOption(signInOption)
             .build()
-        val activity = context as? Activity
+        val activity = context.findActivity()
             ?: return Result.failure(IllegalStateException("Activity context required."))
         val cred = credentialManager.getCredential(activity, request).credential
         if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {

@@ -471,8 +471,8 @@ internal fun LiveThreadPane(
             ConversationLifecycleBar(
                 conversation = conversation,
                 currentUserId = currentUserId,
-                busy = busy,
-                canInteract = !isBlocked,
+                busy = busy || !threadState.isOnline,
+                canInteract = !isBlocked && threadState.isOnline,
                 onAccept = onAcceptRequest,
                 onCloseOrDecline = onCloseOrDecline,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)

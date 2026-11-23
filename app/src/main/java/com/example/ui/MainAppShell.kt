@@ -18,10 +18,10 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Group
-import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
@@ -665,7 +665,7 @@ private fun AdaptiveAppScaffold(
                             modifier = Modifier.testTag("rail_about_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.HelpOutline,
+                                imageVector = Icons.AutoMirrored.Rounded.HelpOutline,
                                 contentDescription = stringResource(id = R.string.cd_about)
                             )
                         }

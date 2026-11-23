@@ -1,0 +1,88 @@
+name: Release Android APK
+
+on:
+  push:
+    branches:
+      - 'main'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: release_meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v1.0.${{ github.run_number }}"
+          fi
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Build Debug & Release APKs
+        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
+
+      - name: Prepare & optionally sign APKs
+        id: sign_apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p release-apks
+          cp app/build/outputs/apk/debug/app-debug.apk release-apks/Chatbox-debug.apk
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+            "$APKSIGNER" sign \
+              --ks release.keystore \
+              --ks-pass "pass:$STORE_PASSWORD" \
+              --ks-key-pass "pass:$KEY_PASSWORD" \
+              --ks-alias "$KEY_ALIAS" \
+              --out release-apks/Chatbox-release-signed.apk \
+              app/build/outputs/apk/release/app-release-unsigned.apk
+            rm -f release.keystore
+          else
+            cp app/build/outputs/apk/release/app-release-unsigned.apk release-apks/Chatbox-release-unsigned.apk
+            echo "Keystore secrets not configured; publishing unsigned release APK alongside installable debug APK."
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: Chatbox ${{ steps.release_meta.outputs.tag_name }}
+          generate_release_notes: true
+          files: release-apks/*.apk
