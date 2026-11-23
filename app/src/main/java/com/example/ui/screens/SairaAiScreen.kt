@@ -103,7 +103,7 @@ import com.example.saira.SairaNotificationListenerService
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
 import com.example.saira.SairaTimeGreeting
-import com.example.ui.components.ChatboxLogoWithUpdateBadge
+import com.example.ui.components.ChatboxUpdateBadge
 import com.example.ui.components.NoticeBanner
 import com.example.ui.components.SairaMetaOrb
 import com.example.ui.theme.ChatboxErrorInk
