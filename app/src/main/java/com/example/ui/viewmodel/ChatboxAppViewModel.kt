@@ -129,6 +129,45 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val _ownProfile = MutableStateFlow<UserProfile?>(null)
     val ownProfile: StateFlow<UserProfile?> = _ownProfile.asStateFlow()
 
+    fun syncSairaUserDirectory() {
+        viewModelScope.launch {
+            runCatching {
+                currentUser
+                    .filterNotNull()
+                    .flatMapLatest { user -> liveChatRepo.observeUserConversations(user.uid) }
+                    .map { conversations ->
+                        conversations.map { it.peerUid }.filter { it.isNotBlank() }.distinct()
+                    }
+                    .distinctUntilChanged()
+                    .flatMapLatest { peerUids ->
+                        if (peerUids.isEmpty()) {
+                            flowOf(emptyList<UserProfile?>())
+                        } else {
+                            combine(peerUids.map { liveChatRepo.observePeerProfile(it) }) { profiles ->
+                                profiles.toList()
+                            }
+                        }
+                    }
+                    .collect { peers ->
+                        val directory = com.example.saira.SairaUserDirectory.build(
+                            self = _ownProfile.value?.toSairaDirectoryUser(isSelf = true),
+                            peers = peers.mapNotNull { it?.toSairaDirectoryUser(isSelf = false) }
+                        )
+                        prefs.saveSairaUserDirectory(directory)
+                    }
+            }
+        }
+    }
+
+    private fun UserProfile.toSairaDirectoryUser(isSelf: Boolean): com.example.saira.SairaDirectoryUser =
+        com.example.saira.SairaDirectoryUser(
+            uid = uid,
+            name = name,
+            shortId = shortId,
+            about = about,
+            isSelf = isSelf
+        )
+
     private val _selectedTab = MutableStateFlow<AppTab>(AppTab.Core(CoreAppTab.LIVE))
     val selectedTab: StateFlow<AppTab> = _selectedTab.asStateFlow()
 
@@ -239,6 +278,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun signOut() {
         viewModelScope.launch {
+            runCatching { prefs.saveSairaUserDirectory(emptyList()) }
             authRepo.signOut()
         }
     }

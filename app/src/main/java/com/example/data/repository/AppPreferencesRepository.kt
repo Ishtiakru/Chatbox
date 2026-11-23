@@ -10,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.DemoCatalog
 import com.example.data.model.DemoMessage
 import com.example.data.model.WorldLanguages
+import com.example.saira.SairaDirectoryUser
 import com.example.saira.SairaNotificationRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,6 +29,7 @@ class AppPreferencesRepository(private val context: Context) {
     private val sairaLiveLocationEnabledKey = booleanPreferencesKey("saira_live_location_enabled_v1")
     private val sairaLiveLocationAllowedPeersKey = stringPreferencesKey("saira_live_location_peers_v1")
     private val sairaAutoReplyLogsKey = stringPreferencesKey("saira_auto_reply_logs_v1")
+    private val sairaUserDirectoryKey = stringPreferencesKey("saira_user_directory_v1")
     private val rememberMeEnabledKey = booleanPreferencesKey("login_remember_me_v1")
     private val rememberedPhoneKey = stringPreferencesKey("login_remembered_phone_v1")
     private val aiFallbackProviderKindKey = stringPreferencesKey("ai_fallback_provider_v1")
@@ -87,6 +89,16 @@ class AppPreferencesRepository(private val context: Context) {
             val raw = prefs[sairaAutoReplyLogsKey] ?: return@map emptyList()
             try {
                 json.decodeFromString<List<com.example.saira.SairaAutoReplyLog>>(raw)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    val sairaUserDirectory: Flow<List<SairaDirectoryUser>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[sairaUserDirectoryKey] ?: return@map emptyList()
+            try {
+                json.decodeFromString<List<SairaDirectoryUser>>(raw)
             } catch (_: Exception) {
                 emptyList()
             }
@@ -201,6 +213,19 @@ class AppPreferencesRepository(private val context: Context) {
     suspend fun clearAutoReplyLogs() {
         context.appDataStore.edit { prefs ->
             prefs.remove(sairaAutoReplyLogsKey)
+        }
+    }
+
+    suspend fun saveSairaUserDirectory(users: List<SairaDirectoryUser>) {
+        if (users.isEmpty()) {
+            context.appDataStore.edit { prefs ->
+                prefs.remove(sairaUserDirectoryKey)
+            }
+            return
+        }
+        val encoded = json.encodeToString(users)
+        context.appDataStore.edit { prefs ->
+            prefs[sairaUserDirectoryKey] = encoded
         }
     }
 
