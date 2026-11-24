@@ -86,6 +86,13 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.NoticeBanner
 import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxUpdateGreen
+import com.example.ui.theme.DmHairlineBorder
+import com.example.ui.theme.DmInkDark
+import com.example.ui.theme.DmInkMuted
+import com.example.ui.theme.DmLavenderAccent
+import com.example.ui.theme.DmLavenderDeep
+import com.example.ui.theme.DmLavenderSoft
+import com.example.ui.theme.DmLavenderSoftStrong
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 

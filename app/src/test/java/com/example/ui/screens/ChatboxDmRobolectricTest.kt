@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -9,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -30,6 +35,7 @@ import com.example.ui.theme.ChatboxTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -62,23 +68,35 @@ class ChatboxDmRobolectricTest {
         }
     }
 
+    private fun advancePastSplashAndEnterChatbox() {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(300, TimeUnit.MILLISECONDS)
+            composeRule.mainClock.advanceTimeBy(300)
+            composeRule.onAllNodesWithTag("login_back_button").fetchSemanticsNodes().isNotEmpty() ||
+                composeRule.onAllNodesWithTag("nav_chatbox").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodesWithTag("login_back_button").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag("login_back_button").performClick()
+            composeRule.waitUntil(timeoutMillis = 3_000) {
+                Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+                composeRule.onAllNodesWithTag("nav_chatbox").fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        composeRule.waitForIdle()
+    }
+
     @Test
-    fun `app launches directly into chatbox without login gate or demo naming`() {
+    fun `app launches to chatbox via skip or login without demo or sign out inside app`() {
         composeRule.setContent {
             ChatboxRoot()
         }
 
-        // Advance past the 1200ms launch splash (both main looper & compose clock)
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(300, TimeUnit.MILLISECONDS)
-            composeRule.mainClock.advanceTimeBy(300)
-            composeRule.onAllNodesWithTag("nav_chatbox").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.waitForIdle()
+        advancePastSplashAndEnterChatbox()
 
-        // Must NOT show any login screen or Demo label
-        composeRule.onAllNodesWithText("Continue with Google", substring = true).assertCountEquals(0)
+        // Must NOT show any Demo label or Sign out / Log out button inside the app
         composeRule.onAllNodesWithText("Demo", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Sign out", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Log out", substring = true, ignoreCase = true).assertCountEquals(0)
 
         // Bottom nav shows Chatbox, Saira, Calls, Profile
         composeRule.onNodeWithTag("nav_chatbox").assertIsDisplayed()
@@ -90,7 +108,7 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("chatbox_dm_root").assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 3_000) {
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithTag("chatbox_thread_sazzad").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("chatbox_inbox_lazy_list").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("chatbox_inbox_lazy_list").performScrollToKey("sazzad")
@@ -414,5 +432,191 @@ class ChatboxDmRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Dhaka Squad").assertCountEquals(2)
         assertTrue(callLogs.isEmpty())
+    }
+
+    @Test
+    fun `adding friend by 6-digit id works without permission denied error`() {
+        composeRule.setContent {
+            ChatboxRoot()
+        }
+
+        advancePastSplashAndEnterChatbox()
+        composeRule.waitUntil(timeoutMillis = 3_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+            composeRule.onAllNodesWithTag("chatbox_new_dm_button").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitForIdle()
+
+        // Tap Add Friend / New DM button
+        composeRule.onNodeWithTag("chatbox_own_short_id_chip").assertIsDisplayed()
+        composeRule.onNodeWithTag("chatbox_new_dm_button").performClick()
+        composeRule.waitForIdle()
+
+        // Enter ONLY 6-digit ID "685331" (matching user's Screenshot 1 input)
+        composeRule.onNodeWithTag("new_dm_identifier_input").performTextInput("685331")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("new_dm_start_button").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+
+        // Opens DM thread directly without any Permission denied error
+        composeRule.onAllNodesWithText("Permission denied", substring = true, ignoreCase = true)
+            .assertCountEquals(0)
+        composeRule.onNodeWithTag("chatbox_thread_screen").assertIsDisplayed()
+        composeRule.onAllNodesWithText("685331", substring = true).fetchSemanticsNodes().let { nodes ->
+            assertTrue("Expected created thread to include 685331", nodes.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `manifest removes sensitive listener permissions and saira shows play protect safe mode`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val flags = PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES
+        val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(flags.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, flags)
+        }
+
+        val requested = pkgInfo.requestedPermissions?.toSet().orEmpty()
+        assertFalse(
+            "WAKE_LOCK should be removed from manifest",
+            requested.contains(Manifest.permission.WAKE_LOCK)
+        )
+        assertFalse(
+            "BIND_NOTIFICATION_LISTENER_SERVICE must NOT be declared to satisfy Play Protect",
+            pkgInfo.services.orEmpty().any {
+                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE
+            }
+        )
+        assertEquals(
+            "allowBackup must be false",
+            0,
+            (pkgInfo.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_ALLOW_BACKUP
+        )
+
+        // Verify Saira tab displays Play Protect Safe Mode and NOT the old Notification Access prompt
+        composeRule.setContent {
+            ChatboxRoot()
+        }
+        advancePastSplashAndEnterChatbox()
+        composeRule.onNodeWithTag("nav_saira").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("saira_subtab_rules").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("saira_play_protect_status").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Notification Access অনুমতি প্রয়োজন", substring = true)
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun `auth login screen matches screenshot controls and supports log in create account and forgot password`() {
+        var enteredViaSkip = false
+        var loggedInIdentifier: String? = null
+        var createdAccountName: String? = null
+        var resetIdentifier: String? = null
+        var selectedLang = "en-US"
+
+        composeRule.setContent {
+            var lang by remember { mutableStateOf(selectedLang) }
+            ChatboxTheme {
+                AuthLoginScreen(
+                    selectedLanguageCode = lang,
+                    initialIdentifier = "",
+                    onLanguageSelected = { code ->
+                        lang = code
+                        selectedLang = code
+                    },
+                    onBackSkipLogin = { enteredViaSkip = true },
+                    onLoginWithCredentials = { id, pwd ->
+                        if (id.isBlank() || pwd.length < 4) {
+                            Result.failure(IllegalArgumentException("Enter valid credentials"))
+                        } else {
+                            loggedInIdentifier = id
+                            Result.success(Unit)
+                        }
+                    },
+                    onCreateAccount = { name, id, pwd ->
+                        if (name.isBlank() || id.isBlank() || pwd.length < 4) {
+                            Result.failure(IllegalArgumentException("Fill all fields"))
+                        } else {
+                            createdAccountName = name
+                            Result.success(Unit)
+                        }
+                    },
+                    onResetPassword = { id, newPwd ->
+                        if (id.isBlank() || newPwd.length < 4) {
+                            Result.failure(IllegalArgumentException("Invalid reset input"))
+                        } else {
+                            resetIdentifier = id
+                            Result.success("Password updated. You can now log in.")
+                        }
+                    },
+                    onGoogleSignIn = { com.example.data.repository.AuthResult.Cancelled }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Verify all UI elements matching the screenshot
+        composeRule.onNodeWithTag("login_back_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("login_language_button").assertIsDisplayed()
+        composeRule.onNodeWithText("English (US)").assertIsDisplayed()
+        composeRule.onNodeWithTag("login_identifier_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("login_password_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("login_submit_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Log in").assertIsDisplayed()
+        composeRule.onNodeWithTag("login_forgot_password_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("login_create_account_button").performScrollTo().assertIsDisplayed()
+
+        // Language picker switches language
+        composeRule.onNodeWithTag("login_language_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("login_language_dialog").assertIsDisplayed()
+        composeRule.onNodeWithText("বাংলা (বাংলাদেশ)").performClick()
+        composeRule.waitForIdle()
+        assertEquals("bn-BD", selectedLang)
+
+        // Info icon toggles identifier hint
+        composeRule.onNodeWithTag("login_identifier_info_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("login_identifier_hint_banner").performScrollTo().assertIsDisplayed()
+
+        // Forgot password dialog resets password
+        composeRule.onNodeWithTag("login_forgot_password_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("forgot_password_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("forgot_identifier_input").performTextInput("01712345678")
+        composeRule.onNodeWithTag("forgot_new_password_input").performTextInput("pass1234")
+        composeRule.onNodeWithTag("forgot_reset_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals("01712345678", resetIdentifier)
+
+        // Create new account dialog works
+        composeRule.onNodeWithTag("login_create_account_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("create_account_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("create_account_name_input").performTextInput("Istiak Ahmed")
+        composeRule.onNodeWithTag("create_account_identifier_input").performTextInput("istiak@gmail.com")
+        composeRule.onNodeWithTag("create_account_password_input").performTextInput("secret99")
+        composeRule.onNodeWithTag("create_account_submit_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals("Istiak Ahmed", createdAccountName)
+
+        // Direct Log in works
+        composeRule.onNodeWithTag("login_password_input").performScrollTo().performTextInput("pass1234")
+        composeRule.onNodeWithTag("login_submit_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals("01712345678", loggedInIdentifier)
+
+        // Back button skips login directly into Chatbox
+        composeRule.onNodeWithTag("login_back_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertTrue(enteredViaSkip)
     }
 }

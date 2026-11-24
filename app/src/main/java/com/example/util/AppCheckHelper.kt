@@ -7,7 +7,6 @@ import android.util.Log
 import com.example.BuildConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
@@ -57,27 +56,23 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 metaPrefs.edit()
                     .putBoolean(KEY_HAS_TRUSTED_DEBUG_TOKEN, true)
                     .commit()
-                appCheck.installAppCheckProviderFactory(
-                    DebugAppCheckProviderFactory.getInstance()
-                )
-                appCheckConfigured.set(true)
-                Log.d(TAG, "App Check debug secret configured from launch intent.")
+                if (installDebugAppCheckProvider(appCheck)) {
+                    appCheckConfigured.set(true)
+                    Log.d(TAG, "App Check debug secret configured from launch intent.")
+                }
             } else if (
                 metaPrefs.getBoolean(KEY_HAS_TRUSTED_DEBUG_TOKEN, false) &&
                 !debugPrefs.getString(DEBUG_SECRET_KEY, null).isNullOrEmpty()
             ) {
-                appCheck.installAppCheckProviderFactory(
-                    DebugAppCheckProviderFactory.getInstance()
-                )
-                appCheckConfigured.set(true)
-                Log.d(TAG, "App Check debug secret reused from trusted local store.")
+                if (installDebugAppCheckProvider(appCheck)) {
+                    appCheckConfigured.set(true)
+                    Log.d(TAG, "App Check debug secret reused from trusted local store.")
+                }
             } else {
                 // Sideloaded debug APK on a physical device has no harness debug token:
                 // use reCAPTCHA Enterprise so Firebase AI Logic attestation succeeds out of the box.
                 if (!installRecaptchaProvider(context, appCheck)) {
-                    appCheck.installAppCheckProviderFactory(
-                        DebugAppCheckProviderFactory.getInstance()
-                    )
+                    installDebugAppCheckProvider(appCheck)
                     Log.w(TAG, "Fallback to DebugAppCheckProviderFactory without trusted token.")
                 }
                 appCheckConfigured.set(true)

@@ -50,7 +50,6 @@ import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
@@ -122,6 +121,12 @@ import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.ChatboxUpdateGreen
+import com.example.ui.theme.DmHairlineBorder
+import com.example.ui.theme.DmInkDark
+import com.example.ui.theme.DmInkMuted
+import com.example.ui.theme.DmLavenderAccent
+import com.example.ui.theme.DmLavenderDeep
+import com.example.ui.theme.DmLavenderSoft
 import com.example.ui.theme.LocalChatboxColors
 import kotlinx.coroutines.delay
 import java.io.File
@@ -150,6 +155,7 @@ fun ChatboxDmScreen(
     publicWelcomeBanner: String,
     isOnline: Boolean,
     appUpdateActive: Boolean,
+    ownShortId: String = "482910",
     onSelectThread: (String) -> Unit,
     onSendMessage: (threadId: String, body: String, timeStr: String) -> Unit,
     onSendImage: (threadId: String, uri: Uri) -> Unit,
@@ -277,6 +283,7 @@ fun ChatboxDmScreen(
                         publicWelcomeBanner = publicWelcomeBanner,
                         isOnline = isOnline,
                         appUpdateActive = appUpdateActive,
+                        ownShortId = ownShortId,
                         onAppUpdateClick = onAppUpdateClick,
                         onSelectThread = { id ->
                             onSelectThread(id)
@@ -331,6 +338,7 @@ fun ChatboxDmScreen(
                         publicWelcomeBanner = publicWelcomeBanner,
                         isOnline = isOnline,
                         appUpdateActive = appUpdateActive,
+                        ownShortId = ownShortId,
                         onAppUpdateClick = onAppUpdateClick,
                         onSelectThread = { id ->
                             onSelectThread(id)
@@ -370,46 +378,46 @@ fun ChatboxDmScreen(
         }
     }
 
-    // New DM / Contact Dialog
+    // Add Friend / New DM Dialog
     if (showNewChatDialog) {
-        var nameInput by remember { mutableStateOf("") }
         var idOrPhoneInput by remember { mutableStateOf("") }
+        var nameInput by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showNewChatDialog = false },
             containerColor = Color.White,
-            title = { Text("New Chatbox DM", color = DmInkDark) },
+            title = { Text("Add Friend to Chat", color = DmInkDark) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Start a direct message with anyone by name, 6-digit Chatbox ID, or phone number.",
+                        text = "Enter their 6-digit Chatbox ID code (e.g. 685331), phone number, or name.",
                         style = MaterialTheme.typography.bodySmall,
                         color = DmInkMuted
                     )
                     OutlinedTextField(
-                        value = nameInput,
-                        onValueChange = { nameInput = it.take(60) },
-                        label = { Text("Contact name") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("new_dm_name_input")
-                    )
-                    OutlinedTextField(
                         value = idOrPhoneInput,
                         onValueChange = { idOrPhoneInput = it.take(24) },
-                        label = { Text("6-digit ID or phone (optional)") },
+                        label = { Text("6-digit Chatbox ID or phone") },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("new_dm_identifier_input")
                     )
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it.take(60) },
+                        label = { Text("Friend name (optional)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("new_dm_name_input")
+                    )
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = nameInput.isNotBlank(),
+                    enabled = idOrPhoneInput.isNotBlank() || nameInput.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = DmLavenderAccent),
                     onClick = {
                         val id = onCreateDirectThread(nameInput, idOrPhoneInput)
@@ -419,7 +427,7 @@ fun ChatboxDmScreen(
                     },
                     modifier = Modifier.testTag("new_dm_start_button")
                 ) {
-                    Text("Start DM")
+                    Text("Start Chat")
                 }
             },
             dismissButton = {
@@ -757,11 +765,14 @@ private fun ChatboxInboxPane(
     publicWelcomeBanner: String,
     isOnline: Boolean,
     appUpdateActive: Boolean,
+    ownShortId: String,
     onAppUpdateClick: () -> Unit,
     onSelectThread: (String) -> Unit,
     onNewChatClick: () -> Unit
 ) {
     val colors = LocalChatboxColors.current
+    val context = LocalContext.current
+    var copiedOwnId by remember { mutableStateOf(false) }
     val activeContacts = remember(threads, blockedThreadIds) {
         threads.filter { !it.isGroup && it.online && it.id !in blockedThreadIds }
     }
@@ -798,17 +809,62 @@ private fun ChatboxInboxPane(
                     modifier = Modifier.testTag("chatbox_new_dm_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Edit,
-                        contentDescription = "New message",
+                        imageVector = Icons.Rounded.PersonAdd,
+                        contentDescription = "Add friend or new message",
                         tint = DmInkDark
                     )
+                }
+            }
+
+            if (ownShortId.isNotBlank()) {
+                Surface(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("Chatbox ID", ownShortId))
+                        copiedOwnId = true
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = DmLavenderSoft,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("chatbox_own_short_id_chip")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Your 6-digit ID: $ownShortId",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                            color = DmLavenderDeep
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (copiedOwnId) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = "Copy your 6-digit ID",
+                                tint = DmLavenderDeep,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = if (copiedOwnId) "Copied" else "Copy",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = DmLavenderDeep
+                            )
+                        }
+                    }
                 }
             }
 
             ChatboxSearchField(
                 value = searchQuery,
                 onValueChange = onSearchChange,
-                placeholder = "Search",
+                placeholder = "Search friend, 6-digit ID…",
                 testTag = "chatbox_search_input"
             )
         }

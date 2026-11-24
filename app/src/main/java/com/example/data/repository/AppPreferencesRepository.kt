@@ -54,6 +54,9 @@ class AppPreferencesRepository(private val context: Context) {
     private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
     private val dmPeerNicknamesKey = stringPreferencesKey("dm_peer_nicknames_v1")
     private val dmMutedPeersKey = stringPreferencesKey("dm_muted_peers_v1")
+    private val hasCompletedLoginKey = booleanPreferencesKey("has_completed_login_v1")
+    private val accountIdentifierKey = stringPreferencesKey("account_identifier_v1")
+    private val accountPasswordHashKey = stringPreferencesKey("account_password_hash_v1")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
@@ -262,6 +265,21 @@ class AppPreferencesRepository(private val context: Context) {
             } catch (_: Exception) {
                 emptySet()
             }
+        }
+
+    val hasCompletedLogin: Flow<Boolean> =
+        context.appDataStore.data.map { prefs ->
+            prefs[hasCompletedLoginKey] ?: false
+        }
+
+    val storedAccountIdentifier: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[accountIdentifierKey].orEmpty()
+        }
+
+    val storedAccountPasswordHash: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[accountPasswordHashKey].orEmpty()
         }
 
     suspend fun setLoginLanguage(languageCode: String) {
@@ -477,6 +495,20 @@ class AppPreferencesRepository(private val context: Context) {
             }.orEmpty()
             val updated = if (muted) current + cleanUid else current - cleanUid
             prefs[dmMutedPeersKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun setHasCompletedLogin(completed: Boolean) {
+        context.appDataStore.edit { prefs ->
+            prefs[hasCompletedLoginKey] = completed
+        }
+    }
+
+    suspend fun saveAccountCredentials(identifier: String, passwordHash: String) {
+        context.appDataStore.edit { prefs ->
+            prefs[accountIdentifierKey] = identifier.trim()
+            prefs[accountPasswordHashKey] = passwordHash
+            prefs[hasCompletedLoginKey] = true
         }
     }
 }

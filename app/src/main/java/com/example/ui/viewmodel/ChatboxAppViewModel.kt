@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -53,6 +54,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -140,6 +142,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     val localSairaSessions: StateFlow<List<LocalSairaSessionData>> = prefs.localSairaSessions
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val hasCompletedLogin: StateFlow<Boolean> = prefs.hasCompletedLogin
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val storedAccountIdentifier: StateFlow<String> = prefs.storedAccountIdentifier
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     val publicWelcome: StateFlow<String> = currentUser
         .flatMapLatest { user -> if (user != null) sparkAdminRepo.observePublicWelcome() else flowOf("") }
@@ -292,6 +300,119 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             prefs.saveLocalUserProfile(updated)
         }
+    }
+
+    fun enterAppWithoutLogin() {
+        viewModelScope.launch {
+            prefs.setHasCompletedLogin(true)
+        }
+    }
+
+    suspend fun loginWithCredentials(identifier: String, password: String): Result<Unit> {
+        val cleanId = identifier.trim()
+        if (cleanId.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+        }
+        if (password.length < 4) {
+            return Result.failure(IllegalArgumentException("Password must be at least 4 characters."))
+        }
+        val normalizedId = cleanId.lowercase(Locale.ROOT)
+        val existingId = prefs.storedAccountIdentifier.first().lowercase(Locale.ROOT)
+        val existingHash = prefs.storedAccountPasswordHash.first()
+        val enteredHash = hashPassword(normalizedId, password)
+
+        if (existingId.isNotEmpty() && existingId == normalizedId && existingHash.isNotEmpty() && existingHash != enteredHash) {
+            return Result.failure(IllegalArgumentException("Incorrect password. Tap Forgot password? to reset."))
+        }
+
+        prefs.saveAccountCredentials(cleanId, enteredHash)
+        syncLocalProfileFromAccount(nameInput = null, identifier = cleanId)
+        return Result.success(Unit)
+    }
+
+    suspend fun createAccountWithCredentials(
+        fullName: String,
+        identifier: String,
+        password: String
+    ): Result<Unit> {
+        val cleanName = fullName.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
+        val cleanId = identifier.trim()
+        if (cleanName.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Enter your full name."))
+        }
+        if (cleanId.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+        }
+        if (password.length < 4) {
+            return Result.failure(IllegalArgumentException("Choose a password of at least 4 characters."))
+        }
+
+        val enteredHash = hashPassword(cleanId.lowercase(Locale.ROOT), password)
+        prefs.saveAccountCredentials(cleanId, enteredHash)
+        syncLocalProfileFromAccount(nameInput = cleanName, identifier = cleanId)
+        return Result.success(Unit)
+    }
+
+    suspend fun resetAccountPassword(identifier: String, newPassword: String): Result<String> {
+        val cleanId = identifier.trim()
+        if (cleanId.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+        }
+        if (newPassword.length < 4) {
+            return Result.failure(IllegalArgumentException("Enter a new password of at least 4 characters."))
+        }
+        val emailSent = if (cleanId.contains("@") && isOnline.value) {
+            authRepo.sendPasswordReset(cleanId).isSuccess
+        } else {
+            false
+        }
+        val newHash = hashPassword(cleanId.lowercase(Locale.ROOT), newPassword)
+        prefs.saveAccountCredentials(cleanId, newHash)
+        val msg = if (emailSent) {
+            "Password updated and reset email sent to $cleanId."
+        } else {
+            "Password updated. You can now log in."
+        }
+        return Result.success(msg)
+    }
+
+    suspend fun signInWithGoogleFromLogin(activityContext: android.content.Context): com.example.data.repository.AuthResult {
+        val result = authRepo.signInWithGoogleInteractive(activityContext)
+        if (result is com.example.data.repository.AuthResult.Success) {
+            prefs.setHasCompletedLogin(true)
+            syncLocalProfileFromAccount(
+                nameInput = result.user.displayName,
+                identifier = result.user.email.orEmpty()
+            )
+        }
+        return result
+    }
+
+    private suspend fun syncLocalProfileFromAccount(nameInput: String?, identifier: String) {
+        val current = localUserProfile.value
+        val cleanName = nameInput?.trim()?.takeIf { it.isNotEmpty() }
+            ?: current.displayName.takeIf { it != "Chatbox User" }
+            ?: identifier.substringBefore("@").trim()
+                .replace('.', ' ')
+                .split(' ')
+                .filter { it.isNotBlank() }
+                .joinToString(" ") { part -> part.replaceFirstChar { it.uppercase() } }
+                .ifEmpty { "Chatbox User" }
+        val isPhone = identifier.none { it == '@' } && identifier.count { it.isDigit() } >= 6
+        val updated = current.copy(
+            displayName = cleanName.take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH),
+            phoneNumber = if (isPhone) identifier.take(ChatboxConstants.MAX_PHONE_LENGTH) else current.phoneNumber,
+            shortId = current.shortId.ifBlank {
+                LiveChatRepository.deterministicSixDigitSeed(identifier.ifBlank { cleanName })
+            }
+        )
+        prefs.saveLocalUserProfile(updated)
+    }
+
+    private fun hashPassword(normalizedIdentifier: String, password: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("chatbox:$normalizedIdentifier:$password".toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     fun retryEnsureOwnProfile() {
@@ -540,27 +661,57 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun openOrCreateDirectThread(name: String, identifier: String = ""): String {
-        val cleanName = name.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH).ifEmpty { "New Contact" }
-        val cleanId = identifier.trim()
-        val existing = chatboxThreads.value.firstOrNull {
-            !it.isGroup && (
-                it.name.equals(cleanName, ignoreCase = true) ||
-                    (cleanId.isNotEmpty() && (it.shortId == cleanId || it.phoneNumber == cleanId))
+        val rawName = name.trim()
+        val rawId = identifier.trim()
+
+        // If the user typed a 6-digit ID or phone number into the name field with identifier blank,
+        // promote it to identifier automatically so 6-digit lookup always works.
+        val resolvedIdentifier = when {
+            rawId.isNotEmpty() -> rawId
+            ChatboxConstants.VALID_SHORT_ID_REGEX.matches(rawName) -> rawName
+            rawName.filter { it.isDigit() }.length >= 7 && rawName.none { it.isLetter() } -> rawName
+            else -> ""
+        }
+        val cleanNameInput = if (resolvedIdentifier == rawName && rawId.isEmpty()) "" else rawName
+        val isSixDigitId = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(resolvedIdentifier)
+        val phoneDigits = resolvedIdentifier.filter { it.isDigit() }
+        val isPhone = !isSixDigitId && phoneDigits.length >= 7
+
+        val cleanName = cleanNameInput
+            .take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
+            .ifEmpty {
+                when {
+                    isSixDigitId -> "Chatbox Friend ($resolvedIdentifier)"
+                    isPhone -> "Chatbox Friend (${phoneDigits.takeLast(4)})"
+                    resolvedIdentifier.isNotEmpty() -> resolvedIdentifier.take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
+                    else -> "Chatbox Friend"
+                }
+            }
+
+        val existing = chatboxThreads.value.firstOrNull { thread ->
+            !thread.isGroup && (
+                (cleanNameInput.isNotEmpty() && thread.name.equals(cleanNameInput, ignoreCase = true)) ||
+                    (isSixDigitId && thread.shortId == resolvedIdentifier) ||
+                    (isPhone && thread.phoneNumber.filter { it.isDigit() } == phoneDigits)
                 )
         }
         if (existing != null) return existing.id
 
         val newId = "dm_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
-        val shortId = if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(cleanId)) {
-            cleanId
+        val shortId = if (isSixDigitId) {
+            resolvedIdentifier
         } else {
-            LiveChatRepository.deterministicSixDigitSeed(newId)
+            LiveChatRepository.deterministicSixDigitSeed(
+                resolvedIdentifier.ifBlank { newId }
+            )
         }
-        val phone = if (cleanId.any { it.isDigit() } && !ChatboxConstants.VALID_SHORT_ID_REGEX.matches(cleanId)) {
-            cleanId
-        } else ""
-        val initials = cleanName.split(" ").filter { it.isNotBlank() }.take(2)
-            .joinToString("") { it.take(1).uppercase() }.ifEmpty { cleanName.take(2).uppercase() }
+        val phone = if (isPhone) resolvedIdentifier else ""
+        val initials = if (isSixDigitId && cleanNameInput.isEmpty()) {
+            resolvedIdentifier.take(2)
+        } else {
+            cleanName.split(" ").filter { it.isNotBlank() }.take(2)
+                .joinToString("") { it.take(1).uppercase() }.ifEmpty { cleanName.take(2).uppercase() }
+        }
 
         val thread = ChatboxThread(
             id = newId,

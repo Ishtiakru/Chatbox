@@ -78,6 +78,7 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.components.customMenuIconVector
 import com.example.ui.screens.AdminScreen
+import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.ChatboxDmScreen
 import com.example.ui.screens.ProfileScreen
@@ -133,6 +134,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val fallbackApiKey by viewModel.aiFallbackApiKey.collectAsState()
     val fallbackBaseUrl by viewModel.aiFallbackBaseUrl.collectAsState()
     val fallbackModel by viewModel.aiFallbackModel.collectAsState()
+    val hasCompletedLogin by viewModel.hasCompletedLogin.collectAsState()
+    val storedAccountIdentifier by viewModel.storedAccountIdentifier.collectAsState()
 
     var splashDone by remember { mutableStateOf(false) }
     var splashAppeared by remember { mutableStateOf(false) }
@@ -211,6 +214,20 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             return@ChatboxTheme
         }
 
+        if (!hasCompletedLogin && currentUser == null) {
+            AuthLoginScreen(
+                selectedLanguageCode = loginLanguage,
+                initialIdentifier = storedAccountIdentifier,
+                onLanguageSelected = viewModel::setLoginLanguage,
+                onBackSkipLogin = viewModel::enterAppWithoutLogin,
+                onLoginWithCredentials = viewModel::loginWithCredentials,
+                onCreateAccount = viewModel::createAccountWithCredentials,
+                onResetPassword = viewModel::resetAccountPassword,
+                onGoogleSignIn = viewModel::signInWithGoogleFromLogin
+            )
+            return@ChatboxTheme
+        }
+
         val uid = currentUser?.uid.orEmpty()
         val effectiveDisplayName = ownProfile?.displayName
             ?: currentUser?.displayName
@@ -278,6 +295,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 publicWelcomeBanner = publicWelcome,
                                 isOnline = isOnline,
                                 appUpdateActive = appUpdate.active,
+                                ownShortId = ownProfile?.shortId?.ifBlank { null } ?: localUserProfile.shortId,
                                 onSelectThread = viewModel::selectThread,
                                 onSendMessage = { threadId, body, timeStr ->
                                     viewModel.sendChatboxMessage(threadId, body, timeStr)

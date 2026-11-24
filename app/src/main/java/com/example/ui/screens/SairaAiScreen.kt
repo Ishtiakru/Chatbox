@@ -101,7 +101,6 @@ import com.example.data.repository.SairaSessionRepository
 import com.google.firebase.Timestamp
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaLocationHelper
-import com.example.saira.SairaNotificationListenerService
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
 import com.example.saira.SairaTimeGreeting
@@ -830,12 +829,6 @@ private fun AutoReplyAndBackupTab(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var notifAccessGranted by remember {
-        mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
-    }
-    var batteryUnrestricted by remember {
-        mutableStateOf(SairaNotificationListenerService.isBatteryOptimizationIgnored(context))
-    }
     var locationPermGranted by remember {
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
     }
@@ -843,8 +836,6 @@ private fun AutoReplyAndBackupTab(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
-                batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
                 locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
             }
         }
@@ -944,99 +935,32 @@ private fun AutoReplyAndBackupTab(
             }
         }
 
-        // 2. Consent-gated WhatsApp & Messenger Auto-Reply + Notification Listener Permission
+        // 2. Play Protect Safe Mode (no external notification interception)
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
-            border = BorderStroke(1.dp, colors.border)
+            border = BorderStroke(1.dp, colors.border),
+            modifier = Modifier.testTag("saira_play_protect_status")
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = ChatboxPrimary)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("অনুমতিসাপেক্ষে WhatsApp ও Messenger রিপ্লাই", style = MaterialTheme.typography.titleSmall, color = colors.ink)
-                        Text(
-                            "নির্ধারিত কন্টাক্ট মেসেজ পাঠানোর ১০ সেকেন্ডের মধ্যে আপনি উত্তর না দিলে সায়রা স্বয়ংক্রিয়ভাবে উত্তর দেবে এবং পরবর্তী মেসেজগুলোতেও কথোপকথন চালিয়ে যাবে।",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.inkMuted
-                        )
-                    }
-                    Switch(
-                        checked = notifAutoReplyEnabled,
-                        onCheckedChange = onChangeNotifAutoReply,
-                        modifier = Modifier.testTag("saira_notif_reply_switch")
+                Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = ChatboxUpdateGreen)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Play Protect সুরক্ষিত মোড চালু আছে",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.ink
                     )
-                }
-                HorizontalDivider(color = colors.border)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = if (notifAccessGranted) Icons.Rounded.CheckCircle else Icons.Rounded.Notifications,
-                            contentDescription = null,
-                            tint = if (notifAccessGranted) ChatboxUpdateGreen else colors.inkSubtle,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = if (notifAccessGranted) "Notification Access চালু আছে" else "Notification Access অনুমতি প্রয়োজন",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (notifAccessGranted) ChatboxUpdateGreen else ChatboxErrorInk
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { SairaNotificationListenerService.openNotificationAccessSettings(context) },
-                        modifier = Modifier.testTag("saira_notif_access_button")
-                    ) {
-                        Text(if (notifAccessGranted) "সেটিংস দেখুন" else "অনুমতি দিন")
-                    }
-                }
-                HorizontalDivider(color = colors.border)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = if (batteryUnrestricted) Icons.Rounded.CheckCircle else Icons.Rounded.Schedule,
-                            contentDescription = null,
-                            tint = if (batteryUnrestricted) ChatboxUpdateGreen else colors.inkSubtle,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = if (batteryUnrestricted) {
-                                "স্ক্রিন অফ অবস্থায় সচল (Battery Unrestricted)"
-                            } else {
-                                "স্ক্রিন অফে মেসেজ পড়তে Battery Unrestricted দিন"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (batteryUnrestricted) ChatboxUpdateGreen else colors.inkMuted
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { SairaNotificationListenerService.openBatteryOptimizationSettings(context) },
-                        modifier = Modifier.testTag("saira_battery_optimization_button")
-                    ) {
-                        Text(if (batteryUnrestricted) "ব্যাটারি সেটিংস" else "অনুমতি দিন")
-                    }
+                    Text(
+                        text = "ডিভাইসের নিরাপত্তার জন্য বাহ্যিক Notification Access অনুমতি সরানো হয়েছে। Chatbox-এর ভেতরের ১০-সেকেন্ড অটো-রিপ্লাই, নিয়ম ও AI সবসময় নিরাপদভাবে কাজ করবে।",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.inkMuted
+                    )
                 }
             }
         }
