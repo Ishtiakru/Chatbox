@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mail
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -86,11 +87,14 @@ import com.example.ui.components.ChatboxSearchField
 import com.example.ui.components.NoticeBanner
 import com.example.ui.theme.ChatboxAccentViolet
 import com.example.ui.theme.ChatboxBorder
+import com.example.ui.theme.ChatboxBorderLavender
 import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxInkMuted
 import com.example.ui.theme.ChatboxInkSubtle
 import com.example.ui.theme.ChatboxPrimary
+import com.example.ui.theme.ChatboxPrimaryDark
 import com.example.ui.theme.ChatboxSoftLavender
+import com.example.ui.theme.ChatboxSoftLavenderStrong
 import kotlinx.coroutines.launch
 
 @Composable
@@ -120,9 +124,7 @@ fun AuthLoginScreen(
 
     var phoneInput by remember(rememberedPhone) { mutableStateOf(rememberedPhone) }
     var passwordInput by remember { mutableStateOf("") }
-    var confirmPasswordInput by remember { mutableStateOf("") }
     var rememberChecked by remember(rememberMeEnabled) { mutableStateOf(rememberMeEnabled) }
-    var createMode by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     var formNotice by remember { mutableStateOf<String?>(null) }
 
@@ -213,13 +215,6 @@ fun AuthLoginScreen(
                     color = Color(0xFF0F766E)
                 )
 
-                Text(
-                    text = if (bn) stringResource(R.string.app_tagline_bn) else stringResource(R.string.app_tagline),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ChatboxInkMuted,
-                    textAlign = TextAlign.Center
-                )
-
                 if (!isOnline) {
                     NoticeBanner(
                         text = if (bn) {
@@ -284,25 +279,6 @@ fun AuthLoginScreen(
                         .testTag("login_password_input")
                 )
 
-                if (createMode) {
-                    OutlinedTextField(
-                        value = confirmPasswordInput,
-                        onValueChange = {
-                            confirmPasswordInput = it.take(64)
-                            formNotice = null
-                        },
-                        enabled = !authLoading && isOnline,
-                        singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        leadingIcon = { Icon(Icons.Rounded.Lock, contentDescription = null) },
-                        label = { Text(if (bn) "পাসওয়ার্ড নিশ্চিত করুন" else "Confirm password") },
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("login_confirm_password_input")
-                    )
-                }
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -357,18 +333,10 @@ fun AuthLoginScreen(
                             formNotice = if (bn) "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।" else "Password must be at least 6 characters."
                             return@Button
                         }
-                        if (createMode && confirmPasswordInput != passwordInput) {
-                            formNotice = if (bn) "পাসওয়ার্ড দুটি মিলছে না।" else "Passwords do not match."
-                            return@Button
-                        }
                         formNotice = null
                         onSaveRememberedPhone(rememberChecked, cleanPhone)
                         onQueuePendingPhone(cleanPhone)
-                        if (createMode) {
-                            onChooseGoogleAccount()
-                        } else {
-                            onGoogleSignIn()
-                        }
+                        onGoogleSignIn()
                     },
                     enabled = !authLoading && isOnline,
                     shape = RoundedCornerShape(16.dp),
@@ -387,35 +355,15 @@ fun AuthLoginScreen(
                         Spacer(Modifier.width(8.dp))
                         Text(if (bn) "সাইন ইন হচ্ছে…" else "Signing in…")
                     } else {
-                        Text(
-                            text = if (createMode) {
-                                if (bn) "নতুন অ্যাকাউন্ট তৈরি করুন" else "Create account"
-                            } else {
-                                if (bn) "লগ ইন" else "Log in"
-                            }
-                        )
+                        Text(text = if (bn) "লগ ইন" else "Log in")
                     }
                 }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = {
-                        createMode = !createMode
-                        formNotice = null
-                    }) {
-                        Text(
-                            text = if (createMode) {
-                                if (bn) "আগে থেকেই অ্যাকাউন্ট আছে? লগ ইন করুন" else "Already have an account? Log in"
-                            } else {
-                                if (bn) "নতুন অ্যাকাউন্ট তৈরি করুন" else "Create new account"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ChatboxPrimary
-                        )
-                    }
                     TextButton(onClick = { showInfoDialog = true }) {
                         Icon(
                             Icons.Rounded.Info,
@@ -493,44 +441,40 @@ fun AuthLoginScreen(
                     }
                 }
 
-                TextButton(
+                Button(
                     onClick = {
                         onQueuePendingPhone(phoneInput)
                         onChooseGoogleAccount()
                     },
                     enabled = !authLoading && isOnline,
-                    modifier = Modifier.testTag("choose_gmail_account_button")
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, ChatboxBorderLavender),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ChatboxSoftLavenderStrong,
+                        contentColor = ChatboxPrimaryDark,
+                        disabledContainerColor = ChatboxSoftLavender.copy(alpha = 0.6f),
+                        disabledContentColor = ChatboxPrimaryDark.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("create_account_button")
                 ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PersonAdd,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (bn) {
-                            "অন্য Gmail অ্যাকাউন্ট বাছাই করুন"
-                        } else {
-                            "Choose a different Gmail account"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ChatboxPrimary
+                        text = if (bn) "নতুন অ্যাকাউন্ট তৈরি করুন" else "Create account",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
-                Text(
-                    text = if (bn) {
-                        "ফোনে লগইন থাকা যেকোনো Gmail অ্যাকাউন্ট তালিকা থেকে বেছে নিতে পারবেন।"
-                    } else {
-                        "Pick any Gmail account on this device without auto-connecting."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ChatboxInkSubtle,
-                    textAlign = TextAlign.Center
-                )
             }
 
-            Text(
-                text = "Chatbox · Secured by Firebase Auth & Cloud Firestore",
-                style = MaterialTheme.typography.labelMedium,
-                color = ChatboxInkSubtle,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            Spacer(Modifier.height(16.dp))
         }
     }
 
