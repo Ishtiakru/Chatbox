@@ -1,0 +1,14 @@
+{
+  "name": "chatbox-firebase-migrate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Migrate Chatbox Saira AI Firestore data between Firebase projects",
+  "type": "module",
+  "scripts": {
+    "dry-run": "node migrate-saira.mjs --source-key ./source.json --dest-key ./dest.json --list-auth",
+    "migrate": "node migrate-saira.mjs --source-key ./source.json --dest-key ./dest.json --execute"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

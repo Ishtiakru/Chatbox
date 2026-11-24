@@ -26,16 +26,24 @@ The app uses Firebase (Auth, Firestore, AI Logic for Saira). The config file
 
 **One-time setup:**
 
-1. Go to [Firebase Console](https://console.firebase.google.com) → create/select project.
-2. Add an Android app with package name **`com.example`**.
+> Chatbox-এর canonical Firebase project: **`gen-lang-client-0251556445`**
+> (Project Number `631361942963`) — বিস্তারিত: [`FIREBASE_PROJECTS.md`](FIREBASE_PROJECTS.md)
+
+1. Go to [Firebase Console](https://console.firebase.google.com) → select project **`gen-lang-client-0251556445`**.
+2. Add an Android app with package name **`com.aistudio.chatbox.kxmpzq`**
+   (this is the app's `applicationId` in `app/build.gradle.kts` — **not** `com.example`, which is only the code namespace).
 3. Download **`google-services.json`** and place it at:
    ```
    app/google-services.json
    ```
 4. Enable in Firebase Console:
-   - **Authentication** → Email/Password (and any other providers the app uses)
-   - **Firestore Database**
+   - **Authentication** → Google Sign-In (the app uses Credential Manager / Google)
+   - **Firestore Database** → named database **`ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70`** (hardcoded in `firebase_applet_config.xml` — must exist with this exact ID)
    - **AI Logic** (for Saira's Gemini — free tier is enough)
+   - **App Check**
+5. Add the release SHA-1 fingerprint to the Android app
+   (`e2:f4:a8:6c:4d:29:f3:83:7f:40:16:40:20:53:c8:2c:93:32:58:2a`) —
+   required for Google Sign-In with the signed release APK.
 
 **CI note:** GitHub Actions restores this file from the
 `GOOGLE_SERVICES_JSON` (or `GOOGLE_SERVICES_JSON_BASE64`) repository secret —
