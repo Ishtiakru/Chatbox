@@ -114,6 +114,7 @@ import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxSearchField
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.NoticeBanner
+import com.example.ui.components.SairaMetaOrb
 import com.example.ui.components.VoiceNoteBubblePlayer
 import com.example.ui.components.VoiceRecordingBar
 import com.example.ui.components.VoiceNoteRecorder
@@ -1556,8 +1557,9 @@ private fun ChatboxThreadPane(
                 val msg = displayedMessages[idx]
                 val nextMsg = displayedMessages.getOrNull(idx + 1)
                 val isMe = msg.from == "me"
+                val isSairaAutoReply = thread.id != "saira" && !isMe && msg.senderName == "Saira"
                 val isLastMessage = idx == displayedMessages.lastIndex
-                val showLeftAvatar = !isMe && (nextMsg == null || nextMsg.from == "me")
+                val showLeftAvatar = !isMe && (nextMsg == null || nextMsg.from == "me" || nextMsg.senderName != msg.senderName)
 
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -1567,11 +1569,18 @@ private fun ChatboxThreadPane(
                     ) {
                         if (!isMe) {
                             if (showLeftAvatar) {
-                                MessengerAvatar(
-                                    label = shownName,
-                                    size = 28.dp,
-                                    modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
-                                )
+                                if (isSairaAutoReply) {
+                                    SairaMetaOrb(
+                                        size = 28.dp,
+                                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
+                                    )
+                                } else {
+                                    MessengerAvatar(
+                                        label = shownName,
+                                        size = 28.dp,
+                                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
+                                    )
+                                }
                             } else {
                                 Spacer(Modifier.width(36.dp))
                             }
@@ -1581,6 +1590,15 @@ private fun ChatboxThreadPane(
                             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
                             modifier = Modifier.widthIn(max = 280.dp)
                         ) {
+                            if (isSairaAutoReply) {
+                                Text(
+                                    text = "Saira AI · Auto-reply",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DmLavenderDeep,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
+                                )
+                            }
                             val isSoloEmoji = msg.kind == ChatboxMessageKind.TEXT &&
                                 msg.imageUri.isNullOrBlank() &&
                                 msg.audioPath.isNullOrBlank() &&

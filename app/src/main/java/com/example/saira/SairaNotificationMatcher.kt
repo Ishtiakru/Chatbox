@@ -80,6 +80,26 @@ object SairaNotificationMatcher {
         )
     }
 
+    /**
+     * Matches an enabled taught rule by contact name (and optional platform filter) for
+     * in-app Chatbox DMs and the Saira auto-reply test runner.
+     */
+    fun findInAppRule(
+        contactName: String,
+        platform: SairaPlatform = SairaPlatform.ANY,
+        rules: List<SairaNotificationRule>
+    ): SairaNotificationRule? {
+        val cleanSender = cleanContactTitle(contactName)
+        if (cleanSender.isEmpty()) return null
+        return rules.firstOrNull { rule ->
+            rule.enabled &&
+                rule.contactName.isNotBlank() &&
+                rule.taughtReplyGuidance.isNotBlank() &&
+                (platform == SairaPlatform.ANY || rule.platform == SairaPlatform.ANY || rule.platform == platform) &&
+                namesMatch(rule.contactName, cleanSender)
+        }
+    }
+
     fun buildFirstBoxReply(
         senderName: String,
         rule: SairaNotificationRule,

@@ -8,8 +8,10 @@ import androidx.core.graphics.scale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ChatboxCatalog
+import com.example.data.ai.AiChatMessage
 import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
+import com.example.data.ai.SairaPrompts
 import com.example.data.model.AdminAuthStatus
 import com.example.data.model.AiExchange
 import com.example.data.model.AppTab
@@ -35,11 +37,18 @@ import com.example.data.repository.SairaSessionRepository
 import com.example.data.repository.SparkAdminRepository
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaDirectoryUser
+import com.example.saira.SairaLocationHelper
+import com.example.saira.SairaNotificationMatcher
 import com.example.saira.SairaNotificationRule
+import com.example.saira.SairaPlatform
+import com.example.saira.SairaTimeGreeting
 import com.example.util.NetworkMonitor
 import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,17 +60,33 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.random.Random
+
+data class SairaAutoReplyTestResult(
+    val replied: Boolean,
+    val senderName: String,
+    val platformLabel: String,
+    val replyText: String,
+    val matchedRuleContact: String?,
+    val usedAi: Boolean,
+    val includedLocation: Boolean,
+    val statusNote: String
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatboxAppViewModel(application: Application) : AndroidViewModel(application) {
@@ -197,6 +222,20 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
 
     private var lastLoadedUid: String? = null
+    private val chatboxMessagesMutex = Mutex()
+    private val pendingAbsenceJobs = ConcurrentHashMap<String, Job>()
+    private val pendingIncomingAutoReplyJobs = ConcurrentHashMap<String, Job>()
+    private val sairaAbsenceEngagedThreads = ConcurrentHashMap<String, Long>()
+
+    internal var autoReplyWaitMs: Long = DEFAULT_AUTO_REPLY_WAIT_MS
+    internal var continuationDebounceMs: Long = DEFAULT_CONTINUATION_WAIT_MS
+    internal var aiCompleter: suspend (String, List<AiChatMessage>, String) -> String = { sys, hist, prompt ->
+        SairaAiClient.complete(sys, hist, prompt)
+    }
+    internal var clockHourProvider: () -> Int = { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
+    internal var onlineOverride: Boolean? = null
+
+    private fun effectiveIsOnline(): Boolean = onlineOverride ?: isOnline.value
 
     init {
         syncSairaUserDirectory()
@@ -549,6 +588,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setOneMinAutoReplyEnabled(enabled: Boolean) {
+        if (!enabled) {
+            pendingAbsenceJobs.values.forEach { it.cancel() }
+            pendingAbsenceJobs.clear()
+            sairaAbsenceEngagedThreads.clear()
+        }
         viewModelScope.launch { prefs.setSairaChatboxOneMinEnabled(enabled) }
     }
 
@@ -569,11 +613,20 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setDmPeerMuted(peerUid: String, muted: Boolean) {
+        if (muted) {
+            pendingAbsenceJobs.remove(peerUid)?.cancel()
+            pendingIncomingAutoReplyJobs.remove(peerUid)?.cancel()
+        }
         viewModelScope.launch { prefs.setDmPeerMuted(peerUid, muted) }
     }
 
     fun saveSairaRules(rules: List<SairaNotificationRule>) {
-        viewModelScope.launch { prefs.saveSairaNotificationRules(rules) }
+        viewModelScope.launch {
+            prefs.saveSairaNotificationRules(rules)
+            if (rules.any { it.enabled }) {
+                prefs.setSairaNotifReplyEnabled(true)
+            }
+        }
     }
 
     fun clearSairaAutoReplyLogs() {
@@ -598,37 +651,508 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     ) {
         val trimmed = body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
         if (trimmed.isEmpty() && imageUri.isNullOrBlank() && audioPath.isNullOrBlank()) return
-        val currentMap = chatboxMessages.value.toMutableMap()
-        val list = currentMap[threadId].orEmpty().toMutableList()
-        val msgId = "msg_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
-        list.add(
-            ChatboxMessage(
-                id = msgId,
-                from = "me",
-                senderName = localUserProfile.value.displayName,
-                text = trimmed,
-                time = timeString,
-                kind = kind,
-                imageUri = imageUri,
-                audioPath = audioPath,
-                audioDurationMs = audioDurationMs
-            )
+
+        // User replied manually -> cancel any pending incoming auto-reply for this thread.
+        pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
+
+        val senderDisplayName = ownProfile.value?.displayName?.ifBlank { null }
+            ?: localUserProfile.value.displayName
+        val userMsg = ChatboxMessage(
+            id = "msg_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
+            from = "me",
+            senderName = senderDisplayName,
+            text = trimmed,
+            time = timeString,
+            kind = kind,
+            imageUri = imageUri,
+            audioPath = audioPath,
+            audioDurationMs = audioDurationMs
         )
-        if (threadId == "saira" && trimmed.isNotEmpty()) {
-            list.add(
-                ChatboxMessage(
-                    id = "saira_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
-                    from = "them",
-                    senderName = "Saira",
-                    text = ChatboxCatalog.getSairaOfflineGuideReply(trimmed),
-                    time = timeString,
-                    kind = ChatboxMessageKind.TEXT
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId }
+
+        updateThread(threadId) { it.copy(unreadCount = 0) }
+        viewModelScope.launch {
+            val historySnapshot = chatboxMessagesMutex.withLock {
+                val map = prefs.chatboxMessages.first().toMutableMap()
+                val updatedList = map[threadId].orEmpty() + userMsg
+                map[threadId] = updatedList
+                prefs.saveChatboxMessages(map)
+                updatedList
+            }
+
+            if (threadId == "saira" && trimmed.isNotEmpty()) {
+                val sairaReply = generateSairaDirectDmReply(
+                    userMessage = trimmed,
+                    historyMessages = historySnapshot.dropLast(1)
+                )
+                val nowStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+                appendSairaMessageToThread(threadId, sairaReply, nowStr)
+            } else if (
+                threadId != "saira" &&
+                trimmed.isNotEmpty() &&
+                thread != null &&
+                !thread.isGroup &&
+                oneMinAutoReplyEnabled.value &&
+                threadId !in chatboxBlockedThreads.value &&
+                threadId !in dmMutedPeers.value
+            ) {
+                scheduleChatboxAbsenceAutoReply(
+                    thread = thread,
+                    senderName = senderDisplayName,
+                    lastMessageId = userMsg.id,
+                    lastMessageText = trimmed
+                )
+            }
+        }
+    }
+
+    private suspend fun generateSairaDirectDmReply(
+        userMessage: String,
+        historyMessages: List<ChatboxMessage>
+    ): String {
+        if (effectiveIsOnline()) {
+            val aiHistory = historyMessages
+                .filter { it.kind == ChatboxMessageKind.TEXT && it.text.isNotBlank() }
+                .takeLast(12)
+                .map { msg ->
+                    AiChatMessage(
+                        role = if (msg.from == "me") "user" else "model",
+                        text = msg.text.take(600)
+                    )
+                }
+            val isFirstTurn = historyMessages.none { it.from == "me" }
+            val prompt = SairaPrompts.buildTurnPrompt(
+                question = userMessage,
+                isFirstTurn = isFirstTurn,
+                isContinuation = !isFirstTurn,
+                hourOfDay = clockHourProvider()
+            )
+            val aiAnswer = try {
+                withTimeoutOrNull(25_000L) {
+                    aiCompleter(SairaPrompts.chatSystemInstruction, aiHistory, prompt)
+                }?.trim().orEmpty()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                ""
+            }
+            if (aiAnswer.isNotEmpty()) return aiAnswer
+        }
+        return ChatboxCatalog.getSairaOfflineGuideReply(userMessage)
+    }
+
+    private fun scheduleChatboxAbsenceAutoReply(
+        thread: ChatboxThread,
+        senderName: String,
+        lastMessageId: String,
+        lastMessageText: String
+    ) {
+        pendingAbsenceJobs.remove(thread.id)?.cancel()
+        val nowMs = System.currentTimeMillis()
+        val engagedAt = sairaAbsenceEngagedThreads[thread.id]
+        val isContinuation = engagedAt != null && (nowMs - engagedAt) <= ACTIVE_SAIRA_WINDOW_MS
+
+        val job = viewModelScope.launch {
+            val waitDelay = if (isContinuation) continuationDebounceMs else autoReplyWaitMs
+            delay(waitDelay)
+
+            if (!oneMinAutoReplyEnabled.value) return@launch
+            if (thread.id in chatboxBlockedThreads.value || thread.id in dmMutedPeers.value) return@launch
+
+            val currentMessages = prefs.chatboxMessages.first()[thread.id].orEmpty()
+            val latest = currentMessages.lastOrNull() ?: return@launch
+            // Cancel if peer already replied or user sent a newer message tracked by another job
+            if (latest.from != "me" || latest.id != lastMessageId) return@launch
+
+            val result = evaluateAutoReplyInternal(
+                senderName = senderName,
+                platform = SairaPlatform.ANY,
+                incomingText = lastMessageText,
+                peerNameForAbsence = thread.name,
+                peerIdForLocation = thread.id,
+                isChatboxAbsence = true,
+                forceContinuation = isContinuation,
+                recentMessagesForHistory = currentMessages
+            )
+            if (!result.replied || result.replyText.isBlank()) return@launch
+
+            val replyTimeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            appendSairaMessageToThread(thread.id, result.replyText, replyTimeStr)
+            sairaAbsenceEngagedThreads[thread.id] = System.currentTimeMillis()
+            prefs.appendAutoReplyLog(
+                SairaAutoReplyLog(
+                    id = "log_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+                    contactName = thread.name,
+                    platformLabel = if (result.matchedRuleContact != null) "Chatbox · Rule" else "Chatbox 10s",
+                    incomingPreview = lastMessageText.take(120),
+                    sentReply = result.replyText.take(280),
+                    includedLocation = result.includedLocation,
+                    timestampMs = System.currentTimeMillis()
+                )
+            )
+            pendingAbsenceJobs.remove(thread.id)
+        }
+        pendingAbsenceJobs[thread.id] = job
+    }
+
+    /**
+     * Simulates or delivers an incoming DM from a friend on [threadId].
+     * When [triggerAutoReplyAfterWait] is true, Saira waits [autoReplyWaitMs] (10s default)
+     * and if the owner has not replied manually, applies taught contact rules / 10s greeting,
+     * permission-gated location sharing, and AI + fallback reply.
+     */
+    fun simulateIncomingChatboxMessage(
+        threadId: String,
+        body: String,
+        triggerAutoReplyAfterWait: Boolean = true
+    ) {
+        val trimmed = body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
+        if (trimmed.isEmpty()) return
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: return
+        if (thread.id == "saira" || thread.isGroup) return
+
+        pendingAbsenceJobs.remove(threadId)?.cancel()
+        pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
+
+        val timeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+        val incomingMsg = ChatboxMessage(
+            id = "inc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
+            from = "them",
+            senderName = thread.name,
+            text = trimmed,
+            time = timeStr,
+            kind = ChatboxMessageKind.TEXT
+        )
+
+        viewModelScope.launch {
+            chatboxMessagesMutex.withLock {
+                val map = prefs.chatboxMessages.first().toMutableMap()
+                map[threadId] = map[threadId].orEmpty() + incomingMsg
+                prefs.saveChatboxMessages(map)
+            }
+            if (!triggerAutoReplyAfterWait) return@launch
+            if (threadId in chatboxBlockedThreads.value || threadId in dmMutedPeers.value) return@launch
+
+            val job = viewModelScope.launch {
+                val rules = prefs.sairaNotificationRules.first()
+                val matchedRule = SairaNotificationMatcher.findInAppRule(thread.name, SairaPlatform.ANY, rules)
+                val shouldRun = matchedRule != null || prefs.sairaChatboxOneMinEnabled.first()
+                if (!shouldRun) return@launch
+
+                delay(autoReplyWaitMs)
+
+                if (threadId in chatboxBlockedThreads.value || threadId in dmMutedPeers.value) return@launch
+                val currentMessages = prefs.chatboxMessages.first()[threadId].orEmpty()
+                val latest = currentMessages.lastOrNull() ?: return@launch
+                // Owner already replied manually in time -> do not auto-reply!
+                if (latest.id != incomingMsg.id || latest.from == "me") return@launch
+
+                val result = evaluateAutoReplyInternal(
+                    senderName = thread.name,
+                    platform = SairaPlatform.ANY,
+                    incomingText = trimmed,
+                    peerNameForAbsence = ownProfile.value?.displayName ?: localUserProfile.value.displayName,
+                    peerIdForLocation = threadId,
+                    isChatboxAbsence = false,
+                    forceContinuation = false,
+                    recentMessagesForHistory = currentMessages
+                )
+                if (!result.replied || result.replyText.isBlank()) return@launch
+
+                val replyTimeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+                appendSairaMessageToThread(threadId, result.replyText, replyTimeStr)
+                prefs.appendAutoReplyLog(
+                    SairaAutoReplyLog(
+                        id = "log_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+                        contactName = thread.name,
+                        platformLabel = result.platformLabel,
+                        incomingPreview = trimmed.take(120),
+                        sentReply = result.replyText.take(280),
+                        includedLocation = result.includedLocation,
+                        timestampMs = System.currentTimeMillis()
+                    )
+                )
+                pendingIncomingAutoReplyJobs.remove(threadId)
+            }
+            pendingIncomingAutoReplyJobs[threadId] = job
+        }
+    }
+
+    /**
+     * Runs the full Saira auto-reply evaluation pipeline (taught contact rules, time-of-day
+     * greeting, 10-second Chatbox absence fallback, location permission + consent gating,
+     * and Gemini / Backup AI with deterministic fallback) and records the result in logs.
+     */
+    suspend fun testAutoReply(
+        senderName: String,
+        platform: SairaPlatform = SairaPlatform.ANY,
+        incomingText: String,
+        recordLog: Boolean = true
+    ): SairaAutoReplyTestResult {
+        val cleanSender = senderName.trim().ifEmpty { "Sazzad Jony" }
+        val cleanIncoming = incomingText.trim().ifEmpty { "কেমন আছো?" }
+        val selfName = ownProfile.value?.displayName?.ifBlank { null }
+            ?: localUserProfile.value.displayName
+        val result = evaluateAutoReplyInternal(
+            senderName = cleanSender,
+            platform = platform,
+            incomingText = cleanIncoming,
+            peerNameForAbsence = selfName,
+            peerIdForLocation = null,
+            isChatboxAbsence = false,
+            forceContinuation = false,
+            recentMessagesForHistory = emptyList()
+        )
+        if (result.replied && result.replyText.isNotBlank() && recordLog) {
+            prefs.appendAutoReplyLog(
+                SairaAutoReplyLog(
+                    id = "log_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+                    contactName = cleanSender,
+                    platformLabel = result.platformLabel,
+                    incomingPreview = cleanIncoming.take(120),
+                    sentReply = result.replyText.take(280),
+                    includedLocation = result.includedLocation,
+                    timestampMs = System.currentTimeMillis()
                 )
             )
         }
-        currentMap[threadId] = list
-        updateThread(threadId) { it.copy(unreadCount = 0) }
-        viewModelScope.launch { prefs.saveChatboxMessages(currentMap) }
+        return result
+    }
+
+    private suspend fun evaluateAutoReplyInternal(
+        senderName: String,
+        platform: SairaPlatform,
+        incomingText: String,
+        peerNameForAbsence: String,
+        peerIdForLocation: String?,
+        isChatboxAbsence: Boolean,
+        forceContinuation: Boolean,
+        recentMessagesForHistory: List<ChatboxMessage>
+    ): SairaAutoReplyTestResult {
+        val app = getApplication<Application>()
+        val rules = prefs.sairaNotificationRules.first()
+        val oneMinEnabled = prefs.sairaChatboxOneMinEnabled.first()
+        val liveLocEnabled = prefs.sairaLiveLocationEnabled.first()
+        val allowedPeers = prefs.sairaLiveLocationAllowedPeers.first()
+        val hasLocPerm = SairaLocationHelper.hasLocationPermission(app)
+        val chatboxUsers = prefs.sairaUserDirectory.first()
+        val recentLogs = prefs.sairaAutoReplyLogs.first()
+        val hour = clockHourProvider()
+
+        val matchedRule = SairaNotificationMatcher.findInAppRule(
+            contactName = senderName,
+            platform = platform,
+            rules = rules
+        )
+
+        val wantsLocation = SairaTimeGreeting.isLocationRequest(incomingText)
+        val peerExplicitlyAllowedLoc = (matchedRule?.allowLocationShare == true) ||
+            (peerIdForLocation != null && peerIdForLocation in allowedPeers)
+        val locationPermitted = wantsLocation && liveLocEnabled && hasLocPerm && peerExplicitlyAllowedLoc
+        val locationSnapshot = if (locationPermitted) {
+            SairaLocationHelper.getBestAvailableLocation(app)
+        } else {
+            null
+        }
+        val locationNote = when {
+            !wantsLocation -> ""
+            !liveLocEnabled -> " (লোকেশন মাস্টার সুইচ বন্ধ থাকায় লোকেশন পাঠানো হয়নি)"
+            !hasLocPerm -> " (Location Permission না থাকায় লোকেশন পাঠানো হয়নি)"
+            !peerExplicitlyAllowedLoc -> " (এই ব্যক্তির জন্য লোকেশন শেয়ার অনুমতি বন্ধ)"
+            locationSnapshot == null -> " (লোকেশন অনুমতি আছে, তবে ডিভাইসে সাম্প্রতিক GPS ফিক্স পাওয়া যায়নি)"
+            else -> " (লাইভ লোকেশন সংযুক্ত হয়েছে)"
+        }
+
+        if (matchedRule != null && !isChatboxAbsence) {
+            val cutoffMs = System.currentTimeMillis() - ACTIVE_SAIRA_WINDOW_MS
+            val priorRuleLogs = recentLogs.filter {
+                it.contactName.equals(senderName, ignoreCase = true) &&
+                    it.timestampMs >= cutoffMs &&
+                    it.incomingPreview.isNotBlank() &&
+                    it.sentReply.isNotBlank()
+            }
+            val isContinuation = forceContinuation || priorRuleLogs.isNotEmpty()
+            var usedAi = false
+            val replyText = if (!isContinuation) {
+                SairaNotificationMatcher.buildFirstBoxReply(
+                    senderName = senderName,
+                    rule = matchedRule,
+                    locationSnapshot = locationSnapshot,
+                    hourOfDay = hour
+                )
+            } else if (matchedRule.useAiReply && effectiveIsOnline()) {
+                val history = priorRuleLogs.take(7).asReversed().flatMap { entry ->
+                    listOf(
+                        AiChatMessage("user", entry.incomingPreview),
+                        AiChatMessage("model", entry.sentReply)
+                    )
+                }
+                val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
+                    senderName = senderName,
+                    platformLabel = platform.label,
+                    incomingMessage = incomingText,
+                    taughtGuidance = matchedRule.taughtReplyGuidance,
+                    locationText = locationSnapshot?.toShareText(),
+                    chatboxUsers = chatboxUsers,
+                    hourOfDay = hour,
+                    isContinuation = true
+                )
+                val aiAttempt = try {
+                    withTimeoutOrNull(20_000L) {
+                        aiCompleter(SairaPrompts.autoReplySystemInstruction, history, prompt)
+                    }?.trim().orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    ""
+                }
+                if (aiAttempt.isNotEmpty()) {
+                    usedAi = true
+                    if (locationSnapshot != null && !aiAttempt.contains("maps.google.com")) {
+                        "$aiAttempt\n${locationSnapshot.toShareText()}"
+                    } else {
+                        aiAttempt
+                    }
+                } else {
+                    SairaNotificationMatcher.buildDeterministicReply(
+                        senderName = senderName,
+                        rule = matchedRule,
+                        locationSnapshot = locationSnapshot,
+                        hourOfDay = hour,
+                        isContinuation = true,
+                        incomingText = incomingText
+                    )
+                }
+            } else {
+                SairaNotificationMatcher.buildDeterministicReply(
+                    senderName = senderName,
+                    rule = matchedRule,
+                    locationSnapshot = locationSnapshot,
+                    hourOfDay = hour,
+                    isContinuation = true,
+                    incomingText = incomingText
+                )
+            }
+
+            val turnLabel = if (isContinuation) "Follow-up Turn" else "1st Box Reply"
+            return SairaAutoReplyTestResult(
+                replied = true,
+                senderName = senderName,
+                platformLabel = "${platform.label} · Rule",
+                replyText = replyText,
+                matchedRuleContact = matchedRule.contactName,
+                usedAi = usedAi,
+                includedLocation = locationSnapshot != null,
+                statusNote = "নিয়ম মিলেছে (${matchedRule.contactName} · $turnLabel)$locationNote"
+            )
+        }
+
+        if (oneMinEnabled || isChatboxAbsence) {
+            var usedAi = false
+            val aiAttempt = if (effectiveIsOnline() && matchedRule?.useAiReply != false) {
+                val history = recentMessagesForHistory
+                    .filter { it.kind == ChatboxMessageKind.TEXT && it.text.isNotBlank() }
+                    .takeLast(8)
+                    .map { msg ->
+                        AiChatMessage(
+                            role = if (msg.from == "me") "user" else "model",
+                            text = msg.text.take(350)
+                        )
+                    }
+                val prompt = SairaPrompts.buildOneMinAbsencePrompt(
+                    senderName = senderName,
+                    peerName = peerNameForAbsence,
+                    lastMessageText = incomingText,
+                    hourOfDay = hour,
+                    isContinuation = forceContinuation
+                )
+                try {
+                    withTimeoutOrNull(20_000L) {
+                        aiCompleter(SairaPrompts.chatSystemInstruction, history, prompt)
+                    }?.trim().orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    ""
+                }
+            } else {
+                ""
+            }
+
+            val baseReply = if (aiAttempt.isNotEmpty()) {
+                usedAi = true
+                aiAttempt
+            } else if (matchedRule != null) {
+                val info = SairaTimeGreeting.infoForHour(hour)
+                if (forceContinuation) {
+                    "বুঝেছি $senderName, $peerNameForAbsence ফিরলেই আপনার \"${incomingText.take(60)}\" বার্তাটি দেখবেন।"
+                } else {
+                    "হ্যালো $senderName! ${info.bengaliGreeting} ✨ ${matchedRule.taughtReplyGuidance}"
+                }
+            } else if (forceContinuation) {
+                "বুঝেছি $senderName, $peerNameForAbsence এখনো অফলাইনে/ব্যস্ত আছেন—আমি আপনার কথা নোট করে রাখছি, আর কিছু জানতে চাইলে বলুন।"
+            } else {
+                SairaTimeGreeting.buildOneMinuteAbsenceFallback(
+                    senderName = senderName,
+                    peerName = peerNameForAbsence,
+                    hourOfDay = hour
+                )
+            }
+
+            val finalReply = if (locationSnapshot != null && !baseReply.contains("maps.google.com")) {
+                "$baseReply\n${locationSnapshot.toShareText()}"
+            } else {
+                baseReply
+            }
+
+            return SairaAutoReplyTestResult(
+                replied = true,
+                senderName = senderName,
+                platformLabel = if (matchedRule != null) "Chatbox 10s · Rule" else "Chatbox 10s",
+                replyText = finalReply,
+                matchedRuleContact = matchedRule?.contactName,
+                usedAi = usedAi,
+                includedLocation = locationSnapshot != null,
+                statusNote = (if (matchedRule != null) {
+                    "১০-সেকেন্ড অপেক্ষা + নিয়ম (${matchedRule.contactName}) সক্রিয়"
+                } else {
+                    "১০-সেকেন্ড চ্যাটবক্স অপেক্ষা উত্তর প্রস্তুত"
+                }) + locationNote
+            )
+        }
+
+        return SairaAutoReplyTestResult(
+            replied = false,
+            senderName = senderName,
+            platformLabel = platform.label,
+            replyText = "",
+            matchedRuleContact = null,
+            usedAi = false,
+            includedLocation = false,
+            statusNote = "$senderName-এর জন্য কোনো সক্রিয় নিয়ম নেই এবং ১০-সেকেন্ড অপেক্ষা সুইচ বন্ধ আছে।"
+        )
+    }
+
+    private suspend fun appendSairaMessageToThread(
+        threadId: String,
+        replyText: String,
+        timeString: String
+    ) {
+        val clean = replyText.trim()
+        if (clean.isEmpty()) return
+        val sairaMsg = ChatboxMessage(
+            id = "saira_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+            from = "them",
+            senderName = "Saira",
+            text = clean,
+            time = timeString,
+            kind = ChatboxMessageKind.TEXT
+        )
+        chatboxMessagesMutex.withLock {
+            val map = prefs.chatboxMessages.first().toMutableMap()
+            map[threadId] = map[threadId].orEmpty() + sairaMsg
+            prefs.saveChatboxMessages(map)
+        }
     }
 
     fun sendChatboxImage(threadId: String, uri: Uri) {
@@ -821,6 +1345,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun toggleThreadBlocked(threadId: String) {
         val currentlyBlocked = threadId in chatboxBlockedThreads.value
+        if (!currentlyBlocked) {
+            pendingAbsenceJobs.remove(threadId)?.cancel()
+            pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
+            sairaAbsenceEngagedThreads.remove(threadId)
+        }
         viewModelScope.launch { prefs.setChatboxThreadBlocked(threadId, !currentlyBlocked) }
     }
 
@@ -936,5 +1465,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private fun updateThread(threadId: String, transform: (ChatboxThread) -> ChatboxThread) {
         val list = chatboxThreads.value.map { if (it.id == threadId) transform(it) else it }
         viewModelScope.launch { prefs.saveChatboxThreads(list) }
+    }
+
+    companion object {
+        const val DEFAULT_AUTO_REPLY_WAIT_MS = 10_000L
+        const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
+        private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
     }
 }

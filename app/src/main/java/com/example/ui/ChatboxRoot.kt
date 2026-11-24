@@ -341,7 +341,14 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 sessionRepo = viewModel.sairaSessionRepo,
                                 localSessions = localSairaSessions,
                                 onSaveLocalExchange = viewModel::saveLocalSairaExchange,
-                                onDeleteLocalSession = viewModel::deleteLocalSairaSession
+                                onDeleteLocalSession = viewModel::deleteLocalSairaSession,
+                                dmThreads = chatboxThreads,
+                                onTestAutoReply = { sender, platform, incoming ->
+                                    viewModel.testAutoReply(sender, platform, incoming, recordLog = true)
+                                },
+                                onSimulateIncomingDm = { tid, body ->
+                                    viewModel.simulateIncomingChatboxMessage(tid, body, triggerAutoReplyAfterWait = true)
+                                }
                             )
                             CoreAppTab.CALLS -> CallsScreen(
                                 isOnline = isOnline,

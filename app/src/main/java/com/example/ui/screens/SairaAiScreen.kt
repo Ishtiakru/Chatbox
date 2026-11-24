@@ -95,12 +95,14 @@ import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.AiExchange
+import com.example.data.model.ChatboxThread
 import com.example.data.model.LocalSairaSessionData
 import com.example.data.model.SairaChatSession
 import com.example.data.repository.SairaSessionRepository
 import com.google.firebase.Timestamp
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaLocationHelper
+import com.example.saira.SairaNotificationMatcher
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
 import com.example.saira.SairaTimeGreeting
@@ -115,6 +117,7 @@ import com.example.ui.theme.LocalChatboxColors
 import com.example.ui.theme.MetaOrbCyan
 import com.example.ui.theme.MetaOrbIndigo
 import com.example.ui.theme.MetaOrbPurple
+import com.example.ui.viewmodel.SairaAutoReplyTestResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -160,7 +163,10 @@ fun SairaAiScreen(
     sessionRepo: SairaSessionRepository,
     localSessions: List<LocalSairaSessionData> = emptyList(),
     onSaveLocalExchange: (sessionId: String, title: String, question: String, answer: String) -> Unit = { _, _, _, _ -> },
-    onDeleteLocalSession: (sessionId: String) -> Unit = {}
+    onDeleteLocalSession: (sessionId: String) -> Unit = {},
+    dmThreads: List<ChatboxThread> = emptyList(),
+    onTestAutoReply: (suspend (senderName: String, platform: SairaPlatform, incomingText: String) -> SairaAutoReplyTestResult)? = null,
+    onSimulateIncomingDm: ((threadId: String, messageText: String) -> Unit)? = null
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
@@ -486,7 +492,12 @@ fun SairaAiScreen(
                     isError = true,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
-                if (err.contains("app check", ignoreCase = true) || err.contains("attestation", ignoreCase = true)) {
+                if (
+                    err.contains("app check", ignoreCase = true) ||
+                    err.contains("attestation", ignoreCase = true) ||
+                    err.contains("backup ai", ignoreCase = true) ||
+                    err.contains("quota", ignoreCase = true)
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -554,14 +565,16 @@ fun SairaAiScreen(
                         modifier = Modifier.widthIn(max = 480.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        starterPrompts.forEach { prompt ->
+                        starterPrompts.forEachIndexed { idx, prompt ->
                             Surface(
                                 onClick = { sendPrompt(prompt) },
                                 enabled = isOnline && !isBusy,
                                 shape = RoundedCornerShape(16.dp),
                                 color = colors.surface,
                                 border = BorderStroke(1.dp, colors.border),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("saira_starter_prompt_$idx")
                             ) {
                                 Text(
                                     text = prompt,
@@ -766,7 +779,10 @@ fun SairaAiScreen(
                 autoReplyLogs = autoReplyLogs,
                 onClearAutoReplyLogs = onClearAutoReplyLogs,
                 hasBackupKeyConfigured = fallbackApiKey.isNotBlank(),
-                onOpenBackupKeyModal = { showBackupKeyDialog = true }
+                onOpenBackupKeyModal = { showBackupKeyDialog = true },
+                dmThreads = dmThreads,
+                onTestAutoReply = onTestAutoReply,
+                onSimulateIncomingDm = onSimulateIncomingDm
             )
         }
     }
@@ -823,11 +839,15 @@ private fun AutoReplyAndBackupTab(
     autoReplyLogs: List<SairaAutoReplyLog>,
     onClearAutoReplyLogs: () -> Unit,
     hasBackupKeyConfigured: Boolean,
-    onOpenBackupKeyModal: () -> Unit
+    onOpenBackupKeyModal: () -> Unit,
+    dmThreads: List<ChatboxThread>,
+    onTestAutoReply: (suspend (senderName: String, platform: SairaPlatform, incomingText: String) -> SairaAutoReplyTestResult)?,
+    onSimulateIncomingDm: ((threadId: String, messageText: String) -> Unit)?
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     var locationPermGranted by remember {
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
@@ -854,6 +874,12 @@ private fun AutoReplyAndBackupTab(
     var guidanceDraft by remember { mutableStateOf("") }
     var allowLocationDraft by remember { mutableStateOf(false) }
     var useAiReplyDraft by remember { mutableStateOf(true) }
+
+    var testSenderDraft by remember { mutableStateOf("Sazzad Jony") }
+    var testMessageDraft by remember { mutableStateOf("কেমন আছো? কোথায় আছো?") }
+    var testRunning by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<SairaAutoReplyTestResult?>(null) }
+    var simulatedDmBanner by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -1175,9 +1201,13 @@ private fun AutoReplyAndBackupTab(
                                 checked = rule.enabled,
                                 onCheckedChange = { checked ->
                                     onSaveRules(rules.map { if (it.id == rule.id) it.copy(enabled = checked) else it })
-                                }
+                                },
+                                modifier = Modifier.testTag("saira_rule_toggle_${rule.id}")
                             )
-                            IconButton(onClick = { onSaveRules(rules.filterNot { it.id == rule.id }) }) {
+                            IconButton(
+                                onClick = { onSaveRules(rules.filterNot { it.id == rule.id }) },
+                                modifier = Modifier.testTag("saira_rule_delete_${rule.id}")
+                            ) {
                                 Icon(Icons.Rounded.DeleteOutline, contentDescription = "Delete rule", tint = ChatboxErrorInk)
                             }
                         }
@@ -1214,6 +1244,165 @@ private fun AutoReplyAndBackupTab(
             }
         }
 
+        // Live Auto-Reply Feature Verification & DM 10s Test Card
+        Card(
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = colors.surface),
+            border = BorderStroke(1.dp, colors.border),
+            modifier = Modifier.testTag("saira_test_autoreply_card")
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "অটো-রিপ্লাই টেস্ট করুন",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.ink
+                )
+                Text(
+                    text = "নিয়ম, সময় অনুযায়ী সম্ভাষণ, লোকেশন অনুমতি ও AI উত্তর ঠিকমতো কাজ করছে কিনা এখানেই যাচাই করুন।",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.inkMuted
+                )
+
+                val quickContacts = remember(rules, dmThreads) {
+                    buildList {
+                        rules.map { it.contactName.trim() }.filter { it.isNotEmpty() }.forEach { add(it) }
+                        dmThreads.filter { it.id != "saira" && !it.isGroup }.take(3).forEach { add(it.name) }
+                    }.distinct().take(5)
+                }
+                if (quickContacts.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        quickContacts.forEach { name ->
+                            FilterChip(
+                                selected = testSenderDraft.equals(name, ignoreCase = true),
+                                onClick = { testSenderDraft = name },
+                                label = { Text(name) }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = testSenderDraft,
+                    onValueChange = { testSenderDraft = it.take(80) },
+                    label = { Text("প্রেরকের নাম (Sender)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_test_sender_input")
+                )
+                OutlinedTextField(
+                    value = testMessageDraft,
+                    onValueChange = { testMessageDraft = it.take(300) },
+                    label = { Text("টেস্ট মেসেজ (যেমন: কেমন আছো? বা কোথায় আছো?)") },
+                    minLines = 2,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_test_message_input")
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        enabled = !testRunning && testMessageDraft.isNotBlank(),
+                        onClick = {
+                            val sender = testSenderDraft.trim().ifEmpty { "Sazzad Jony" }
+                            val msg = testMessageDraft.trim()
+                            simulatedDmBanner = null
+                            if (onTestAutoReply != null) {
+                                testRunning = true
+                                scope.launch {
+                                    testResult = onTestAutoReply.invoke(sender, SairaPlatform.ANY, msg)
+                                    testRunning = false
+                                }
+                            } else {
+                                val matchedRule = SairaNotificationMatcher.findInAppRule(sender, SairaPlatform.ANY, rules)
+                                val reply = if (matchedRule != null) {
+                                    SairaNotificationMatcher.buildFirstBoxReply(sender, matchedRule, null)
+                                } else {
+                                    SairaTimeGreeting.buildOneMinuteAbsenceFallback(sender, "আপনি")
+                                }
+                                testResult = SairaAutoReplyTestResult(
+                                    replied = true,
+                                    senderName = sender,
+                                    platformLabel = "Chatbox",
+                                    replyText = reply,
+                                    matchedRuleContact = matchedRule?.contactName,
+                                    usedAi = false,
+                                    includedLocation = false,
+                                    statusNote = if (matchedRule != null) "নিয়ম মিলেছে (${matchedRule.contactName})" else "১০-সেকেন্ড অপেক্ষা উত্তর"
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("saira_test_run_button")
+                    ) {
+                        Text(if (testRunning) "টেস্ট চলছে…" else "তাৎক্ষণিক টেস্ট করুন")
+                    }
+
+                    val matchingDmThread = remember(testSenderDraft, dmThreads) {
+                        val target = testSenderDraft.trim().lowercase()
+                        dmThreads.firstOrNull { !it.isGroup && it.id != "saira" && it.name.lowercase() == target }
+                            ?: dmThreads.firstOrNull { !it.isGroup && it.id != "saira" }
+                    }
+                    if (onSimulateIncomingDm != null && matchingDmThread != null) {
+                        OutlinedButton(
+                            enabled = testMessageDraft.isNotBlank(),
+                            onClick = {
+                                onSimulateIncomingDm.invoke(matchingDmThread.id, testMessageDraft.trim())
+                                simulatedDmBanner = "${matchingDmThread.name}-এর DM-এ মেসেজ পাঠানো হয়েছে। ১০ সেকেন্ড উত্তর না দিলে সায়রা অটো-রিপ্লাই দেবে।"
+                            },
+                            modifier = Modifier.testTag("saira_test_dm_10s_button")
+                        ) {
+                            Text("DM ১০সে. টেস্ট")
+                        }
+                    }
+                }
+
+                simulatedDmBanner?.let { banner ->
+                    NoticeBanner(text = banner)
+                }
+
+                testResult?.let { res ->
+                    Surface(
+                        color = if (res.replied) ChatboxSoftLavender else Color(0xFFFFF1ED),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.border),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("saira_test_result_banner")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = res.statusNote,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (res.replied) ChatboxPrimary else ChatboxErrorInk
+                            )
+                            if (res.replyText.isNotBlank()) {
+                                Text(
+                                    text = res.replyText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.ink
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (autoReplyLogs.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1225,7 +1414,10 @@ private fun AutoReplyAndBackupTab(
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.inkSubtle
                 )
-                TextButton(onClick = onClearAutoReplyLogs) {
+                TextButton(
+                    onClick = onClearAutoReplyLogs,
+                    modifier = Modifier.testTag("saira_clear_logs_button")
+                ) {
                     Text("মুছুন")
                 }
             }
@@ -1411,7 +1603,10 @@ private fun BackupAiProviderDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF6B657D)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     AiFallbackProviderKind.entries.forEach { kind ->
                         FilterChip(
                             selected = selectedKind == kind,
