@@ -1,5 +1,9 @@
 package com.example.data.ai
 
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -9,12 +13,13 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Backup provider speaking the OpenAI-compatible `/chat/completions` API
  * (Groq, OpenRouter, or any self-hosted gateway).
+ *
+ * Transient connectivity failures (timeouts, dropped sockets) are retried once
+ * so a brief network blip never turns into a visible error for the user.
  */
 class OpenAiCompatProvider(
     private val baseUrl: String,
@@ -22,7 +27,8 @@ class OpenAiCompatProvider(
     val model: String,
     override val id: String = "openai-compatible",
     private val maxTokens: Int = 1024,
-    private val timeoutMs: Int = 30_000
+    private val timeoutMs: Int = 25_000,
+    private val maxRetries: Int = 1
 ) : AiProvider {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -56,6 +62,34 @@ class OpenAiCompatProvider(
             })
         }
 
+        var lastError: Exception? = null
+        for (attempt in 0..maxRetries) {
+            try {
+                return@withContext performRequest(payload)
+            } catch (e: AiQuotaExhaustedException) {
+                throw e
+            } catch (e: AiUnavailableException) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IOException) {
+                // Transient connectivity issue: retry if attempts remain.
+                lastError = e
+            } catch (e: Exception) {
+                throw AiUnavailableException(
+                    "Backup AI request failed: ${e.message ?: e.javaClass.simpleName}", e
+                )
+            }
+        }
+        throw AiUnavailableException(
+            "Backup AI request failed after ${maxRetries + 1} attempts: " +
+                "${lastError?.message ?: lastError?.javaClass?.simpleName ?: "unknown"}",
+            lastError
+        )
+    }
+
+    /** Performs a single HTTP request and returns the assistant content, or throws. */
+    private fun performRequest(payload: kotlinx.serialization.json.JsonObject): String {
         val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -102,15 +136,20 @@ class OpenAiCompatProvider(
                         ?.get("content")
                         ?.jsonPrimitive
                         ?.content
-                    content?.trim().orEmpty()
+                    return content?.trim().orEmpty()
                 }
             }
         } catch (e: AiQuotaExhaustedException) {
             throw e
         } catch (e: AiUnavailableException) {
             throw e
+        } catch (e: IOException) {
+            // Re-throw so the retry loop treats it as a transient connectivity error.
+            throw e
         } catch (e: Exception) {
-            throw AiUnavailableException("Backup AI request failed: ${e.message ?: e.javaClass.simpleName}", e)
+            throw AiUnavailableException(
+                "Backup AI request failed: ${e.message ?: e.javaClass.simpleName}", e
+            )
         } finally {
             connection.disconnect()
         }

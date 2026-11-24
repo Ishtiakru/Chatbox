@@ -17,3 +17,11 @@ __pycache__/
 build/
 app/build/
 local.properties
+
+# Firebase config holds project secrets — never commit it.
+# Provide it locally (app/google-services.json) or via the
+# GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_JSON_BASE64 GitHub secret (see SETUP.md).
+app/google-services.json
+
+# Local download artifacts (e.g. Drive backups) — never commit.
+google_drive/

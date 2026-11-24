@@ -1,0 +1,5 @@
+node_modules/
+# Service-account keys — NEVER commit these.
+source.json
+dest.json
+*-key.json

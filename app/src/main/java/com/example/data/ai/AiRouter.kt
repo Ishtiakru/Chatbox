@@ -8,15 +8,24 @@ import kotlinx.coroutines.flow.flow
 /**
  * Routes every Saira request through the free Gemini provider first and
  * automatically switches to the configured backup provider when the free
- * quota is exhausted. Cooldowns are remembered so a dead provider is not
- * hammered on every message.
+ * quota / rate limit is used up ("limit ses hole arekta api te shift hobe").
+ *
+ * Cooldowns are remembered so a dead provider is not hammered on every message.
+ *
+ * In [neverThrow] mode (used by the real app) the router guarantees it NEVER
+ * surfaces a raw exception: when every provider is unavailable, exhausted, or
+ * misconfigured it returns / emits a calm, friendly message via [safetyNet]
+ * instead. That is what keeps Saira "smooth all the time" with no error UI.
+ * Unit tests use the default throwing mode to assert the failure contract.
  */
 class AiRouter(
     private val primary: AiProvider,
     private val fallback: suspend () -> AiProvider?,
     private val cooldowns: AiCooldownStore = AiCooldownStore(),
     private val now: () -> Long = System::currentTimeMillis,
-    private val cooldownMs: Long = DEFAULT_COOLDOWN_MS
+    private val cooldownMs: Long = DEFAULT_COOLDOWN_MS,
+    private val neverThrow: Boolean = false,
+    private val safetyNet: (Throwable?) -> String = { AiSafeResponses.forError(it) }
 ) {
 
     fun cooldownRemainingMs(providerId: String): Long =
@@ -27,43 +36,58 @@ class AiRouter(
         history: List<AiChatMessage>,
         prompt: String
     ): String {
+        var lastError: Throwable? = null
         var primaryQuotaExhausted = false
-        var primaryNonQuotaError: Exception? = null
 
         if (!cooldowns.isCooling(primary.id, now())) {
             try {
-                return primary.generate(systemInstruction, history, prompt)
+                val result = primary.generate(systemInstruction, history, prompt)
+                if (result.isNotBlank()) return result
+                lastError = AiUnavailableException(EMPTY_ANSWER_MESSAGE)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: AiQuotaExhaustedException) {
                 primaryQuotaExhausted = true
                 markCooldown(primary.id, e)
-            } catch (e: Exception) {
-                primaryNonQuotaError = e
+            } catch (e: Throwable) {
+                lastError = e
                 log("Primary AI provider failed; switching to backup", e)
             }
         } else {
             primaryQuotaExhausted = true
         }
 
-        val backup = fallback() ?: throw (
-            if (primaryQuotaExhausted || primaryNonQuotaError == null) {
-                AiUnavailableException(NO_BACKUP_MESSAGE, primaryNonQuotaError)
+        val backup = fallback() ?: run {
+            if (neverThrow) return safetyNet(lastError ?: AiUnavailableException(NO_BACKUP_MESSAGE))
+            throw (if (primaryQuotaExhausted || lastError == null) {
+                AiUnavailableException(NO_BACKUP_MESSAGE, lastError)
             } else {
-                primaryNonQuotaError
-            }
-        )
+                lastError
+            })
+        }
         if (cooldowns.isCooling(backup.id, now())) {
+            if (neverThrow) return safetyNet(lastError ?: AiUnavailableException(ALL_EXHAUSTED_MESSAGE))
             throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE)
         }
 
         return try {
-            backup.generate(systemInstruction, history, prompt)
+            val result = backup.generate(systemInstruction, history, prompt)
+            if (result.isNotBlank()) {
+                result
+            } else if (neverThrow) {
+                safetyNet(AiUnavailableException(EMPTY_ANSWER_MESSAGE))
+            } else {
+                throw AiUnavailableException(EMPTY_ANSWER_MESSAGE)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: AiQuotaExhaustedException) {
             markCooldown(backup.id, e)
-            throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE, e)
+            if (neverThrow) safetyNet(e) else throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE, e)
+        } catch (e: Throwable) {
+            // Any other backup failure (bad key, network, etc.) must also be swallowed
+            // in neverThrow mode so Saira never surfaces a raw error to the user.
+            if (neverThrow) safetyNet(e) else throw e
         }
     }
 
@@ -74,7 +98,7 @@ class AiRouter(
     ): Flow<String> = flow {
         var finishedByPrimary = false
         var primaryQuotaExhausted = false
-        var primaryNonQuotaError: Exception? = null
+        var primaryNonQuotaError: Throwable? = null
 
         if (!cooldowns.isCooling(primary.id, now())) {
             var emitted = false
@@ -90,7 +114,7 @@ class AiRouter(
                 primaryQuotaExhausted = true
                 markCooldown(primary.id, e)
                 finishedByPrimary = emitted
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 primaryNonQuotaError = e
                 log("Primary AI stream failed; switching to backup", e)
                 finishedByPrimary = emitted
@@ -101,14 +125,23 @@ class AiRouter(
 
         if (finishedByPrimary) return@flow
 
-        val backup = fallback() ?: throw (
-            if (primaryQuotaExhausted || primaryNonQuotaError == null) {
+        val backup = fallback()
+        if (backup == null) {
+            if (neverThrow) {
+                emit(safetyNet(primaryNonQuotaError ?: AiUnavailableException(NO_BACKUP_MESSAGE)))
+                return@flow
+            }
+            throw (if (primaryQuotaExhausted || primaryNonQuotaError == null) {
                 AiUnavailableException(NO_BACKUP_MESSAGE, primaryNonQuotaError)
             } else {
                 primaryNonQuotaError
-            }
-        )
+            })
+        }
         if (cooldowns.isCooling(backup.id, now())) {
+            if (neverThrow) {
+                emit(safetyNet(primaryNonQuotaError ?: AiUnavailableException(ALL_EXHAUSTED_MESSAGE)))
+                return@flow
+            }
             throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE)
         }
 
@@ -118,10 +151,27 @@ class AiRouter(
             throw e
         } catch (e: AiQuotaExhaustedException) {
             markCooldown(backup.id, e)
+            if (neverThrow) {
+                emit(safetyNet(e))
+                return@flow
+            }
             throw AiUnavailableException(ALL_EXHAUSTED_MESSAGE, e)
+        } catch (e: Throwable) {
+            // Any other backup failure must not escape in neverThrow mode.
+            if (neverThrow) {
+                emit(safetyNet(e))
+                return@flow
+            }
+            throw e
         }
 
-        if (text.isBlank()) throw AiUnavailableException(EMPTY_ANSWER_MESSAGE)
+        if (text.isBlank()) {
+            if (neverThrow) {
+                emit(safetyNet(AiUnavailableException(EMPTY_ANSWER_MESSAGE)))
+                return@flow
+            }
+            throw AiUnavailableException(EMPTY_ANSWER_MESSAGE)
+        }
         emit(text)
     }
 
