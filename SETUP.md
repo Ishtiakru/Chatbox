@@ -11,7 +11,7 @@ Follow it once, and every future clone/build will work.
 |---|---|---|
 | JDK | **21** | Android Studio Hedgehog+ bundles it; or install Temurin 21 |
 | Android SDK | API **36**, build-tools **36.0.0** | Install via Android Studio SDK Manager or `sdkmanager` |
-| Gradle | **8.13** (via wrapper) | No manual install needed — `./gradlew` downloads it |
+| Gradle | **9.3.1** (via wrapper) | No manual install needed — `./gradlew` downloads it |
 
 > ⚠️ The repo ships a **Gradle wrapper** (`gradlew` + `gradle/wrapper/`).
 > Always build with `./gradlew`, never with a system `gradle` — this pins the
@@ -88,7 +88,7 @@ Gemini (primary, free via Firebase AI Logic)
 ./gradlew :app:assembleRelease
 ```
 
-First run downloads Gradle 8.13 + dependencies automatically (needs internet).
+First run downloads Gradle 9.3.1 + dependencies automatically (needs internet).
 
 ---
 
@@ -148,5 +148,5 @@ app/src/main/java/com/example/
 └── ui/viewmodel/     # ChatboxAppViewModel
 app/src/test/         # Unit tests (AiRouterTest, …)
 .github/workflows/    # CI pipelines
-gradle/wrapper/       # Gradle 8.13 wrapper (pinned)
+gradle/wrapper/       # Gradle 9.3.1 wrapper (pinned)
 ```
