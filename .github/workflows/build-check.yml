@@ -101,6 +101,23 @@ jobs:
 
       - name: Compile + run unit tests (debug)
         run: |
+          set +e
           ./gradlew :app:testDebugUnitTest --no-daemon \
             -Drobolectric.offline=true \
-            -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7"
+            -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7" \
+            2>&1 | tee gradle-output.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Failure highlights"
+            grep -nE "^e: |^w: .*never used|FAILURE:|What went wrong|> Task .* FAILED|FAILED$|tests completed" gradle-output.txt | tail -n 40 || true
+            echo "::endgroup::"
+            # Surface the first Kotlin/Gradle errors as annotations so they are
+            # readable from `gh run view` even when raw log download fails.
+            grep -E "^e: |What went wrong|> Task .* FAILED|FAILED$" gradle-output.txt \
+              | head -n 12 \
+              | while IFS= read -r line; do
+                  echo "::error::${line}"
+                done
+            echo "::error::Gradle exited with status $status — see the Compile step output above."
+          fi
+          exit "$status"
