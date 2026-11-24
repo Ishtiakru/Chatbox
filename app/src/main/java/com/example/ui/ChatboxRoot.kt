@@ -30,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Shield
@@ -50,7 +49,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,7 +61,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -81,13 +78,10 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.components.customMenuIconVector
 import com.example.ui.screens.AdminScreen
-import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
-import com.example.ui.screens.DemoChatsScreen
-import com.example.ui.screens.LiveChatsScreen
+import com.example.ui.screens.ChatboxDmScreen
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SairaAiScreen
-import com.example.ui.theme.ChatboxAccentViolet
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.ChatboxTheme
@@ -106,30 +100,31 @@ private data class NavDestinationItem(
 
 @Composable
 fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
-    val context = LocalContext.current
     val isOnline by viewModel.isOnline.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
-    val authLoading by viewModel.authLoading.collectAsState()
-    val authError by viewModel.authError.collectAsState()
     val loginLanguage by viewModel.loginLanguage.collectAsState()
-    val rememberMeEnabled by viewModel.rememberMeEnabled.collectAsState()
-    val rememberedPhone by viewModel.rememberedPhone.collectAsState()
     val appearance by viewModel.appearance.collectAsState()
     val dynamicConfig by viewModel.dynamicConfig.collectAsState()
     val publicWelcome by viewModel.publicWelcome.collectAsState()
     val appUpdate by viewModel.appUpdate.collectAsState()
     val isAdmin by viewModel.isAdmin.collectAsState()
     val ownProfile by viewModel.ownProfile.collectAsState()
+    val localUserProfile by viewModel.localUserProfile.collectAsState()
     val userAvatarPath by viewModel.userAvatarPath.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
+    val activeThreadId by viewModel.activeThreadId.collectAsState()
     val showProfileDialog by viewModel.showProfileDialog.collectAsState()
     val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
-    val demoMessages by viewModel.demoMessages.collectAsState()
+    val chatboxThreads by viewModel.chatboxThreads.collectAsState()
+    val chatboxMessages by viewModel.chatboxMessages.collectAsState()
+    val chatboxBackupPin by viewModel.chatboxBackupPin.collectAsState()
+    val chatboxBlockedThreads by viewModel.chatboxBlockedThreads.collectAsState()
+    val chatboxCallLogs by viewModel.chatboxCallLogs.collectAsState()
+    val localSairaSessions by viewModel.localSairaSessions.collectAsState()
     val quickReaction by viewModel.quickReaction.collectAsState()
     val oneMinAutoReplyEnabled by viewModel.oneMinAutoReplyEnabled.collectAsState()
     val notifAutoReplyEnabled by viewModel.notifAutoReplyEnabled.collectAsState()
     val liveLocationEnabled by viewModel.liveLocationEnabled.collectAsState()
-    val liveLocationAllowedPeers by viewModel.liveLocationAllowedPeers.collectAsState()
     val dmPeerNicknames by viewModel.dmPeerNicknames.collectAsState()
     val dmMutedPeers by viewModel.dmMutedPeers.collectAsState()
     val sairaRules by viewModel.sairaRules.collectAsState()
@@ -154,7 +149,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         splashAppeared = true
-        delay(1500)
+        delay(1200)
         splashDone = true
     }
 
@@ -216,366 +211,358 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             return@ChatboxTheme
         }
 
-        val user = currentUser
-        if (user == null) {
-            AuthLoginScreen(
-                languageCode = loginLanguage,
-                authLoading = authLoading,
-                authError = authError,
-                isOnline = isOnline,
-                rememberMeEnabled = rememberMeEnabled,
-                rememberedPhone = rememberedPhone,
-                onSaveRememberedPhone = viewModel::saveRememberedLoginPhone,
-                onQueuePendingPhone = viewModel::queuePendingPhoneForSignIn,
-                onLanguageSelected = viewModel::setLoginLanguage,
-                onGoogleSignIn = { viewModel.signInWithGoogle(context) },
-                onChooseGoogleAccount = { viewModel.signInWithGoogleWithAccountPicker(context) },
-                onSendPasswordReset = viewModel::sendPasswordReset
-            )
-            return@ChatboxTheme
+        val uid = currentUser?.uid.orEmpty()
+        val effectiveDisplayName = ownProfile?.displayName
+            ?: currentUser?.displayName
+            ?: localUserProfile.displayName
+
+        val navItems = remember(isAdmin, dynamicConfig.customMenus) {
+            buildList {
+                add(NavDestinationItem("chatbox", AppTab.Core(CoreAppTab.CHATBOX), "Chatbox", Icons.Rounded.ChatBubbleOutline))
+                add(NavDestinationItem("saira", AppTab.Core(CoreAppTab.SAIRA), "Saira", Icons.Rounded.AutoAwesome))
+                add(NavDestinationItem("calls", AppTab.Core(CoreAppTab.CALLS), "Calls", Icons.Rounded.Phone))
+                add(NavDestinationItem("profile", AppTab.Core(CoreAppTab.PROFILE), "Profile", Icons.Rounded.Person))
+                if (isAdmin) {
+                    add(NavDestinationItem("admin", AppTab.Core(CoreAppTab.ADMIN), "Admin", Icons.Rounded.Shield))
+                }
+                dynamicConfig.customMenus.forEach { menu ->
+                    add(
+                        NavDestinationItem(
+                            id = "custom_${menu.id}",
+                            tab = AppTab.Custom(menu),
+                            label = menu.label,
+                            icon = customMenuIconVector(menu.iconEnum)
+                        )
+                    )
+                }
+            }
         }
 
-        // Key user session state cleanly per authenticated UID
-        key(user.uid) {
-            val navItems = remember(isAdmin, dynamicConfig.customMenus) {
-                buildList {
-                    add(NavDestinationItem("demo", AppTab.Core(CoreAppTab.DEMO), "Chatbox", Icons.Rounded.ChatBubbleOutline))
-                    add(NavDestinationItem("live", AppTab.Core(CoreAppTab.LIVE), "Live", Icons.Rounded.Groups))
-                    add(NavDestinationItem("saira", AppTab.Core(CoreAppTab.SAIRA), "Saira", Icons.Rounded.AutoAwesome))
-                    add(NavDestinationItem("calls", AppTab.Core(CoreAppTab.CALLS), "Calls", Icons.Rounded.Phone))
-                    add(NavDestinationItem("profile", AppTab.Core(CoreAppTab.PROFILE), "Profile", Icons.Rounded.Person))
-                    if (isAdmin) {
-                        add(NavDestinationItem("admin", AppTab.Core(CoreAppTab.ADMIN), "Admin", Icons.Rounded.Shield))
-                    }
-                    dynamicConfig.customMenus.forEach { menu ->
-                        add(
-                            NavDestinationItem(
-                                id = "custom_${menu.id}",
-                                tab = AppTab.Custom(menu),
-                                label = menu.label,
-                                icon = customMenuIconVector(menu.iconEnum)
+        val resolvedTab = remember(selectedTab, navItems) {
+            when (val currentTab = selectedTab) {
+                is AppTab.Core -> {
+                    if (currentTab.tab == CoreAppTab.ADMIN && !isAdmin) {
+                        AppTab.Core(CoreAppTab.CHATBOX)
+                    } else currentTab
+                }
+                is AppTab.Custom -> {
+                    val customId = currentTab.menu.id
+                    navItems.firstOrNull { it.id == "custom_$customId" }?.tab
+                        ?: AppTab.Core(CoreAppTab.CHATBOX)
+                }
+            }
+        }
+
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
+            val useSideRail = maxWidth >= 720.dp
+
+            val mainContent: @Composable (Modifier) -> Unit = { contentMod ->
+                Box(modifier = contentMod) {
+                    when (resolvedTab) {
+                        is AppTab.Core -> when (resolvedTab.tab) {
+                            CoreAppTab.CHATBOX -> ChatboxDmScreen(
+                                threads = chatboxThreads,
+                                activeThreadId = activeThreadId,
+                                messagesByThread = chatboxMessages,
+                                peerNicknames = dmPeerNicknames,
+                                mutedThreadIds = dmMutedPeers,
+                                blockedThreadIds = chatboxBlockedThreads,
+                                globalQuickReaction = quickReaction,
+                                backupPinHint = chatboxBackupPin,
+                                publicWelcomeBanner = publicWelcome,
+                                isOnline = isOnline,
+                                appUpdateActive = appUpdate.active,
+                                onSelectThread = viewModel::selectThread,
+                                onSendMessage = { threadId, body, timeStr ->
+                                    viewModel.sendChatboxMessage(threadId, body, timeStr)
+                                },
+                                onSendImage = viewModel::sendChatboxImage,
+                                onSendVoice = viewModel::sendChatboxVoice,
+                                onCreateDirectThread = viewModel::openOrCreateDirectThread,
+                                onCreateGroupWithContact = viewModel::createGroupWithContact,
+                                onMarkThreadUnread = viewModel::markThreadUnread,
+                                onToggleMute = viewModel::setDmPeerMuted,
+                                onUpdateNickname = viewModel::setDmPeerNickname,
+                                onThreadQuickReactionChange = viewModel::setThreadQuickReaction,
+                                onToggleE2eeVerified = viewModel::setThreadE2eeVerified,
+                                onDisappearingChange = viewModel::setThreadDisappearingTimer,
+                                onToggleReadReceipts = viewModel::setThreadReadReceipts,
+                                onUnlockHistoryWithPin = viewModel::unlockThreadHistoryWithPin,
+                                onUpdateBackupPin = viewModel::updateBackupPin,
+                                onToggleBlock = viewModel::toggleThreadBlocked,
+                                onSubmitReport = viewModel::submitThreadReport,
+                                onLogCall = viewModel::logChatboxCall,
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) }
                             )
+                            CoreAppTab.SAIRA -> SairaAiScreen(
+                                currentUserId = uid,
+                                isOnline = isOnline,
+                                appUpdateActive = appUpdate.active,
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) },
+                                oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                                onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
+                                notifAutoReplyEnabled = notifAutoReplyEnabled,
+                                onChangeNotifAutoReply = viewModel::setNotifAutoReplyEnabled,
+                                liveLocationEnabled = liveLocationEnabled,
+                                onChangeLiveLocation = viewModel::setLiveLocationEnabled,
+                                rules = sairaRules,
+                                onSaveRules = viewModel::saveSairaRules,
+                                autoReplyLogs = sairaAutoReplyLogs,
+                                onClearAutoReplyLogs = viewModel::clearSairaAutoReplyLogs,
+                                fallbackKindId = fallbackKindId,
+                                fallbackApiKey = fallbackApiKey,
+                                fallbackBaseUrl = fallbackBaseUrl,
+                                fallbackModel = fallbackModel,
+                                onSaveFallbackConfig = viewModel::saveAiFallbackConfig,
+                                sessionRepo = viewModel.sairaSessionRepo,
+                                localSessions = localSairaSessions,
+                                onSaveLocalExchange = viewModel::saveLocalSairaExchange,
+                                onDeleteLocalSession = viewModel::deleteLocalSairaSession
+                            )
+                            CoreAppTab.CALLS -> CallsScreen(
+                                isOnline = isOnline,
+                                appUpdateActive = appUpdate.active,
+                                callLogs = chatboxCallLogs,
+                                onOpenThread = { threadId ->
+                                    viewModel.selectThread(threadId)
+                                    viewModel.selectTab(AppTab.Core(CoreAppTab.CHATBOX))
+                                },
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) },
+                                onBackToConversations = { viewModel.selectTab(AppTab.Core(CoreAppTab.CHATBOX)) }
+                            )
+                            CoreAppTab.PROFILE -> ProfileScreen(
+                                currentUserId = uid,
+                                userEmail = currentUser?.email,
+                                fallbackDisplayName = effectiveDisplayName,
+                                ownProfile = ownProfile,
+                                localProfile = localUserProfile,
+                                blockedThreadIds = chatboxBlockedThreads,
+                                chatboxThreads = chatboxThreads,
+                                avatarPath = userAvatarPath,
+                                isOnline = isOnline,
+                                isAdmin = isAdmin,
+                                loginLanguage = loginLanguage,
+                                quickReaction = quickReaction,
+                                oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
+                                liveLocationEnabled = liveLocationEnabled,
+                                appearance = appearance,
+                                appUpdate = appUpdate,
+                                liveChatRepo = viewModel.liveChatRepo,
+                                onPickAvatarUri = viewModel::saveOwnAvatarFromUri,
+                                onRemoveAvatar = viewModel::removeOwnAvatar,
+                                onProfileUpdated = viewModel::updateOwnProfile,
+                                onSaveLocalProfile = viewModel::saveLocalUserProfile,
+                                onRetryEnsureProfile = viewModel::retryEnsureOwnProfile,
+                                onUnblockThread = viewModel::unblockThread,
+                                onQuickReactionChange = viewModel::setQuickReaction,
+                                onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
+                                onChangeLiveLocation = viewModel::setLiveLocationEnabled,
+                                onLanguageSelected = viewModel::setLoginLanguage,
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) },
+                                onNavigateTab = { target -> viewModel.selectTab(AppTab.Core(target)) }
+                            )
+                            CoreAppTab.ADMIN -> AdminScreen(
+                                currentUserId = uid,
+                                currentUserEmail = currentUser?.email,
+                                isOnline = isOnline,
+                                appearance = appearance,
+                                welcomeBanner = publicWelcome,
+                                appUpdate = appUpdate,
+                                dynamicConfig = dynamicConfig,
+                                authRepo = viewModel.authRepo,
+                                sparkAdminRepo = viewModel.sparkAdminRepo,
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) }
+                            )
+                        }
+                        is AppTab.Custom -> CustomMenuContentScreen(
+                            menu = resolvedTab.menu,
+                            appUpdateActive = appUpdate.active,
+                            onAppUpdateClick = { viewModel.openUpdateDialog(true) }
                         )
                     }
                 }
             }
 
-            // If a custom menu was removed, fall back safely to Live chats
-            val resolvedTab = remember(selectedTab, navItems) {
-                when (selectedTab) {
-                    is AppTab.Core -> {
-                        if ((selectedTab as AppTab.Core).tab == CoreAppTab.ADMIN && !isAdmin) {
-                            AppTab.Core(CoreAppTab.LIVE)
-                        } else selectedTab
-                    }
-                    is AppTab.Custom -> {
-                        val customId = (selectedTab as AppTab.Custom).menu.id
-                        navItems.firstOrNull { it.id == "custom_$customId" }?.tab
-                            ?: AppTab.Core(CoreAppTab.LIVE)
-                    }
-                }
-            }
-
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(colors.background)
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-            ) {
-                val useSideRail = maxWidth >= 720.dp
-
-                val mainContent: @Composable (Modifier) -> Unit = { contentMod ->
-                    Box(modifier = contentMod) {
-                        when (resolvedTab) {
-                            is AppTab.Core -> when (resolvedTab.tab) {
-                                CoreAppTab.DEMO -> DemoChatsScreen(
-                                    publicWelcomeBanner = publicWelcome,
-                                    userDisplayName = ownProfile?.displayName ?: user.displayName,
-                                    userEmail = user.email,
-                                    isOnline = isOnline,
-                                    appUpdateActive = appUpdate.active,
-                                    messagesByContact = demoMessages,
-                                    onSendDemoMessage = viewModel::sendDemoMessage,
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) },
-                                    onSignOut = viewModel::signOut,
-                                    onOpenCalls = { viewModel.selectTab(AppTab.Core(CoreAppTab.CALLS)) }
-                                )
-                                CoreAppTab.LIVE -> LiveChatsScreen(
-                                    currentUserId = user.uid,
-                                    displayName = user.displayName,
-                                    isOnline = isOnline,
-                                    appUpdateActive = appUpdate.active,
-                                    oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
-                                    liveLocationEnabled = liveLocationEnabled,
-                                    liveLocationAllowedPeers = liveLocationAllowedPeers,
-                                    quickReaction = quickReaction,
-                                    ownProfile = ownProfile,
-                                    ownAvatarPath = userAvatarPath,
-                                    homeAnnouncement = dynamicConfig.homeAnnouncement,
-                                    appTitle = dynamicConfig.appTitle,
-                                    liveChatRepo = viewModel.liveChatRepo,
-                                    peerNicknames = dmPeerNicknames,
-                                    mutedPeerIds = dmMutedPeers,
-                                    onQuickReactionChange = viewModel::setQuickReaction,
-                                    onSetPeerLocationAllowed = viewModel::setPeerLocationAllowed,
-                                    onSetPeerNickname = viewModel::setDmPeerNickname,
-                                    onSetPeerMuted = viewModel::setDmPeerMuted,
-                                    onOpenProfile = { viewModel.selectTab(AppTab.Core(CoreAppTab.PROFILE)) },
-                                    onOpenCalls = { viewModel.selectTab(AppTab.Core(CoreAppTab.CALLS)) },
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) }
-                                )
-                                CoreAppTab.SAIRA -> SairaAiScreen(
-                                    currentUserId = user.uid,
-                                    isOnline = isOnline,
-                                    appUpdateActive = appUpdate.active,
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) },
-                                    oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
-                                    onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
-                                    notifAutoReplyEnabled = notifAutoReplyEnabled,
-                                    onChangeNotifAutoReply = viewModel::setNotifAutoReplyEnabled,
-                                    liveLocationEnabled = liveLocationEnabled,
-                                    onChangeLiveLocation = viewModel::setLiveLocationEnabled,
-                                    rules = sairaRules,
-                                    onSaveRules = viewModel::saveSairaRules,
-                                    autoReplyLogs = sairaAutoReplyLogs,
-                                    onClearAutoReplyLogs = viewModel::clearSairaAutoReplyLogs,
-                                    fallbackKindId = fallbackKindId,
-                                    fallbackApiKey = fallbackApiKey,
-                                    fallbackBaseUrl = fallbackBaseUrl,
-                                    fallbackModel = fallbackModel,
-                                    onSaveFallbackConfig = viewModel::saveAiFallbackConfig,
-                                    sessionRepo = viewModel.sairaSessionRepo
-                                )
-                                CoreAppTab.CALLS -> CallsScreen(
-                                    isOnline = isOnline,
-                                    appUpdateActive = appUpdate.active,
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) },
-                                    onBackToConversations = { viewModel.selectTab(AppTab.Core(CoreAppTab.LIVE)) }
-                                )
-                                CoreAppTab.PROFILE -> ProfileScreen(
-                                    currentUserId = user.uid,
-                                    userEmail = user.email,
-                                    fallbackDisplayName = user.displayName,
-                                    ownProfile = ownProfile,
-                                    avatarPath = userAvatarPath,
-                                    isOnline = isOnline,
-                                    isAdmin = isAdmin,
-                                    loginLanguage = loginLanguage,
-                                    quickReaction = quickReaction,
-                                    oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
-                                    liveLocationEnabled = liveLocationEnabled,
-                                    appearance = appearance,
-                                    appUpdate = appUpdate,
-                                    liveChatRepo = viewModel.liveChatRepo,
-                                    onPickAvatarUri = viewModel::saveOwnAvatarFromUri,
-                                    onRemoveAvatar = viewModel::removeOwnAvatar,
-                                    onProfileUpdated = viewModel::updateOwnProfile,
-                                    onRetryEnsureProfile = viewModel::retryEnsureOwnProfile,
-                                    onQuickReactionChange = viewModel::setQuickReaction,
-                                    onChangeOneMinAutoReply = viewModel::setOneMinAutoReplyEnabled,
-                                    onChangeLiveLocation = viewModel::setLiveLocationEnabled,
-                                    onLanguageSelected = viewModel::setLoginLanguage,
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) },
-                                    onNavigateTab = { target -> viewModel.selectTab(AppTab.Core(target)) },
-                                    onSignOut = viewModel::signOut
-                                )
-                                CoreAppTab.ADMIN -> AdminScreen(
-                                    currentUserId = user.uid,
-                                    currentUserEmail = user.email,
-                                    isOnline = isOnline,
-                                    appearance = appearance,
-                                    welcomeBanner = publicWelcome,
-                                    appUpdate = appUpdate,
-                                    dynamicConfig = dynamicConfig,
-                                    authRepo = viewModel.authRepo,
-                                    sparkAdminRepo = viewModel.sparkAdminRepo,
-                                    onAppUpdateClick = { viewModel.openUpdateDialog(true) }
-                                )
-                            }
-                            is AppTab.Custom -> CustomMenuContentScreen(
-                                menu = resolvedTab.menu,
-                                appUpdateActive = appUpdate.active,
-                                onAppUpdateClick = { viewModel.openUpdateDialog(true) }
-                            )
-                        }
-                    }
-                }
-
-                if (useSideRail) {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        NavigationRail(
-                            containerColor = colors.surface,
-                            header = {
-                                if (appUpdate.active) {
-                                    Surface(
-                                        onClick = { viewModel.openUpdateDialog(true) },
-                                        shape = CircleShape,
-                                        color = ChatboxUpdateGreen,
-                                        modifier = Modifier.padding(top = 8.dp)
-                                    ) {
-                                        Text(
-                                            text = "UPD",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
+            if (useSideRail) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    NavigationRail(
+                        containerColor = colors.surface,
+                        header = {
+                            if (appUpdate.active) {
+                                Surface(
+                                    onClick = { viewModel.openUpdateDialog(true) },
+                                    shape = CircleShape,
+                                    color = ChatboxUpdateGreen,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "UPD",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
                                 }
                             }
+                        }
+                    ) {
+                        Spacer(Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Spacer(Modifier.height(8.dp))
-                            Column(
-                                modifier = Modifier.verticalScroll(rememberScrollState()),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                            navItems.forEach { item ->
+                                val selected = isTabSelected(resolvedTab, item.tab)
+                                NavigationRailItem(
+                                    selected = selected,
+                                    onClick = { viewModel.selectTab(item.tab) },
+                                    icon = {
+                                        NavTabIcon(
+                                            item = item,
+                                            selected = selected,
+                                            displayName = effectiveDisplayName,
+                                            avatarPath = userAvatarPath,
+                                            tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                        )
+                                    },
+                                    label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    colors = NavigationRailItemDefaults.colors(
+                                        selectedIconColor = ChatboxPrimary,
+                                        selectedTextColor = ChatboxPrimary,
+                                        indicatorColor = ChatboxSoftLavender
+                                    ),
+                                    modifier = Modifier.testTag("nav_${item.id}")
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = colors.border)
+                    mainContent(Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                val navBar: @Composable () -> Unit = {
+                    if (navItems.size <= 6) {
+                        NavigationBar(containerColor = colors.surface) {
+                            navItems.forEach { item ->
+                                val selected = isTabSelected(resolvedTab, item.tab)
+                                NavigationBarItem(
+                                    selected = selected,
+                                    onClick = { viewModel.selectTab(item.tab) },
+                                    icon = {
+                                        NavTabIcon(
+                                            item = item,
+                                            selected = selected,
+                                            displayName = effectiveDisplayName,
+                                            avatarPath = userAvatarPath,
+                                            tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            text = item.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = ChatboxPrimary,
+                                        selectedTextColor = ChatboxPrimary,
+                                        indicatorColor = ChatboxSoftLavender
+                                    ),
+                                    modifier = Modifier.testTag("nav_${item.id}")
+                                )
+                            }
+                        }
+                    } else {
+                        Surface(color = colors.surface, shadowElevation = 2.dp) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 navItems.forEach { item ->
                                     val selected = isTabSelected(resolvedTab, item.tab)
-                                    NavigationRailItem(
-                                        selected = selected,
+                                    Surface(
                                         onClick = { viewModel.selectTab(item.tab) },
-                                        icon = {
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (selected) ChatboxSoftLavender else Color.Transparent,
+                                        modifier = Modifier
+                                            .defaultMinSize(minWidth = 64.dp, minHeight = 52.dp)
+                                            .testTag("nav_${item.id}")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
                                             NavTabIcon(
                                                 item = item,
                                                 selected = selected,
-                                                displayName = ownProfile?.displayName ?: user.displayName ?: "U",
+                                                displayName = effectiveDisplayName,
                                                 avatarPath = userAvatarPath,
                                                 tint = if (selected) ChatboxPrimary else colors.inkMuted
                                             )
-                                        },
-                                        label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                        colors = NavigationRailItemDefaults.colors(
-                                            selectedIconColor = ChatboxPrimary,
-                                            selectedTextColor = ChatboxPrimary,
-                                            indicatorColor = ChatboxSoftLavender
-                                        ),
-                                        modifier = Modifier.testTag("nav_${item.id}")
-                                    )
-                                }
-                            }
-                        }
-                        HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = colors.border)
-                        mainContent(Modifier.weight(1f).fillMaxHeight())
-                    }
-                } else {
-                    val navBar: @Composable () -> Unit = {
-                        if (navItems.size <= 6) {
-                            NavigationBar(containerColor = colors.surface) {
-                                navItems.forEach { item ->
-                                    val selected = isTabSelected(resolvedTab, item.tab)
-                                    NavigationBarItem(
-                                        selected = selected,
-                                        onClick = { viewModel.selectTab(item.tab) },
-                                        icon = {
-                                            NavTabIcon(
-                                                item = item,
-                                                selected = selected,
-                                                displayName = ownProfile?.displayName ?: user.displayName ?: "U",
-                                                avatarPath = userAvatarPath,
-                                                tint = if (selected) ChatboxPrimary else colors.inkMuted
-                                            )
-                                        },
-                                        label = {
+                                            Spacer(Modifier.height(2.dp))
                                             Text(
                                                 text = item.label,
                                                 style = MaterialTheme.typography.labelSmall,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                overflow = TextOverflow.Ellipsis
+                                                color = if (selected) ChatboxPrimary else colors.inkMuted,
+                                                maxLines = 1
                                             )
-                                        },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            selectedIconColor = ChatboxPrimary,
-                                            selectedTextColor = ChatboxPrimary,
-                                            indicatorColor = ChatboxSoftLavender
-                                        ),
-                                        modifier = Modifier.testTag("nav_${item.id}")
-                                    )
-                                }
-                            }
-                        } else {
-                            Surface(color = colors.surface, shadowElevation = 2.dp) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    navItems.forEach { item ->
-                                        val selected = isTabSelected(resolvedTab, item.tab)
-                                        Surface(
-                                            onClick = { viewModel.selectTab(item.tab) },
-                                            shape = RoundedCornerShape(14.dp),
-                                            color = if (selected) ChatboxSoftLavender else Color.Transparent,
-                                            modifier = Modifier
-                                                .defaultMinSize(minWidth = 64.dp, minHeight = 52.dp)
-                                                .testTag("nav_${item.id}")
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Center
-                                            ) {
-                                                NavTabIcon(
-                                                    item = item,
-                                                    selected = selected,
-                                                    displayName = ownProfile?.displayName ?: user.displayName ?: "U",
-                                                    avatarPath = userAvatarPath,
-                                                    tint = if (selected) ChatboxPrimary else colors.inkMuted
-                                                )
-                                                Spacer(Modifier.height(2.dp))
-                                                Text(
-                                                    text = item.label,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = if (selected) ChatboxPrimary else colors.inkMuted,
-                                                    maxLines = 1
-                                                )
-                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                }
 
-                    if (appearance.menu == "top") {
-                        Scaffold(
-                            containerColor = colors.background,
-                            topBar = navBar
-                        ) { innerPadding ->
-                            mainContent(Modifier.fillMaxSize().padding(innerPadding))
-                        }
-                    } else {
-                        Scaffold(
-                            containerColor = colors.background,
-                            bottomBar = navBar
-                        ) { innerPadding ->
-                            mainContent(Modifier.fillMaxSize().padding(innerPadding))
-                        }
+                if (appearance.menu == "top") {
+                    Scaffold(
+                        containerColor = colors.background,
+                        topBar = navBar
+                    ) { innerPadding ->
+                        mainContent(Modifier.fillMaxSize().padding(innerPadding))
+                    }
+                } else {
+                    Scaffold(
+                        containerColor = colors.background,
+                        bottomBar = navBar
+                    ) { innerPadding ->
+                        mainContent(Modifier.fillMaxSize().padding(innerPadding))
                     }
                 }
             }
+        }
 
-            if (showProfileDialog) {
-                ProfileModalDialog(
-                    uid = user.uid,
-                    email = user.email,
-                    fallbackDisplayName = user.displayName,
-                    isOnline = isOnline,
-                    liveChatRepo = viewModel.liveChatRepo,
-                    onDismiss = { viewModel.openProfileDialog(false) },
-                    onProfileUpdated = viewModel::updateOwnProfile,
-                    onSignOut = viewModel::signOut
-                )
-            }
+        if (showProfileDialog) {
+            ProfileModalDialog(
+                uid = uid,
+                email = currentUser?.email,
+                fallbackDisplayName = effectiveDisplayName,
+                localProfile = localUserProfile,
+                isOnline = isOnline,
+                liveChatRepo = viewModel.liveChatRepo,
+                onDismiss = { viewModel.openProfileDialog(false) },
+                onProfileUpdated = viewModel::updateOwnProfile,
+                onSaveLocalProfile = viewModel::saveLocalUserProfile
+            )
+        }
 
-            if (showUpdateDialog && appUpdate.active) {
-                AppUpdateDetailsDialog(
-                    appUpdate = appUpdate,
-                    onDismiss = { viewModel.openUpdateDialog(false) }
-                )
-            }
+        if (showUpdateDialog && appUpdate.active) {
+            AppUpdateDetailsDialog(
+                appUpdate = appUpdate,
+                onDismiss = { viewModel.openUpdateDialog(false) }
+            )
         }
     }
 }

@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
@@ -42,12 +43,9 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.GroupAdd
-import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Palette
@@ -91,7 +89,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.ChatboxConstants
+import com.example.data.model.ChatboxThread
 import com.example.data.model.CoreAppTab
+import com.example.data.model.LocalUserProfile
 import com.example.data.model.SparkAppearance
 import com.example.data.model.SparkAppUpdate
 import com.example.data.model.UserProfile
@@ -100,13 +100,13 @@ import com.example.data.repository.LiveChatRepository
 import com.example.ui.components.ChatboxSearchField
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
-import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.ChatboxUpdateGreen
 import com.example.ui.theme.LocalChatboxColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -138,6 +138,9 @@ fun ProfileScreen(
     userEmail: String?,
     fallbackDisplayName: String?,
     ownProfile: UserProfile?,
+    localProfile: LocalUserProfile,
+    blockedThreadIds: Set<String> = emptySet(),
+    chatboxThreads: List<ChatboxThread> = emptyList(),
     avatarPath: String?,
     isOnline: Boolean,
     isAdmin: Boolean,
@@ -151,14 +154,15 @@ fun ProfileScreen(
     onPickAvatarUri: (Uri) -> Unit,
     onRemoveAvatar: () -> Unit,
     onProfileUpdated: (UserProfile) -> Unit,
+    onSaveLocalProfile: (displayName: String, about: String, phoneNumber: String) -> Unit,
     onRetryEnsureProfile: () -> Unit,
+    onUnblockThread: (String) -> Unit,
     onQuickReactionChange: (String) -> Unit,
     onChangeOneMinAutoReply: (Boolean) -> Unit,
     onChangeLiveLocation: (Boolean) -> Unit,
     onLanguageSelected: (String) -> Unit,
     onAppUpdateClick: () -> Unit,
-    onNavigateTab: (CoreAppTab) -> Unit,
-    onSignOut: () -> Unit
+    onNavigateTab: (CoreAppTab) -> Unit
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
@@ -171,9 +175,17 @@ fun ProfileScreen(
     var copiedId by remember { mutableStateOf(false) }
     var cacheBytes by remember { mutableLongStateOf(0L) }
 
-    val blockedIds by remember(currentUserId) {
-        liveChatRepo.observeBlockedPeerIds(currentUserId)
+    val cloudBlockedIds by remember(currentUserId) {
+        if (currentUserId.isNotBlank()) liveChatRepo.observeBlockedPeerIds(currentUserId)
+        else flowOf(emptySet())
     }.collectAsState(initial = emptySet())
+
+    val blockedIds = remember(cloudBlockedIds, blockedThreadIds) {
+        cloudBlockedIds + blockedThreadIds
+    }
+    val blockedThreadNames = remember(chatboxThreads) {
+        chatboxThreads.associate { it.id to it.name }
+    }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -184,7 +196,7 @@ fun ProfileScreen(
     }
 
     LaunchedEffect(currentUserId, isOnline) {
-        if (ownProfile == null && isOnline) {
+        if (currentUserId.isNotBlank() && ownProfile == null && isOnline) {
             onRetryEnsureProfile()
         }
         cacheBytes = withContext(Dispatchers.IO) {
@@ -205,10 +217,11 @@ fun ProfileScreen(
 
     val effectiveName = ownProfile?.displayName?.ifBlank { null }
         ?: fallbackDisplayName?.ifBlank { null }
-        ?: "Chatbox User"
+        ?: localProfile.displayName.ifBlank { "Chatbox User" }
     val effectiveAbout = ownProfile?.about?.ifBlank { null }
-        ?: LiveChatRepository.DEFAULT_ABOUT_TEXT
-    val effectiveShortId = ownProfile?.shortId.orEmpty()
+        ?: localProfile.about.ifBlank { LiveChatRepository.DEFAULT_ABOUT_TEXT }
+    val effectiveShortId = ownProfile?.shortId?.ifBlank { null }
+        ?: localProfile.shortId
     val hasLocalAvatar = remember(avatarPath) {
         !avatarPath.isNullOrBlank() && File(avatarPath).exists()
     }
@@ -303,7 +316,7 @@ fun ProfileScreen(
                 id = "help",
                 title = "Help and feedback",
                 subtitle = "About Chatbox, Saira AI & GitHub releases",
-                icon = Icons.Rounded.HelpOutline,
+                icon = Icons.AutoMirrored.Rounded.HelpOutline,
                 onClick = { activeSheet = ProfileSheet.HELP }
             ),
             ProfileMenuRow(
@@ -334,14 +347,6 @@ fun ProfileScreen(
                         activeSheet = ProfileSheet.HELP
                     }
                 }
-            ),
-            ProfileMenuRow(
-                id = "logout",
-                title = "Log out",
-                subtitle = userEmail ?: "Sign out of Google account",
-                icon = Icons.AutoMirrored.Rounded.Logout,
-                tint = ChatboxErrorInk,
-                onClick = onSignOut
             )
         )
     }
@@ -717,12 +722,7 @@ fun ProfileScreen(
                         ProfileShortcutBubble(
                             label = "Chatbox",
                             icon = Icons.Rounded.ChatBubbleOutline,
-                            onClick = { onNavigateTab(CoreAppTab.DEMO) }
-                        )
-                        ProfileShortcutBubble(
-                            label = "Live",
-                            icon = Icons.Rounded.Groups,
-                            onClick = { onNavigateTab(CoreAppTab.LIVE) }
+                            onClick = { onNavigateTab(CoreAppTab.CHATBOX) }
                         )
                         ProfileShortcutBubble(
                             label = "Saira AI",
@@ -754,15 +754,18 @@ fun ProfileScreen(
             uid = currentUserId,
             email = userEmail,
             fallbackDisplayName = effectiveName,
+            localProfile = localProfile,
             isOnline = isOnline,
             liveChatRepo = liveChatRepo,
             onDismiss = { activeSheet = ProfileSheet.NONE },
             onProfileUpdated = onProfileUpdated,
-            onSignOut = onSignOut
+            onSaveLocalProfile = onSaveLocalProfile
         )
         ProfileSheet.PRIVACY -> ProfilePrivacyDialog(
             currentUserId = currentUserId,
             blockedIds = blockedIds,
+            blockedThreadNames = blockedThreadNames,
+            onUnblockThread = onUnblockThread,
             liveLocationEnabled = liveLocationEnabled,
             onChangeLiveLocation = onChangeLiveLocation,
             liveChatRepo = liveChatRepo,

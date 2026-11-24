@@ -38,7 +38,7 @@ sealed interface UiState<out T> {
 }
 
 enum class CoreAppTab {
-    DEMO, LIVE, SAIRA, CALLS, PROFILE, ADMIN
+    CHATBOX, SAIRA, CALLS, PROFILE, ADMIN
 }
 
 sealed interface AppTab {
@@ -65,26 +65,116 @@ enum class AvatarStyle {
     SAIRA, PEACH, LAVENDER, YELLOW, BLUE
 }
 
-data class DemoContact(
+enum class DisappearingOption(
+    val key: String,
+    val label: String,
+    val shortLabel: String
+) {
+    OFF("off", "Off", "Off"),
+    HOURS_24("24h", "24 hours", "24h"),
+    DAYS_7("7d", "7 days", "7d"),
+    DAYS_90("90d", "90 days", "90d");
+
+    companion object {
+        fun fromKey(key: String?): DisappearingOption =
+            entries.firstOrNull { it.key.equals(key, ignoreCase = true) } ?: OFF
+    }
+}
+
+@Serializable
+enum class ChatboxMessageKind {
+    TEXT,
+    MISSED_AUDIO_CALL,
+    MISSED_VIDEO_CALL,
+    CALL_COMPLETED,
+    IMAGE,
+    VOICE
+}
+
+@Serializable
+data class ChatboxThread(
     val id: String,
     val name: String,
-    val role: String,
-    val avatar: String,
-    val style: AvatarStyle,
+    val shortId: String = "",
+    val phoneNumber: String = "",
+    val role: String = "Active now",
+    val connectionLabel: String = "You're connected on Chatbox",
+    val locationText: String = "",
+    val workBio: String = "",
+    val avatarLabel: String = "",
+    val style: AvatarStyle = AvatarStyle.LAVENDER,
     val label: String? = null,
-    val online: Boolean = false
+    val online: Boolean = true,
+    val isGroup: Boolean = false,
+    val members: List<String> = emptyList(),
+    val unreadCount: Int = 0,
+    val readReceiptsEnabled: Boolean = true,
+    val disappearingKey: String = "off",
+    val e2eeVerified: Boolean = false,
+    val historyLocked: Boolean = false,
+    val historyUnlocked: Boolean = false,
+    val quickReaction: String = ""
 )
 
 @Serializable
-data class DemoMessage(
-    val from: String, // "me" | "them"
+data class ChatboxMessage(
+    val id: String = "",
+    val from: String, // "me" | "them" | "system"
+    val senderName: String = "",
     val text: String,
-    val time: String
+    val time: String,
+    val kind: ChatboxMessageKind = ChatboxMessageKind.TEXT,
+    val imageUri: String? = null,
+    val audioPath: String? = null,
+    val audioDurationMs: Long? = null,
+    val isRestoredHistory: Boolean = false
 )
 
-enum class DemoModal {
-    CALL, VIDEO, ATTACH, NEW_CHAT, ABOUT
-}
+@Serializable
+data class ChatboxCallEntry(
+    val id: String,
+    val threadId: String,
+    val peerName: String,
+    val isVideo: Boolean = false,
+    val isMissed: Boolean = false,
+    val timeLabel: String,
+    val durationLabel: String = ""
+)
+
+@Serializable
+data class ChatboxReportEntry(
+    val id: String,
+    val threadId: String,
+    val peerName: String,
+    val reason: String,
+    val note: String = "",
+    val timeLabel: String = ""
+)
+
+@Serializable
+data class LocalUserProfile(
+    val uid: String = "local_user",
+    val displayName: String = "Chatbox User",
+    val shortId: String = "482910",
+    val about: String = "Hey there! I am using Chatbox.",
+    val phoneNumber: String = ""
+)
+
+@Serializable
+data class LocalSairaSessionData(
+    val id: String,
+    val title: String,
+    val lastPreview: String,
+    val updatedAtMs: Long,
+    val exchanges: List<LocalSairaExchange> = emptyList()
+)
+
+@Serializable
+data class LocalSairaExchange(
+    val id: String,
+    val question: String,
+    val answer: String
+)
 
 @Keep
 @IgnoreExtraProperties

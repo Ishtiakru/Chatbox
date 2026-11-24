@@ -69,6 +69,8 @@ import kotlinx.coroutines.launch
 fun ProfilePrivacyDialog(
     currentUserId: String,
     blockedIds: Set<String>,
+    blockedThreadNames: Map<String, String> = emptyMap(),
+    onUnblockThread: (String) -> Unit = {},
     liveLocationEnabled: Boolean,
     onChangeLiveLocation: (Boolean) -> Unit,
     liveChatRepo: LiveChatRepository,
@@ -156,6 +158,7 @@ fun ProfilePrivacyDialog(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(blockedIds.toList(), key = { it }) { peerUid ->
+                            val label = blockedThreadNames[peerUid] ?: peerUid.take(18)
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
                                 color = colors.fieldBg,
@@ -170,19 +173,24 @@ fun ProfilePrivacyDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = peerUid.take(18),
+                                        text = label,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = colors.ink,
                                         modifier = Modifier.weight(1f)
                                     )
                                     TextButton(
                                         onClick = {
-                                            scope.launch {
-                                                liveChatRepo.unblockPeerUser(currentUserId, peerUid)
-                                                    .onSuccess { feedback = "Contact unblocked." to false }
-                                                    .onFailure { err ->
-                                                        feedback = friendlyFirestoreMessage(err) to true
-                                                    }
+                                            if (peerUid in blockedThreadNames) {
+                                                onUnblockThread(peerUid)
+                                                feedback = "Contact unblocked." to false
+                                            } else if (currentUserId.isNotBlank()) {
+                                                scope.launch {
+                                                    liveChatRepo.unblockPeerUser(currentUserId, peerUid)
+                                                        .onSuccess { feedback = "Contact unblocked." to false }
+                                                        .onFailure { err ->
+                                                            feedback = friendlyFirestoreMessage(err) to true
+                                                        }
+                                                }
                                             }
                                         }
                                     ) {
@@ -534,8 +542,8 @@ fun ProfileAboutHelpDialog(
                     color = ChatboxPrimary
                 )
                 Text(
-                    text = "• Every signed-in user gets a unique 6-digit Chatbox ID and profile.\n" +
-                        "• Live Chats sync in real time with Firebase Firestore.\n" +
+                    text = "• All user DMs, groups, voice notes, and photos stay ready instantly in Chatbox.\n" +
+                        "• Customize quick reactions, nicknames, read receipts, disappearing messages, and PIN history restore.\n" +
                         "• Saira AI provides fast answers and optional auto-reply assistance.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.inkMuted

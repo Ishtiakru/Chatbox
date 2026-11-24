@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Book
@@ -95,9 +94,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.R
-import com.example.data.model.AvatarStyle
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.CustomMenuIconName
+import com.example.data.model.LocalUserProfile
 import com.example.data.model.SparkAppUpdate
 import com.example.data.model.SparkCustomMenu
 import com.example.data.model.UserProfile
@@ -245,48 +244,6 @@ fun SairaMetaOrb(
             ),
             radius = this.size.minDimension * 0.25f
         )
-    }
-}
-
-@Composable
-fun DemoAvatar(
-    label: String,
-    style: AvatarStyle,
-    online: Boolean,
-    size: Dp = 44.dp
-) {
-    val (bgColors, fgColor) = when (style) {
-        AvatarStyle.SAIRA -> listOf(Color(0xFFEDE9FE), Color(0xFFC4B5FD)) to Color(0xFF5B4A8F)
-        AvatarStyle.PEACH -> listOf(Color(0xFFF1D9CC), Color(0xFFD5A897)) to Color(0xFF865E4C)
-        AvatarStyle.LAVENDER -> listOf(Color(0xFFE6E2EF), Color(0xFFBDB3CF)) to Color(0xFF665C7A)
-        AvatarStyle.YELLOW -> listOf(Color(0xFFF9E8C5), Color(0xFFE4C78E)) to Color(0xFF8B6F3D)
-        AvatarStyle.BLUE -> listOf(Color(0xFFDCE9E4), Color(0xFFB7D4CC)) to Color(0xFF597E72)
-    }
-    Box(modifier = Modifier.size(size)) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(CircleShape)
-                .background(Brush.linearGradient(bgColors)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleSmall,
-                color = fgColor,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        if (online) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .align(Alignment.BottomEnd)
-                    .clip(CircleShape)
-                    .background(Color(0xFFA48FD8))
-                    .border(2.dp, Color.White, CircleShape)
-            )
-        }
     }
 }
 
@@ -515,21 +472,23 @@ fun ProfileModalDialog(
     uid: String,
     email: String?,
     fallbackDisplayName: String?,
+    localProfile: LocalUserProfile,
     isOnline: Boolean,
     liveChatRepo: LiveChatRepository,
     onDismiss: () -> Unit,
     onProfileUpdated: (UserProfile) -> Unit,
-    onSignOut: () -> Unit
+    onSaveLocalProfile: (displayName: String, about: String, phoneNumber: String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var loading by remember { mutableStateOf(true) }
+    val hasCloudUid = uid.isNotBlank()
+    var loading by remember { mutableStateOf(hasCloudUid) }
     var saving by remember { mutableStateOf(false) }
-    var shortId by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf(fallbackDisplayName.orEmpty()) }
-    var about by remember { mutableStateOf(LiveChatRepository.DEFAULT_ABOUT_TEXT) }
-    var phoneNumber by remember { mutableStateOf("") }
-    var savedPhone by remember { mutableStateOf("") }
+    var shortId by remember { mutableStateOf(localProfile.shortId) }
+    var displayName by remember { mutableStateOf(fallbackDisplayName ?: localProfile.displayName) }
+    var about by remember { mutableStateOf(localProfile.about) }
+    var phoneNumber by remember { mutableStateOf(localProfile.phoneNumber) }
+    var savedPhone by remember { mutableStateOf(localProfile.phoneNumber) }
     var copied by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
 
@@ -544,6 +503,10 @@ fun ProfileModalDialog(
     }
 
     LaunchedEffect(uid) {
+        if (!hasCloudUid) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         liveChatRepo.loadOwnProfileDetails(uid, fallbackDisplayName)
             .onSuccess { (profile, phone) ->
@@ -767,48 +730,41 @@ fun ProfileModalDialog(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(
-                                onClick = {
-                                    onDismiss()
-                                    onSignOut()
-                                },
-                                modifier = Modifier.testTag("profile_logout_button")
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.Logout,
-                                    contentDescription = "Log out",
-                                    tint = ChatboxErrorInk,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("Log out", color = ChatboxErrorInk)
+                            TextButton(onClick = onDismiss) {
+                                Text("Close")
                             }
+                            Spacer(Modifier.width(8.dp))
                             Button(
-                                enabled = !saving && isOnline && displayName.isNotBlank(),
+                                enabled = !saving && (!hasCloudUid || isOnline) && displayName.isNotBlank(),
                                 onClick = {
-                                    scope.launch {
-                                        saving = true
-                                        feedback = null
-                                        liveChatRepo.saveOwnWhatsAppProfile(
-                                            uid = uid,
-                                            currentShortId = shortId,
-                                            displayName = displayName,
-                                            about = about,
-                                            phoneNumber = phoneNumber,
-                                            previousPhoneNumber = savedPhone
-                                        ).onSuccess { (updatedProfile, cleanPhone) ->
-                                            shortId = updatedProfile.shortId
-                                            phoneNumber = cleanPhone
-                                            savedPhone = cleanPhone
-                                            onProfileUpdated(updatedProfile)
-                                            feedback = "Profile saved! Friends can add you with your 6-digit ID or phone number." to false
-                                        }.onFailure { err ->
-                                            feedback = friendlyFirestoreMessage(err) to true
+                                    if (!hasCloudUid) {
+                                        onSaveLocalProfile(displayName, about, phoneNumber)
+                                        feedback = "Profile saved locally on this device!" to false
+                                    } else {
+                                        scope.launch {
+                                            saving = true
+                                            feedback = null
+                                            liveChatRepo.saveOwnWhatsAppProfile(
+                                                uid = uid,
+                                                currentShortId = shortId,
+                                                displayName = displayName,
+                                                about = about,
+                                                phoneNumber = phoneNumber,
+                                                previousPhoneNumber = savedPhone
+                                            ).onSuccess { (updatedProfile, cleanPhone) ->
+                                                shortId = updatedProfile.shortId
+                                                phoneNumber = cleanPhone
+                                                savedPhone = cleanPhone
+                                                onProfileUpdated(updatedProfile)
+                                                feedback = "Profile saved! Friends can add you with your 6-digit ID or phone number." to false
+                                            }.onFailure { err ->
+                                                feedback = friendlyFirestoreMessage(err) to true
+                                            }
+                                            saving = false
                                         }
-                                        saving = false
                                     }
                                 },
                                 modifier = Modifier.testTag("profile_save_button")

@@ -95,8 +95,10 @@ import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.AiExchange
+import com.example.data.model.LocalSairaSessionData
 import com.example.data.model.SairaChatSession
 import com.example.data.repository.SairaSessionRepository
+import com.google.firebase.Timestamp
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaLocationHelper
 import com.example.saira.SairaNotificationListenerService
@@ -118,6 +120,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.text.SimpleDateFormat
@@ -155,7 +158,10 @@ fun SairaAiScreen(
     fallbackBaseUrl: String,
     fallbackModel: String,
     onSaveFallbackConfig: (kindId: String, apiKey: String, baseUrl: String, model: String) -> Unit,
-    sessionRepo: SairaSessionRepository
+    sessionRepo: SairaSessionRepository,
+    localSessions: List<LocalSairaSessionData> = emptyList(),
+    onSaveLocalExchange: (sessionId: String, title: String, question: String, answer: String) -> Unit = { _, _, _, _ -> },
+    onDeleteLocalSession: (sessionId: String) -> Unit = {}
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
@@ -178,9 +184,26 @@ fun SairaAiScreen(
     var showBackupKeyDialog by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
 
-    val savedSessions by remember(currentUserId) {
-        sessionRepo.observeSessions(currentUserId)
+    val cloudSessions by remember(currentUserId) {
+        if (currentUserId.isNotBlank()) sessionRepo.observeSessions(currentUserId)
+        else flowOf(emptyList())
     }.collectAsState(initial = emptyList())
+
+    val savedSessions = remember(currentUserId, cloudSessions, localSessions) {
+        if (currentUserId.isNotBlank()) {
+            cloudSessions
+        } else {
+            localSessions.map { s ->
+                SairaChatSession(
+                    id = s.id,
+                    title = s.title,
+                    lastPreview = s.lastPreview,
+                    exchangeCount = s.exchanges.size,
+                    updatedAt = Timestamp(Date(s.updatedAtMs))
+                )
+            }
+        }
+    }
 
     val currentTimeInfo = remember(exchanges.size) { SairaTimeGreeting.infoForHour() }
 
@@ -211,10 +234,17 @@ fun SairaAiScreen(
         sessionId = session.id
         sessionIsNew = false
         rolloverContextNote = ""
-        scope.launch {
-            sessionRepo.loadExchanges(currentUserId, session.id)
-                .onSuccess { loaded -> exchanges = loaded }
-                .onFailure { err -> errorMessage = err.message ?: "Unable to load saved thread." }
+        if (currentUserId.isNotBlank()) {
+            scope.launch {
+                sessionRepo.loadExchanges(currentUserId, session.id)
+                    .onSuccess { loaded -> exchanges = loaded }
+                    .onFailure { err -> errorMessage = err.message ?: "Unable to load saved thread." }
+            }
+        } else {
+            val found = localSessions.firstOrNull { it.id == session.id }
+            exchanges = found?.exchanges.orEmpty().map {
+                AiExchange(id = it.id, question = it.question, answer = it.answer, isStreaming = false)
+            }
         }
     }
 
@@ -299,15 +329,19 @@ fun SairaAiScreen(
                     }
                     val title = (prevExchanges.firstOrNull()?.question ?: question).take(90).ifEmpty { "Saira Chat" }
                     sessionIsNew = false
-                    sessionRepo.persistExchange(
-                        uid = currentUserId,
-                        sessionId = activeSessionId,
-                        isNewSession = activeIsNew,
-                        title = title,
-                        question = question,
-                        answer = finalAnswer,
-                        sequence = prevExchanges.size
-                    )
+                    if (currentUserId.isNotBlank()) {
+                        sessionRepo.persistExchange(
+                            uid = currentUserId,
+                            sessionId = activeSessionId,
+                            isNewSession = activeIsNew,
+                            title = title,
+                            question = question,
+                            answer = finalAnswer,
+                            sequence = prevExchanges.size
+                        )
+                    } else {
+                        onSaveLocalExchange(activeSessionId, title, question, finalAnswer)
+                    }
                 } else {
                     exchanges = exchanges.filterNot { it.id == exId }
                     if (draft.isEmpty()) draft = question
@@ -748,8 +782,13 @@ fun SairaAiScreen(
             },
             onOpenSession = { openSavedSession(it) },
             onDeleteSession = { s ->
-                scope.launch {
-                    sessionRepo.deleteSession(currentUserId, s.id)
+                if (currentUserId.isNotBlank()) {
+                    scope.launch {
+                        sessionRepo.deleteSession(currentUserId, s.id)
+                        if (s.id == sessionId) startNewThread()
+                    }
+                } else {
+                    onDeleteLocalSession(s.id)
                     if (s.id == sessionId) startNewThread()
                 }
             },

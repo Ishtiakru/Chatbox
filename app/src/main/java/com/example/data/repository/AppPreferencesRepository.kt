@@ -7,8 +7,13 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.example.data.DemoCatalog
-import com.example.data.model.DemoMessage
+import com.example.data.ChatboxCatalog
+import com.example.data.model.ChatboxCallEntry
+import com.example.data.model.ChatboxMessage
+import com.example.data.model.ChatboxReportEntry
+import com.example.data.model.ChatboxThread
+import com.example.data.model.LocalSairaSessionData
+import com.example.data.model.LocalUserProfile
 import com.example.data.model.WorldLanguages
 import com.example.saira.SairaDirectoryUser
 import com.example.saira.SairaNotificationRule
@@ -36,7 +41,16 @@ class AppPreferencesRepository(private val context: Context) {
     private val aiFallbackApiKeyKey = stringPreferencesKey("ai_fallback_api_key_v1")
     private val aiFallbackBaseUrlKey = stringPreferencesKey("ai_fallback_base_url_v1")
     private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
-    private val demoMessagesKey = stringPreferencesKey("demo_messages_v1")
+
+    private val chatboxThreadsKey = stringPreferencesKey("chatbox_threads_v1")
+    private val chatboxMessagesKey = stringPreferencesKey("chatbox_messages_v1")
+    private val chatboxBackupPinKey = stringPreferencesKey("chatbox_backup_pin_v1")
+    private val chatboxBlockedThreadsKey = stringPreferencesKey("chatbox_blocked_threads_v1")
+    private val chatboxCallLogsKey = stringPreferencesKey("chatbox_call_logs_v1")
+    private val chatboxReportsKey = stringPreferencesKey("chatbox_reports_v1")
+    private val localUserProfileKey = stringPreferencesKey("local_user_profile_v1")
+    private val localSairaSessionsKey = stringPreferencesKey("local_saira_sessions_v1")
+
     private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
     private val dmPeerNicknamesKey = stringPreferencesKey("dm_peer_nicknames_v1")
     private val dmMutedPeersKey = stringPreferencesKey("dm_muted_peers_v1")
@@ -49,7 +63,7 @@ class AppPreferencesRepository(private val context: Context) {
     val quickReaction: Flow<String> =
         context.appDataStore.data.map { prefs ->
             val saved = prefs[quickReactionKey]?.trim().orEmpty()
-            if (saved.isNotEmpty() && saved.length <= 8) saved else "💜"
+            if (saved.isNotEmpty() && saved.length <= 8) saved else "👍"
         }
 
     val sairaNotificationRules: Flow<List<SairaNotificationRule>> =
@@ -141,14 +155,81 @@ class AppPreferencesRepository(private val context: Context) {
             prefs[aiFallbackModelKey].orEmpty()
         }
 
-    val demoMessages: Flow<Map<String, List<DemoMessage>>> =
+    val chatboxThreads: Flow<List<ChatboxThread>> =
         context.appDataStore.data.map { prefs ->
-            val raw = prefs[demoMessagesKey] ?: return@map DemoCatalog.defaultSeeds
+            val raw = prefs[chatboxThreadsKey] ?: return@map ChatboxCatalog.defaultThreads
             try {
-                val decoded = json.decodeFromString<Map<String, List<DemoMessage>>>(raw)
-                DemoCatalog.defaultSeeds + decoded
+                val decoded = json.decodeFromString<List<ChatboxThread>>(raw)
+                if (decoded.isEmpty()) ChatboxCatalog.defaultThreads else decoded
             } catch (_: Exception) {
-                DemoCatalog.defaultSeeds
+                ChatboxCatalog.defaultThreads
+            }
+        }
+
+    val chatboxMessages: Flow<Map<String, List<ChatboxMessage>>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxMessagesKey] ?: return@map ChatboxCatalog.defaultSeeds
+            try {
+                val decoded = json.decodeFromString<Map<String, List<ChatboxMessage>>>(raw)
+                ChatboxCatalog.defaultSeeds + decoded
+            } catch (_: Exception) {
+                ChatboxCatalog.defaultSeeds
+            }
+        }
+
+    val chatboxBackupPin: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[chatboxBackupPinKey]?.takeIf { it.length >= 4 } ?: "123456"
+        }
+
+    val chatboxBlockedThreads: Flow<Set<String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxBlockedThreadsKey] ?: return@map emptySet()
+            try {
+                json.decodeFromString<Set<String>>(raw)
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+
+    val chatboxCallLogs: Flow<List<ChatboxCallEntry>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxCallLogsKey] ?: return@map ChatboxCatalog.defaultCallLogs
+            try {
+                json.decodeFromString<List<ChatboxCallEntry>>(raw)
+            } catch (_: Exception) {
+                ChatboxCatalog.defaultCallLogs
+            }
+        }
+
+    val chatboxReports: Flow<List<ChatboxReportEntry>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxReportsKey] ?: return@map emptyList()
+            try {
+                json.decodeFromString<List<ChatboxReportEntry>>(raw)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    val localUserProfile: Flow<LocalUserProfile> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[localUserProfileKey] ?: return@map LocalUserProfile()
+            try {
+                json.decodeFromString<LocalUserProfile>(raw)
+            } catch (_: Exception) {
+                LocalUserProfile()
+            }
+        }
+
+    val localSairaSessions: Flow<List<LocalSairaSessionData>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[localSairaSessionsKey] ?: return@map emptyList()
+            try {
+                json.decodeFromString<List<LocalSairaSessionData>>(raw)
+                    .sortedByDescending { it.updatedAtMs }
+            } catch (_: Exception) {
+                emptyList()
             }
         }
 
@@ -191,7 +272,7 @@ class AppPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setQuickReaction(reaction: String) {
-        val normalized = reaction.trim().take(8).ifEmpty { "💜" }
+        val normalized = reaction.trim().take(8).ifEmpty { "👍" }
         context.appDataStore.edit { prefs ->
             prefs[quickReactionKey] = normalized
         }
@@ -289,10 +370,68 @@ class AppPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveDemoMessages(messagesByContact: Map<String, List<DemoMessage>>) {
-        val encoded = json.encodeToString(messagesByContact)
+    suspend fun saveChatboxThreads(threads: List<ChatboxThread>) {
+        val encoded = json.encodeToString(threads)
         context.appDataStore.edit { prefs ->
-            prefs[demoMessagesKey] = encoded
+            prefs[chatboxThreadsKey] = encoded
+        }
+    }
+
+    suspend fun saveChatboxMessages(messagesByThread: Map<String, List<ChatboxMessage>>) {
+        val encoded = json.encodeToString(messagesByThread)
+        context.appDataStore.edit { prefs ->
+            prefs[chatboxMessagesKey] = encoded
+        }
+    }
+
+    suspend fun saveChatboxBackupPin(pin: String) {
+        val cleaned = pin.filter { it.isDigit() }.take(8)
+        if (cleaned.length < 4) return
+        context.appDataStore.edit { prefs ->
+            prefs[chatboxBackupPinKey] = cleaned
+        }
+    }
+
+    suspend fun setChatboxThreadBlocked(threadId: String, blocked: Boolean) {
+        val clean = threadId.trim()
+        if (clean.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[chatboxBlockedThreadsKey]?.let {
+                runCatching { json.decodeFromString<Set<String>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = if (blocked) current + clean else current - clean
+            prefs[chatboxBlockedThreadsKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun saveChatboxCallLogs(entries: List<ChatboxCallEntry>) {
+        val encoded = json.encodeToString(entries.take(50))
+        context.appDataStore.edit { prefs ->
+            prefs[chatboxCallLogsKey] = encoded
+        }
+    }
+
+    suspend fun appendChatboxReport(entry: ChatboxReportEntry) {
+        context.appDataStore.edit { prefs ->
+            val current = prefs[chatboxReportsKey]?.let {
+                runCatching { json.decodeFromString<List<ChatboxReportEntry>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = (listOf(entry) + current).take(30)
+            prefs[chatboxReportsKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun saveLocalUserProfile(profile: LocalUserProfile) {
+        val encoded = json.encodeToString(profile)
+        context.appDataStore.edit { prefs ->
+            prefs[localUserProfileKey] = encoded
+        }
+    }
+
+    suspend fun saveLocalSairaSessions(sessions: List<LocalSairaSessionData>) {
+        val encoded = json.encodeToString(sessions.take(50))
+        context.appDataStore.edit { prefs ->
+            prefs[localSairaSessionsKey] = encoded
         }
     }
 

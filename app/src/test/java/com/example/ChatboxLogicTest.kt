@@ -1,11 +1,12 @@
 package com.example
 
-import com.example.data.DemoCatalog
+import com.example.data.ChatboxCatalog
 import com.example.data.SparkAdminCommands
 import com.example.data.SparkCommandProposal
 import com.example.data.ai.AdminPlanInterpreter
 import com.example.data.ai.SairaPrompts
 import com.example.data.model.ChatboxConstants
+import com.example.data.model.DisappearingOption
 import com.example.data.model.WorldLanguages
 import com.example.data.repository.LiveChatRepository
 import com.example.saira.SairaTimeGreeting
@@ -95,12 +96,23 @@ class ChatboxLogicTest {
     }
 
     @Test
-    fun `offline saira demo guide replies in Bengali for core topics`() {
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("কমান্ড কি কি").contains("১ মিনিটের"))
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("hi").contains("Saira"))
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("অ্যাডমিন প্যানেল").contains("অ্যাডমিন"))
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
-        assertTrue(DemoCatalog.getSairaOfflineGuideReply("firebase").contains("Firebase"))
+    fun `offline saira guide replies and e2ee safety numbers work consistently`() {
+        assertTrue(ChatboxCatalog.getSairaOfflineGuideReply("কমান্ড কি কি").contains("১ মিনিটের"))
+        assertTrue(ChatboxCatalog.getSairaOfflineGuideReply("hi").contains("Saira"))
+        assertTrue(ChatboxCatalog.getSairaOfflineGuideReply("pin").contains("123456"))
+        assertTrue(ChatboxCatalog.getSairaOfflineGuideReply("update version").contains(ChatboxConstants.APP_VERSION))
+        assertTrue(ChatboxCatalog.getSairaOfflineGuideReply("firebase").contains("Firebase"))
+
+        val blocks1 = ChatboxCatalog.buildSafetyNumberBlocks("sazzad", "Sazzad Jony")
+        val blocks2 = ChatboxCatalog.buildSafetyNumberBlocks("sazzad", "Sazzad Jony")
+        assertEquals(12, blocks1.size)
+        assertEquals(blocks1, blocks2)
+        assertTrue(blocks1.all { it.length == 5 && it.all(Char::isDigit) })
+
+        assertEquals(DisappearingOption.OFF, DisappearingOption.fromKey("unknown"))
+        assertEquals(DisappearingOption.HOURS_24, DisappearingOption.fromKey("24h"))
+        assertEquals(DisappearingOption.DAYS_7, DisappearingOption.fromKey("7d"))
+        assertEquals(DisappearingOption.DAYS_90, DisappearingOption.fromKey("90d"))
     }
 
     @Test

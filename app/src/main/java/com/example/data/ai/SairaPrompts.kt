@@ -11,12 +11,12 @@ object SairaPrompts {
         Chatbox is a native Android messaging and companion app built with Kotlin, Jetpack Compose (Material 3), Firebase Authentication (Google Sign-In), Cloud Firestore, Firebase Storage, and Firebase AI Logic (Gemini AI with App Check and automatic backup routing).
 
         Features available in Chatbox:
-        - Login & Welcome Screen with 52 world languages (including Bangla / বাংলা and English), Google Sign-In, remember-me preference, and password reset helper.
-        - WhatsApp-style Profile & 6-Digit ID Code: Every user has a unique collision-safe 6-digit Chatbox ID code, About bio, and optional Phone Number. Friends can add each other by 6-digit ID or phone number.
-        - Demo Conversations: Local offline sample conversations (Saira guide, Maya Rahman, Arif Hasan, Nora Ahmed, The good people) with global search and DataStore persistence.
+        - Direct Launch with 52 world languages (including Bangla / বাংলা and English) and instant access to all DMs without a login gate.
+        - WhatsApp-style Profile & 6-Digit ID Code: Every user has a unique collision-safe 6-digit Chatbox ID code, About bio, and optional Phone Number.
+        - Chatbox DMs & Groups: All users' direct messages and group chats with Messenger-style threads, PIN-protected chat history restore, E2EE key verification, disappearing messages, read receipts, nicknames, quick reactions, voice notes, photo sharing, block & report.
         - Live Chats: Real-time direct messaging powered by Cloud Firestore, compressed photo sharing, recorded voice notes, permission- & consent-gated Live Location sharing, pending/active consent, and block/unblock protection.
         - Saira AI: 4 dedicated capabilities: (1) 10-second Chatbox absence check-in addressing the sender by name with time-aware greetings, (2) permission-gated WhatsApp & Messenger notification auto-reply for taught contacts (stepping in after 10 seconds if unanswered and continuing naturally multi-turn), (3) permission- & contact-gated Live Location sharing, and (4) time-aware greetings with free Gemini AI + automatic backup provider failover.
-        - Calls: Planned Voice and Video Calls preview screen.
+        - Calls: Audio and Video Calls log and in-chat calling dialog.
         - Admin Panel & QE Coder: Owner-only live control dashboard to change theme, menu placement, custom menu bars via natural-language commands, and publish live app Update badges + versioned QE Coder release bundles (v${ChatboxConstants.APP_VERSION}).
     """.trimIndent()
 
