@@ -9,6 +9,7 @@ Chatbox-এর Firebase-এ **দুইটা project** আছে, একই pac
 |---|---|
 | **Project ID** | `gen-lang-client-0251556445` |
 | **Project Number** | `631361942963` |
+| **Owner Gmail** | `sojibsheikhuk@gmail.com` (app owner allowlist: `ChatboxModels.kt` → `BOOTSTRAPPED_OWNER_EMAILS`) |
 | **Android App** | `com.aistudio.chatbox.kxmpzq` |
 | **App ID** | `1:631361942963:android:12641a60164f07f25047c6` |
 | **Firestore Database ID** | `ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70` |
