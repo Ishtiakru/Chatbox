@@ -3,6 +3,7 @@ package com.example.data.ai
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -62,7 +63,7 @@ class OpenAiCompatProvider(
         }
 
         var lastError: Exception? = null
-        repeat(maxRetries + 1) { attempt ->
+        for (attempt in 0..maxRetries) {
             try {
                 return@withContext performRequest(payload)
             } catch (e: AiQuotaExhaustedException) {

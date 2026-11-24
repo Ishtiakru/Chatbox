@@ -26,7 +26,8 @@ object AiSafeResponses {
     /** Picks a friendly message based on whether the failure was a quota/limit issue. */
     fun forError(error: Throwable?): String {
         val pool = if (AiErrorClassifier.isQuotaExhausted(error)) LIMIT_REACHED else GENERIC
-        return pool[rotation.getAndIncrement() % pool.size]
+        // Mask the sign bit so the index never goes negative after AtomicInteger overflow.
+        return pool[(rotation.getAndIncrement() and Int.MAX_VALUE) % pool.size]
     }
 
     const val APP_CHECK_UNAVAILABLE =
