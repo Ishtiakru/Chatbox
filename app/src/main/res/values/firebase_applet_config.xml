@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources>
-    <string name="firestore_database_id" translatable="false">ai-studio-android-chatbox-58421e13-9c33-4dd1-9597-1bba8874a726</string>
-    <string name="recaptcha_site_key" translatable="false">6LcTuy8uAAAAAISO4akUA9BZfuf5P8MhcVzO7yV2</string>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70</string>
+    <string name="recaptcha_site_key" translatable="false">6Lf3bTAuAAAAAF0rWS1VoI5vJb3viZSR81BEB2Zf</string>
 </resources>

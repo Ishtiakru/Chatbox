@@ -9,174 +9,24 @@ import com.example.data.model.ChatboxThread
 import kotlin.math.abs
 
 object ChatboxCatalog {
-    val defaultThreads: List<ChatboxThread> = listOf(
-        ChatboxThread(
-            id = "sazzad",
-            name = "Sazzad Jony",
-            shortId = "739204",
-            phoneNumber = "+8801711002233",
-            role = "Active now",
-            connectionLabel = "You're connected on Chatbox",
-            locationText = "Lives in Dhaka, Bangladesh",
-            workBio = "Works at Marino Royal Hotel, Royal Park Hotel Dhaka",
-            avatarLabel = "SJ",
-            style = AvatarStyle.BLUE,
-            online = true,
-            readReceiptsEnabled = true,
-            historyLocked = true
-        ),
-        ChatboxThread(
-            id = "saira",
-            name = "Saira",
-            shortId = "100001",
-            role = "Your app companion",
-            connectionLabel = "Your personal Chatbox AI assistant",
-            locationText = "Always available",
-            workBio = "Instant AI help, Bengali & English greetings, and auto-reply rules",
-            avatarLabel = "✳",
-            style = AvatarStyle.SAIRA,
-            label = "AI GUIDE",
-            online = true,
-            readReceiptsEnabled = true
-        ),
-        ChatboxThread(
-            id = "maya",
-            name = "Maya Rahman",
-            shortId = "528419",
-            phoneNumber = "+8801812445566",
-            role = "Active now",
-            connectionLabel = "You're connected on Chatbox",
-            locationText = "Lives in Chattogram, Bangladesh",
-            workBio = "Product Designer · Coffee lover",
-            avatarLabel = "MR",
-            style = AvatarStyle.PEACH,
-            online = true,
-            unreadCount = 1,
-            readReceiptsEnabled = true
-        ),
-        ChatboxThread(
-            id = "arif",
-            name = "Arif Hasan",
-            shortId = "641930",
-            phoneNumber = "+8801913778899",
-            role = "Active now",
-            connectionLabel = "You're connected on Chatbox",
-            locationText = "Lives in Sylhet, Bangladesh",
-            workBio = "Android Engineer & Photography",
-            avatarLabel = "AH",
-            style = AvatarStyle.LAVENDER,
-            online = true,
-            readReceiptsEnabled = true
-        ),
-        ChatboxThread(
-            id = "nora",
-            name = "Nora Ahmed",
-            shortId = "319842",
-            role = "Recently active",
-            connectionLabel = "You're connected on Chatbox",
-            locationText = "Lives in Dhaka, Bangladesh",
-            workBio = "Content Creator",
-            avatarLabel = "NA",
-            style = AvatarStyle.YELLOW,
-            online = false,
-            readReceiptsEnabled = true
-        ),
-        ChatboxThread(
-            id = "together",
-            name = "The good people",
-            shortId = "884120",
-            role = "Group · 4 members",
-            connectionLabel = "Group conversation on Chatbox",
-            locationText = "Dhaka & Sylhet",
-            workBio = "Friends hangout & weekend plans",
-            avatarLabel = "TG",
-            style = AvatarStyle.BLUE,
-            label = "GROUP",
-            online = true,
-            isGroup = true,
-            members = listOf("Sazzad Jony", "Maya Rahman", "Arif Hasan"),
-            readReceiptsEnabled = true
-        )
+    val DEMO_THREAD_IDS: Set<String> = setOf(
+        "sazzad",
+        "saira",
+        "maya",
+        "arif",
+        "nora",
+        "together"
     )
 
-    val defaultSeeds: Map<String, List<ChatboxMessage>> = mapOf(
-        "sazzad" to listOf(
-            ChatboxMessage(
-                id = "sz_1",
-                from = "them",
-                senderName = "Sazzad Jony",
-                text = "kire asoc",
-                time = "10:52 AM",
-                kind = ChatboxMessageKind.TEXT
-            ),
-            ChatboxMessage(
-                id = "sz_2",
-                from = "them",
-                senderName = "Sazzad Jony",
-                text = "Missed audio call",
-                time = "06/11/2026",
-                kind = ChatboxMessageKind.MISSED_AUDIO_CALL
-            )
-        ),
-        "saira" to listOf(
-            ChatboxMessage(
-                id = "sr_1",
-                from = "them",
-                senderName = "Saira",
-                text = "হ্যালো! আমি Saira ✨ এই অ্যাপ সম্পর্কে কিছু জানতে চাইলে বা যেকোনো সাহায্য চাইলে আমাকে জিজ্ঞেস করুন।",
-                time = "এখন",
-                kind = ChatboxMessageKind.TEXT
-            )
-        ),
-        "maya" to listOf(
-            ChatboxMessage(id = "my_1", from = "them", senderName = "Maya Rahman", text = "Hey! How has your week been going? ☀️", time = "10:24 AM"),
-            ChatboxMessage(id = "my_2", from = "me", senderName = "You", text = "Pretty good, actually! Just taking things one day at a time.", time = "10:26 AM"),
-            ChatboxMessage(id = "my_3", from = "them", senderName = "Maya Rahman", text = "Love that for you. We should catch up soon!", time = "10:28 AM"),
-            ChatboxMessage(id = "my_4", from = "them", senderName = "Maya Rahman", text = "Maybe a little coffee date this weekend? ☕", time = "10:28 AM")
-        ),
-        "arif" to listOf(
-            ChatboxMessage(id = "ar_1", from = "them", senderName = "Arif Hasan", text = "Let’s build something great together ✨", time = "Yesterday")
-        ),
-        "nora" to listOf(
-            ChatboxMessage(id = "nr_1", from = "them", senderName = "Nora Ahmed", text = "Sending you a little sunshine today!", time = "Yesterday")
-        ),
-        "together" to listOf(
-            ChatboxMessage(id = "tg_1", from = "them", senderName = "Maya Rahman", text = "A little space for our favorite people 💛", time = "Monday")
-        )
-    )
+    val DEMO_CALL_LOG_IDS: Set<String> = setOf("call_seed_1")
 
-    val archivedHistorySeeds: Map<String, List<ChatboxMessage>> = mapOf(
-        "sazzad" to listOf(
-            ChatboxMessage(
-                id = "sz_arch_1",
-                from = "them",
-                senderName = "Sazzad Jony",
-                text = "Bhai ajke free achos?",
-                time = "04/11/2026",
-                isRestoredHistory = true
-            ),
-            ChatboxMessage(
-                id = "sz_arch_2",
-                from = "me",
-                senderName = "You",
-                text = "Ha bhai, evening a kotha hobe!",
-                time = "04/11/2026",
-                isRestoredHistory = true
-            )
-        )
-    )
+    val defaultThreads: List<ChatboxThread> = emptyList()
 
-    val defaultCallLogs: List<ChatboxCallEntry> = listOf(
-        ChatboxCallEntry(
-            id = "call_seed_1",
-            threadId = "sazzad",
-            peerName = "Sazzad Jony",
-            isVideo = false,
-            isMissed = true,
-            timeLabel = "06/11/2026",
-            durationLabel = "Missed"
-        )
-    )
+    val defaultSeeds: Map<String, List<ChatboxMessage>> = emptyMap()
+
+    val archivedHistorySeeds: Map<String, List<ChatboxMessage>> = emptyMap()
+
+    val defaultCallLogs: List<ChatboxCallEntry> = emptyList()
 
     fun buildSafetyNumberBlocks(threadId: String, peerName: String): List<String> {
         val seedInput = "$threadId:$peerName:chatbox-e2ee"

@@ -404,6 +404,29 @@ class LiveChatRepository(private val context: Context) {
         }
     }
 
+    suspend fun lookupPeerByShortId(shortId: String): UserProfile? {
+        val compact = shortId.trim().removePrefix("#").replace(Regex("\\s+"), "")
+        if (!ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compact)) return null
+        return try {
+            val shortSnap = db.collection("shortIds").document(compact).get(Source.SERVER).await()
+            if (!shortSnap.exists()) return null
+            val peerUid = shortSnap.getString("uid").orEmpty()
+            val fallbackName = shortSnap.getString("displayName").orEmpty()
+            if (!ChatboxConstants.VALID_ID_REGEX.matches(peerUid)) return null
+            val profileSnap = runCatching {
+                db.collection("profiles").document(peerUid).get(Source.SERVER).await()
+            }.getOrNull()
+            val name = profileSnap?.getString("displayName")?.takeIf { it.isNotBlank() }
+                ?: fallbackName.ifBlank { "Chatbox Friend ($compact)" }
+            val about = profileSnap?.getString("about").orEmpty()
+            UserProfile(uid = peerUid, displayName = name, shortId = compact, about = about)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     suspend fun startOrOpenConversation(currentUid: String, rawIdentifier: String): Result<String> {
         val trimmed = rawIdentifier.trim()
         if (trimmed.isEmpty()) {

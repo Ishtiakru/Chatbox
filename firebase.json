@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-android-chatbox-58421e13-9c33-4dd1-9597-1bba8874a726",
+      "database": "ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70",
       "rules": "firestore.rules"
     }
   ],

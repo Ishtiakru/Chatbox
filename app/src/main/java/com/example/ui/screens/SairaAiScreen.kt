@@ -106,6 +106,7 @@ import com.example.saira.SairaNotificationMatcher
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
 import com.example.saira.SairaTimeGreeting
+import com.example.BuildConfig
 import com.example.ui.components.ChatboxUpdateBadge
 import com.example.ui.components.NoticeBanner
 import com.example.ui.components.SairaMetaOrb
@@ -118,6 +119,10 @@ import com.example.ui.theme.MetaOrbCyan
 import com.example.ui.theme.MetaOrbIndigo
 import com.example.ui.theme.MetaOrbPurple
 import com.example.ui.viewmodel.SairaAutoReplyTestResult
+import com.example.util.AppCheckRefreshResult
+import com.example.util.applyManualDebugToken
+import com.example.util.getOrCreateLocalDebugToken
+import com.example.util.refreshAppCheckToken
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -187,6 +192,8 @@ fun SairaAiScreen(
     var rolloverContextNote by remember { mutableStateOf("") }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showBackupKeyDialog by remember { mutableStateOf(false) }
+    var showDebugTokenDialog by remember { mutableStateOf(false) }
+    var isRefreshingToken by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
 
     val cloudSessions by remember(currentUserId) {
@@ -494,6 +501,7 @@ fun SairaAiScreen(
                 )
                 if (
                     err.contains("app check", ignoreCase = true) ||
+                    err.contains("appcheck", ignoreCase = true) ||
                     err.contains("attestation", ignoreCase = true) ||
                     err.contains("backup ai", ignoreCase = true) ||
                     err.contains("quota", ignoreCase = true)
@@ -501,6 +509,7 @@ fun SairaAiScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
                             .padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -513,13 +522,34 @@ fun SairaAiScreen(
                             Spacer(Modifier.width(6.dp))
                             Text("Backup AI সেট করুন")
                         }
-                        TextButton(
-                            onClick = {
-                                errorMessage = null
-                                scope.launch { SairaAiClient.warmUp() }
+                        if (BuildConfig.DEBUG) {
+                            OutlinedButton(
+                                onClick = { showDebugTokenDialog = true },
+                                modifier = Modifier.testTag("saira_appcheck_debug_token_button")
+                            ) {
+                                Text("Debug Token")
                             }
+                        }
+                        TextButton(
+                            enabled = !isRefreshingToken,
+                            onClick = {
+                                isRefreshingToken = true
+                                scope.launch {
+                                    when (val res = refreshAppCheckToken(context)) {
+                                        is AppCheckRefreshResult.Success -> {
+                                            errorMessage = null
+                                            SairaAiClient.warmUp()
+                                        }
+                                        is AppCheckRefreshResult.Failure -> {
+                                            errorMessage = res.message
+                                        }
+                                    }
+                                    isRefreshingToken = false
+                                }
+                            },
+                            modifier = Modifier.testTag("saira_appcheck_refresh_button")
                         ) {
-                            Text("টোকেন রিফ্রেশ")
+                            Text(if (isRefreshingToken) "রিফ্রেশ হচ্ছে..." else "টোকেন রিফ্রেশ")
                         }
                     }
                 }
@@ -676,7 +706,7 @@ fun SairaAiScreen(
                                                 Icon(
                                                     imageVector = if (copiedId == ex.id) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
                                                     contentDescription = "Copy",
-                                                    tint = if (copiedId == ex.id) ChatboxUpdateGreen else colors.inkSubtle,
+                                                    tint = if (copiedId == ex.id) ChatboxUpdateGreen else ChatboxPrimary,
                                                     modifier = Modifier.size(15.dp)
                                                 )
                                                 Spacer(Modifier.width(4.dp))
@@ -692,7 +722,7 @@ fun SairaAiScreen(
                                                 Icon(
                                                     imageVector = Icons.Rounded.Refresh,
                                                     contentDescription = "Ask again",
-                                                    tint = colors.inkSubtle,
+                                                    tint = ChatboxPrimary,
                                                     modifier = Modifier.size(15.dp)
                                                 )
                                                 Spacer(Modifier.width(4.dp))
@@ -822,6 +852,23 @@ fun SairaAiScreen(
                 showBackupKeyDialog = false
             },
             onDismiss = { showBackupKeyDialog = false }
+        )
+    }
+
+    if (showDebugTokenDialog && BuildConfig.DEBUG) {
+        DebugAppCheckTokenDialog(
+            context = context,
+            onApplied = {
+                showDebugTokenDialog = false
+                errorMessage = null
+                scope.launch {
+                    when (val res = refreshAppCheckToken(context)) {
+                        is AppCheckRefreshResult.Success -> errorMessage = null
+                        is AppCheckRefreshResult.Failure -> errorMessage = res.message
+                    }
+                }
+            },
+            onDismiss = { showDebugTokenDialog = false }
         )
     }
 }
@@ -1035,7 +1082,7 @@ private fun AutoReplyAndBackupTab(
                         Icon(
                             imageVector = if (locationPermGranted) Icons.Rounded.CheckCircle else Icons.Rounded.MyLocation,
                             contentDescription = null,
-                            tint = if (locationPermGranted) ChatboxUpdateGreen else colors.inkSubtle,
+                            tint = if (locationPermGranted) ChatboxUpdateGreen else ChatboxPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
@@ -1226,7 +1273,12 @@ private fun AutoReplyAndBackupTab(
                                     Text(if (rule.allowLocationShare) "Location: অনুমোদিত" else "Location: বন্ধ")
                                 },
                                 leadingIcon = {
-                                    Icon(Icons.Rounded.MyLocation, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Icon(
+                                        Icons.Rounded.MyLocation,
+                                        contentDescription = null,
+                                        tint = ChatboxPrimary,
+                                        modifier = Modifier.size(15.dp)
+                                    )
                                 }
                             )
                             FilterChip(
@@ -1500,7 +1552,7 @@ private fun SavedThreadsDialog(
                 ) {
                     Text("Saved Saira Threads", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close")
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = ChatboxPrimary)
                     }
                 }
                 Button(
@@ -1595,7 +1647,7 @@ private fun BackupAiProviderDialog(
                 ) {
                     Text("Backup AI Provider", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close")
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = ChatboxPrimary)
                     }
                 }
                 Text(
@@ -1650,6 +1702,82 @@ private fun BackupAiProviderDialog(
                         modifier = Modifier.testTag("save_backup_ai_button")
                     ) {
                         Text("Save Backup")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugAppCheckTokenDialog(
+    context: Context,
+    onApplied: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val localToken = remember { getOrCreateLocalDebugToken(context) }
+    var tokenInput by remember { mutableStateOf(localToken) }
+    var copiedNotice by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Firebase App Check Debug Token", style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = ChatboxPrimary)
+                    }
+                }
+                Text(
+                    text = "Sideloaded debug builds need a registered Debug Token in Firebase Console → App Check → Apps → Manage debug tokens (or configure a free Backup AI key).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF6B657D)
+                )
+                OutlinedTextField(
+                    value = tokenInput,
+                    onValueChange = { tokenInput = it },
+                    label = { Text("Debug Token UUID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("App Check Debug Token", tokenInput.trim()))
+                            copiedNotice = true
+                        }
+                    ) {
+                        Icon(
+                            Icons.Rounded.ContentCopy,
+                            contentDescription = null,
+                            tint = ChatboxPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (copiedNotice) "Copied" else "Copy Token")
+                    }
+                    Button(
+                        onClick = {
+                            if (applyManualDebugToken(context, tokenInput)) {
+                                onApplied()
+                            }
+                        }
+                    ) {
+                        Text("Apply Token")
                     }
                 }
             }

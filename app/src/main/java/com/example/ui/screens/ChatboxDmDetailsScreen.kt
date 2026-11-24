@@ -181,7 +181,7 @@ fun ChatboxDmDetailsScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Back to chat",
-                        tint = DmInkDark
+                        tint = DmLavenderAccent
                     )
                 }
             }
@@ -240,7 +240,7 @@ fun ChatboxDmDetailsScreen(
                         Icon(
                             imageVector = Icons.Rounded.Lock,
                             contentDescription = null,
-                            tint = if (thread.e2eeVerified) ChatboxUpdateGreen else DmInkDark,
+                            tint = if (thread.e2eeVerified) ChatboxUpdateGreen else DmLavenderAccent,
                             modifier = Modifier.size(13.dp)
                         )
                         Text(
@@ -817,14 +817,14 @@ private fun ChatboxQuickCircleButton(
     ) {
         Surface(
             shape = CircleShape,
-            color = if (highlighted) DmLavenderAccent else Color(0xFFF0F2F5),
+            color = if (highlighted) DmLavenderAccent else DmLavenderSoft,
             modifier = Modifier.size(48.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = if (highlighted) Color.White else DmInkDark,
+                    tint = if (highlighted) Color.White else DmLavenderAccent,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -873,7 +873,7 @@ private fun ChatboxDetailsActionRow(
     ) {
         Surface(
             shape = CircleShape,
-            color = if (tint == ChatboxErrorInk) Color(0xFFFFF1ED) else Color(0xFFF0F2F5),
+            color = if (tint == ChatboxErrorInk) Color(0xFFFFF1ED) else DmLavenderSoft,
             modifier = Modifier.size(38.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -883,12 +883,12 @@ private fun ChatboxDetailsActionRow(
                         text = badgeTextLeading,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = DmInkDark
+                        color = DmLavenderAccent
                     )
                     icon != null -> Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = if (tint == ChatboxErrorInk) ChatboxErrorInk else DmInkDark,
+                        tint = if (tint == ChatboxErrorInk) ChatboxErrorInk else DmLavenderAccent,
                         modifier = Modifier.size(20.dp)
                     )
                 }

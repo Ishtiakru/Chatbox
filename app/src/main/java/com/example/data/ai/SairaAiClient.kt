@@ -37,7 +37,10 @@ object SairaAiClient {
             }
             runCatching {
                 withTimeoutOrNull(8_000L) {
-                    FirebaseAppCheck.getInstance().getAppCheckToken(false).await()
+                    val token = FirebaseAppCheck.getInstance().getAppCheckToken(false).await().token
+                    if (token.isBlank()) {
+                        FirebaseAppCheck.getInstance().getAppCheckToken(true).await()
+                    }
                 }
             }
         }

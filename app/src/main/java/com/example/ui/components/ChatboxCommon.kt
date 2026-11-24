@@ -342,7 +342,7 @@ fun ChatboxSearchField(
             Icon(
                 imageVector = Icons.Rounded.Search,
                 contentDescription = placeholder,
-                tint = colors.inkSubtle
+                tint = ChatboxPrimary
             )
         },
         trailingIcon = {
@@ -354,7 +354,7 @@ fun ChatboxSearchField(
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Clear search",
-                        tint = colors.inkSubtle
+                        tint = ChatboxPrimary
                     )
                 }
             }
@@ -413,7 +413,7 @@ fun AppUpdateDetailsDialog(
                         )
                     }
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close")
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = ChatboxPrimary)
                     }
                 }
 
@@ -721,7 +721,7 @@ fun ProfileModalDialog(
                             onValueChange = { phoneNumber = it.take(ChatboxConstants.MAX_PHONE_LENGTH) },
                             label = { Text("Phone number (optional)") },
                             placeholder = { Text("+8801XXXXXXXXX") },
-                            leadingIcon = { Icon(Icons.Rounded.Phone, contentDescription = null) },
+                            leadingIcon = { Icon(Icons.Rounded.Phone, contentDescription = null, tint = ChatboxPrimary) },
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()

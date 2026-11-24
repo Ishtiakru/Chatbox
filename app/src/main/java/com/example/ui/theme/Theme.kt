@@ -47,8 +47,8 @@ private val DefaultExtendedColors = ChatboxExtendedColors(
 
 private val LavenderExtendedColors = ChatboxExtendedColors(
     isLavender = true,
-    background = ChatboxBgLavender,
-    surface = ChatboxSurfaceLavender,
+    background = ChatboxBgDefault,
+    surface = ChatboxSurfaceDefault,
     fieldBg = ChatboxFieldLavender,
     selectedBg = ChatboxSoftLavenderStrong,
     border = ChatboxBorderLavender
@@ -77,8 +77,8 @@ private val DefaultColorScheme = lightColorScheme(
 )
 
 private val LavenderColorScheme = DefaultColorScheme.copy(
-    background = ChatboxBgLavender,
-    surface = ChatboxSurfaceLavender,
+    background = ChatboxBgDefault,
+    surface = ChatboxSurfaceDefault,
     surfaceVariant = ChatboxFieldLavender,
     outline = ChatboxBorderLavender
 )

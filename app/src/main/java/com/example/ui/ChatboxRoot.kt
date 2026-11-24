@@ -87,6 +87,7 @@ import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.ChatboxTheme
 import com.example.ui.theme.ChatboxUpdateGreen
+import com.example.ui.theme.DmLavenderAccent
 import com.example.ui.theme.LocalChatboxColors
 import com.example.ui.viewmodel.ChatboxAppViewModel
 import kotlinx.coroutines.delay
@@ -162,15 +163,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                ChatboxSoftLavender,
-                                colors.background,
-                                ChatboxSoftLavender.copy(alpha = 0.65f)
-                            )
-                        )
-                    )
+                    .background(Color.White)
                     .testTag("launch_splash_screen"),
                 contentAlignment = Alignment.Center
             ) {
@@ -452,13 +445,15 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                             selected = selected,
                                             displayName = effectiveDisplayName,
                                             avatarPath = userAvatarPath,
-                                            tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                            tint = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.72f)
                                         )
                                     },
                                     label = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     colors = NavigationRailItemDefaults.colors(
                                         selectedIconColor = ChatboxPrimary,
                                         selectedTextColor = ChatboxPrimary,
+                                        unselectedIconColor = DmLavenderAccent.copy(alpha = 0.72f),
+                                        unselectedTextColor = colors.inkMuted,
                                         indicatorColor = ChatboxSoftLavender
                                     ),
                                     modifier = Modifier.testTag("nav_${item.id}")
@@ -472,7 +467,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             } else {
                 val navBar: @Composable () -> Unit = {
                     if (navItems.size <= 6) {
-                        NavigationBar(containerColor = colors.surface) {
+                        NavigationBar(containerColor = Color.White) {
                             navItems.forEach { item ->
                                 val selected = isTabSelected(resolvedTab, item.tab)
                                 NavigationBarItem(
@@ -484,7 +479,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                             selected = selected,
                                             displayName = effectiveDisplayName,
                                             avatarPath = userAvatarPath,
-                                            tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                            tint = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.72f)
                                         )
                                     },
                                     label = {
@@ -499,6 +494,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     colors = NavigationBarItemDefaults.colors(
                                         selectedIconColor = ChatboxPrimary,
                                         selectedTextColor = ChatboxPrimary,
+                                        unselectedIconColor = DmLavenderAccent.copy(alpha = 0.72f),
+                                        unselectedTextColor = colors.inkMuted,
                                         indicatorColor = ChatboxSoftLavender
                                     ),
                                     modifier = Modifier.testTag("nav_${item.id}")
@@ -506,7 +503,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             }
                         }
                     } else {
-                        Surface(color = colors.surface, shadowElevation = 2.dp) {
+                        Surface(color = Color.White, shadowElevation = 2.dp) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -534,7 +531,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                                 selected = selected,
                                                 displayName = effectiveDisplayName,
                                                 avatarPath = userAvatarPath,
-                                                tint = if (selected) ChatboxPrimary else colors.inkMuted
+                                                tint = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.72f)
                                             )
                                             Spacer(Modifier.height(2.dp))
                                             Text(
@@ -611,7 +608,7 @@ private fun NavTabIcon(
         val hasLocalAvatar = remember(avatarPath) {
             !avatarPath.isNullOrBlank() && File(avatarPath).exists()
         }
-        val ringColor = if (selected) ChatboxPrimary else colors.border
+        val ringColor = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.55f)
         Box(
             modifier = Modifier
                 .size(26.dp)

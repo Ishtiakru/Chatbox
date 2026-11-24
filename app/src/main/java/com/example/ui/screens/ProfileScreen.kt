@@ -75,7 +75,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -399,7 +398,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = if (searchOpen) Icons.Rounded.Close else Icons.Rounded.Search,
                                 contentDescription = "Search profile settings",
-                                tint = colors.ink
+                                tint = ChatboxPrimary
                             )
                         }
                         IconButton(
@@ -409,7 +408,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Share,
                                 contentDescription = "Share profile",
-                                tint = colors.ink
+                                tint = ChatboxPrimary
                             )
                         }
                         IconButton(
@@ -419,7 +418,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Edit,
                                 contentDescription = "Edit profile",
-                                tint = colors.ink
+                                tint = ChatboxPrimary
                             )
                         }
                     }
@@ -448,14 +447,7 @@ fun ProfileScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    ChatboxSoftLavender.copy(alpha = 0.55f),
-                                    colors.background
-                                )
-                            )
-                        )
+                        .background(Color.White)
                         .padding(top = 14.dp, bottom = 18.dp, start = 20.dp, end = 20.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -586,7 +578,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = Icons.Rounded.KeyboardArrowDown,
                                 contentDescription = "Edit profile",
-                                tint = colors.inkSubtle,
+                                tint = ChatboxPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -667,7 +659,7 @@ fun ProfileScreen(
                         Icon(
                             imageVector = row.icon,
                             contentDescription = row.title,
-                            tint = row.tint ?: colors.inkMuted,
+                            tint = row.tint ?: ChatboxPrimary,
                             modifier = Modifier.size(24.dp)
                         )
                         if (row.showGreenDot) {
@@ -826,7 +818,7 @@ private fun ProfileShortcutBubble(
     ) {
         Surface(
             shape = CircleShape,
-            color = colors.fieldBg,
+            color = Color.White,
             border = BorderStroke(1.dp, colors.border),
             modifier = Modifier.size(48.dp)
         ) {
@@ -834,7 +826,7 @@ private fun ProfileShortcutBubble(
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = colors.ink,
+                    tint = ChatboxPrimary,
                     modifier = Modifier.size(22.dp)
                 )
             }

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -54,9 +55,9 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.NotificationsOff
-import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SentimentSatisfiedAlt
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Timer
@@ -181,11 +182,11 @@ fun ChatboxDmScreen(
         threads.firstOrNull { it.id == activeThreadId } ?: threads.firstOrNull()
     }
 
+    var searchExpanded by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var inboxFilter by remember { mutableStateOf(InboxFilter.ALL) }
     var showMobileThread by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
-    var showNewChatDialog by remember { mutableStateOf(false) }
     var showPeerProfileDialog by remember { mutableStateOf(false) }
     var showE2eeInfoDialog by remember { mutableStateOf(false) }
     var showRestorePinDialog by remember { mutableStateOf(false) }
@@ -208,6 +209,7 @@ fun ChatboxDmScreen(
             thread.name.lowercase().contains(q) ||
                 nick.lowercase().contains(q) ||
                 thread.shortId.contains(q) ||
+                thread.phoneNumber.contains(q) ||
                 msgs.any { it.text.lowercase().contains(q) }
         }
     }
@@ -262,6 +264,11 @@ fun ChatboxDmScreen(
                 BackHandler {
                     showMobileThread = false
                 }
+            } else if (searchExpanded) {
+                BackHandler {
+                    searchExpanded = false
+                    searchQuery = ""
+                }
             }
 
             if (isWide) {
@@ -277,20 +284,24 @@ fun ChatboxDmScreen(
                         peerNicknames = peerNicknames,
                         mutedThreadIds = mutedThreadIds,
                         blockedThreadIds = blockedThreadIds,
+                        searchExpanded = searchExpanded,
                         searchQuery = searchQuery,
+                        onToggleSearch = {
+                            searchExpanded = !searchExpanded
+                            if (!searchExpanded) searchQuery = ""
+                        },
                         onSearchChange = { searchQuery = it },
                         activeFilter = inboxFilter,
                         onFilterChange = { inboxFilter = it },
                         publicWelcomeBanner = publicWelcomeBanner,
                         isOnline = isOnline,
                         appUpdateActive = appUpdateActive,
-                        ownShortId = ownShortId,
                         onAppUpdateClick = onAppUpdateClick,
                         onSelectThread = { id ->
                             onSelectThread(id)
                             onMarkThreadUnread(id, false)
                         },
-                        onNewChatClick = { showNewChatDialog = true }
+                        onCreateDirectThread = onCreateDirectThread
                     )
                     HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = DmHairlineBorder)
                     if (selectedThread != null) {
@@ -332,21 +343,25 @@ fun ChatboxDmScreen(
                         peerNicknames = peerNicknames,
                         mutedThreadIds = mutedThreadIds,
                         blockedThreadIds = blockedThreadIds,
+                        searchExpanded = searchExpanded,
                         searchQuery = searchQuery,
+                        onToggleSearch = {
+                            searchExpanded = !searchExpanded
+                            if (!searchExpanded) searchQuery = ""
+                        },
                         onSearchChange = { searchQuery = it },
                         activeFilter = inboxFilter,
                         onFilterChange = { inboxFilter = it },
                         publicWelcomeBanner = publicWelcomeBanner,
                         isOnline = isOnline,
                         appUpdateActive = appUpdateActive,
-                        ownShortId = ownShortId,
                         onAppUpdateClick = onAppUpdateClick,
                         onSelectThread = { id ->
                             onSelectThread(id)
                             onMarkThreadUnread(id, false)
                             showMobileThread = true
                         },
-                        onNewChatClick = { showNewChatDialog = true }
+                        onCreateDirectThread = onCreateDirectThread
                     )
                 } else {
                     ChatboxThreadPane(
@@ -379,63 +394,6 @@ fun ChatboxDmScreen(
         }
     }
 
-    // Add Friend / New DM Dialog
-    if (showNewChatDialog) {
-        var idOrPhoneInput by remember { mutableStateOf("") }
-        var nameInput by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showNewChatDialog = false },
-            containerColor = Color.White,
-            title = { Text("Add Friend to Chat", color = DmInkDark) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Enter their 6-digit Chatbox ID code (e.g. 685331), phone number, or name.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = DmInkMuted
-                    )
-                    OutlinedTextField(
-                        value = idOrPhoneInput,
-                        onValueChange = { idOrPhoneInput = it.take(24) },
-                        label = { Text("6-digit Chatbox ID or phone") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("new_dm_identifier_input")
-                    )
-                    OutlinedTextField(
-                        value = nameInput,
-                        onValueChange = { nameInput = it.take(60) },
-                        label = { Text("Friend name (optional)") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("new_dm_name_input")
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = idOrPhoneInput.isNotBlank() || nameInput.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = DmLavenderAccent),
-                    onClick = {
-                        val id = onCreateDirectThread(nameInput, idOrPhoneInput)
-                        onSelectThread(id)
-                        showMobileThread = true
-                        showNewChatDialog = false
-                    },
-                    modifier = Modifier.testTag("new_dm_start_button")
-                ) {
-                    Text("Start Chat")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNewChatDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
 
     // Peer Profile Dialog ("View profile" from thread or "Profile" from Details)
     if (showPeerProfileDialog && selectedThread != null) {
@@ -759,23 +717,36 @@ private fun ChatboxInboxPane(
     peerNicknames: Map<String, String>,
     mutedThreadIds: Set<String>,
     blockedThreadIds: Set<String>,
+    searchExpanded: Boolean,
     searchQuery: String,
+    onToggleSearch: () -> Unit,
     onSearchChange: (String) -> Unit,
     activeFilter: InboxFilter,
     onFilterChange: (InboxFilter) -> Unit,
     publicWelcomeBanner: String,
     isOnline: Boolean,
     appUpdateActive: Boolean,
-    ownShortId: String,
     onAppUpdateClick: () -> Unit,
     onSelectThread: (String) -> Unit,
-    onNewChatClick: () -> Unit
+    onCreateDirectThread: (name: String, identifier: String) -> String
 ) {
     val colors = LocalChatboxColors.current
-    val context = LocalContext.current
-    var copiedOwnId by remember { mutableStateOf(false) }
     val activeContacts = remember(threads, blockedThreadIds) {
         threads.filter { !it.isGroup && it.online && it.id !in blockedThreadIds }
+    }
+    val trimmedQuery = searchQuery.trim()
+    val hasExactThread = remember(threads, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) true
+        else {
+            val digits = trimmedQuery.filter { it.isDigit() }
+            threads.any { t ->
+                !t.isGroup && (
+                    t.name.equals(trimmedQuery, ignoreCase = true) ||
+                        t.shortId == trimmedQuery ||
+                        (digits.length >= 7 && t.phoneNumber.filter { it.isDigit() } == digits)
+                    )
+            }
+        }
     }
 
     Column(modifier = modifier.background(Color.White)) {
@@ -806,68 +777,25 @@ private fun ChatboxInboxPane(
                     )
                 }
                 IconButton(
-                    onClick = onNewChatClick,
-                    modifier = Modifier.testTag("chatbox_new_dm_button")
+                    onClick = onToggleSearch,
+                    modifier = Modifier.testTag("chatbox_search_toggle_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.PersonAdd,
-                        contentDescription = "Add friend or new message",
-                        tint = DmInkDark
+                        imageVector = if (searchExpanded) Icons.Rounded.Close else Icons.Rounded.Search,
+                        contentDescription = if (searchExpanded) "Close search" else "Search user by name or ID",
+                        tint = DmLavenderAccent
                     )
                 }
             }
 
-            if (ownShortId.isNotBlank()) {
-                Surface(
-                    onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        cm?.setPrimaryClip(ClipData.newPlainText("Chatbox ID", ownShortId))
-                        copiedOwnId = true
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = DmLavenderSoft,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("chatbox_own_short_id_chip")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Your 6-digit ID: $ownShortId",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            color = DmLavenderDeep
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (copiedOwnId) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                                contentDescription = "Copy your 6-digit ID",
-                                tint = DmLavenderDeep,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = if (copiedOwnId) "Copied" else "Copy",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = DmLavenderDeep
-                            )
-                        }
-                    }
-                }
+            AnimatedVisibility(visible = searchExpanded) {
+                ChatboxSearchField(
+                    value = searchQuery,
+                    onValueChange = onSearchChange,
+                    placeholder = "Search name or 6-digit ID…",
+                    testTag = "chatbox_search_input"
+                )
             }
-
-            ChatboxSearchField(
-                value = searchQuery,
-                onValueChange = onSearchChange,
-                placeholder = "Search friend, 6-digit ID…",
-                testTag = "chatbox_search_input"
-            )
         }
 
         HorizontalDivider(color = DmHairlineBorder)
@@ -957,6 +885,68 @@ private fun ChatboxInboxPane(
                     }
                 }
             }
+            if (trimmedQuery.isNotEmpty() && !hasExactThread) {
+                item(key = "inbox_search_add_user") {
+                    val isSixDigitSearch = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(trimmedQuery)
+                    Surface(
+                        onClick = {
+                            val id = onCreateDirectThread(trimmedQuery, "")
+                            onSelectThread(id)
+                            onSearchChange("")
+                            if (searchExpanded) onToggleSearch()
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        color = DmLavenderSoft.copy(alpha = 0.65f),
+                        border = BorderStroke(1.dp, DmHairlineBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .testTag("chatbox_search_add_user_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.White,
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Search,
+                                        contentDescription = null,
+                                        tint = DmLavenderAccent,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isSixDigitSearch) {
+                                        "Add & chat with ID $trimmedQuery"
+                                    } else {
+                                        "Add & chat with \"$trimmedQuery\""
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DmInkDark
+                                )
+                                Text(
+                                    text = if (isSixDigitSearch) {
+                                        "Tap to find and message this 6-digit Chatbox ID"
+                                    } else {
+                                        "Tap to start a Chatbox conversation"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = DmInkMuted
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             if (filteredThreads.isEmpty()) {
                 item {
                     Column(
@@ -967,23 +957,47 @@ private fun ChatboxInboxPane(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.PersonAdd,
+                            imageVector = if (trimmedQuery.isNotEmpty()) Icons.Rounded.Search else Icons.Rounded.ChatBubbleOutline,
                             contentDescription = null,
                             tint = DmLavenderAccent,
                             modifier = Modifier.size(34.dp)
                         )
                         Text(
-                            text = if (searchQuery.isNotBlank()) {
-                                "No DMs match \"$searchQuery\""
-                            } else {
-                                "No conversations in this filter"
+                            text = when {
+                                trimmedQuery.isNotEmpty() -> "No added chats match \"$trimmedQuery\""
+                                threads.isEmpty() -> "No users added yet"
+                                else -> "No conversations in this filter"
                             },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.ink
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.ink,
+                            textAlign = TextAlign.Center
                         )
-                        if (searchQuery.isNotBlank()) {
+                        if (threads.isEmpty() && trimmedQuery.isEmpty()) {
+                            Text(
+                                text = "Tap the search icon to find and add a user by name or 6-digit ID.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DmInkMuted,
+                                textAlign = TextAlign.Center
+                            )
+                            OutlinedButton(
+                                onClick = { if (!searchExpanded) onToggleSearch() },
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .testTag("chatbox_empty_search_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = null,
+                                    tint = DmLavenderAccent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Search by name or ID", color = DmLavenderDeep)
+                            }
+                        } else if (trimmedQuery.isNotEmpty()) {
                             TextButton(onClick = { onSearchChange("") }) {
-                                Text("Clear search")
+                                Text("Clear search", color = DmLavenderAccent)
                             }
                         }
                     }
@@ -1062,7 +1076,7 @@ private fun ChatboxInboxPane(
                                         Icon(
                                             imageVector = Icons.Rounded.NotificationsOff,
                                             contentDescription = "Muted",
-                                            tint = DmInkMuted,
+                                            tint = DmLavenderAccent,
                                             modifier = Modifier.size(14.dp)
                                         )
                                     }
@@ -1232,7 +1246,7 @@ private fun ChatboxThreadPane(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Back",
-                            tint = DmInkDark
+                            tint = DmLavenderAccent
                         )
                     }
                 }
@@ -1282,19 +1296,19 @@ private fun ChatboxThreadPane(
                     onClick = onStartAudioCall,
                     modifier = Modifier.testTag("chatbox_thread_call")
                 ) {
-                    Icon(Icons.Rounded.Phone, contentDescription = "Audio call", tint = DmInkDark)
+                    Icon(Icons.Rounded.Phone, contentDescription = "Audio call", tint = DmLavenderAccent)
                 }
                 IconButton(
                     onClick = onStartVideoCall,
                     modifier = Modifier.testTag("chatbox_thread_video")
                 ) {
-                    Icon(Icons.Rounded.Videocam, contentDescription = "Video call", tint = DmInkDark)
+                    Icon(Icons.Rounded.Videocam, contentDescription = "Video call", tint = DmLavenderAccent)
                 }
                 IconButton(
                     onClick = onOpenDetails,
                     modifier = Modifier.testTag("chatbox_thread_settings")
                 ) {
-                    Icon(Icons.Rounded.Settings, contentDescription = "Conversation settings", tint = DmInkDark)
+                    Icon(Icons.Rounded.Settings, contentDescription = "Conversation settings", tint = DmLavenderAccent)
                 }
             }
         }
@@ -1321,7 +1335,7 @@ private fun ChatboxThreadPane(
                     searchOpen = false
                     searchQuery = ""
                 }) {
-                    Icon(Icons.Rounded.Close, contentDescription = "Close search", tint = DmInkMuted)
+                    Icon(Icons.Rounded.Close, contentDescription = "Close search", tint = DmLavenderAccent)
                 }
             }
         }
@@ -1479,7 +1493,7 @@ private fun ChatboxThreadPane(
                                         Icon(
                                             imageVector = Icons.Rounded.Refresh,
                                             contentDescription = null,
-                                            tint = DmInkMuted,
+                                            tint = DmLavenderAccent,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Text(
@@ -1634,7 +1648,7 @@ private fun ChatboxThreadPane(
                                                     Icons.AutoMirrored.Rounded.PhoneMissed
                                                 },
                                                 contentDescription = null,
-                                                tint = if (msg.kind == ChatboxMessageKind.CALL_COMPLETED) DmLavenderDeep else DmInkDark,
+                                                tint = DmLavenderAccent,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Column {

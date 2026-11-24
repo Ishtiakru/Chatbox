@@ -29,11 +29,14 @@ import com.example.data.ChatboxCatalog
 import com.example.data.model.AvatarStyle
 import com.example.data.model.ChatboxCallEntry
 import com.example.data.model.ChatboxMessage
+import com.example.data.model.ChatboxMessageKind
 import com.example.data.model.ChatboxThread
+import com.example.data.repository.AppPreferencesRepository
 import com.example.ui.ChatboxRoot
 import com.example.ui.theme.ChatboxTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,6 +68,11 @@ class ChatboxDmRobolectricTest {
                     .setProjectId("test-project-id")
                     .build()
             )
+        }
+        runBlocking {
+            val prefs = AppPreferencesRepository(context)
+            prefs.saveChatboxThreads(emptyList())
+            prefs.saveChatboxMessages(emptyMap())
         }
     }
 
@@ -104,19 +112,20 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("nav_calls").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_profile").assertIsDisplayed()
 
-        // Inbox shows all users' DMs directly (wait for DataStore emission to settle)
+        // Inbox starts clean with zero demo users, no top ID chip, no PersonAdd button, and compact search icon
         composeRule.onNodeWithTag("chatbox_dm_root").assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 3_000) {
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
             composeRule.onAllNodesWithTag("chatbox_inbox_lazy_list").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("chatbox_inbox_lazy_list").performScrollToKey("sazzad")
-        composeRule.onNodeWithTag("chatbox_thread_sazzad").assertIsDisplayed()
-        composeRule.onNodeWithTag("chatbox_inbox_lazy_list").performScrollToKey("saira")
-        composeRule.onNodeWithTag("chatbox_thread_saira").assertIsDisplayed()
-        composeRule.onNodeWithTag("chatbox_inbox_lazy_list").performScrollToKey("maya")
-        composeRule.onNodeWithTag("chatbox_thread_maya").assertIsDisplayed()
+        composeRule.onNodeWithTag("chatbox_search_toggle_button").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("chatbox_own_short_id_chip").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("chatbox_new_dm_button").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("chatbox_thread_sazzad").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("chatbox_thread_saira").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("chatbox_thread_maya").assertCountEquals(0)
+        composeRule.onNodeWithText("No users added yet").assertIsDisplayed()
 
         // Profile screen must NOT have Log out / Sign out
         composeRule.onNodeWithTag("nav_profile").performClick()
@@ -130,12 +139,72 @@ class ChatboxDmRobolectricTest {
         var recordedReportReason: String? = null
         val callLogs = mutableListOf<ChatboxCallEntry>()
 
+        val fixtureThreads = listOf(
+            ChatboxThread(
+                id = "sazzad",
+                name = "Sazzad Jony",
+                shortId = "102938",
+                role = "Active now",
+                connectionLabel = "You're connected on Chatbox",
+                locationText = "Lives in Dhaka, Bangladesh",
+                workBio = "Software Engineer at Dhaka",
+                avatarLabel = "SJ",
+                style = AvatarStyle.LAVENDER,
+                online = true,
+                unreadCount = 0,
+                historyLocked = true,
+                readReceiptsEnabled = true
+            ),
+            ChatboxThread(
+                id = "maya",
+                name = "Maya Rahman",
+                shortId = "554433",
+                role = "Active 8m ago",
+                connectionLabel = "You're connected on Chatbox",
+                avatarLabel = "MR",
+                style = AvatarStyle.PEACH,
+                online = true,
+                unreadCount = 1,
+                readReceiptsEnabled = true
+            )
+        )
+        val fixtureMessages = mapOf(
+            "sazzad" to listOf(
+                ChatboxMessage(
+                    id = "sz_1",
+                    from = "them",
+                    senderName = "Sazzad Jony",
+                    text = "kire asoc",
+                    time = "11:45 AM"
+                ),
+                ChatboxMessage(
+                    id = "sz_2",
+                    from = "them",
+                    senderName = "Sazzad Jony",
+                    text = "Missed audio call",
+                    time = "2:10 PM",
+                    kind = ChatboxMessageKind.MISSED_AUDIO_CALL
+                )
+            )
+        )
+        val fixtureArchived = mapOf(
+            "sazzad" to listOf(
+                ChatboxMessage(
+                    id = "sz_arch_1",
+                    from = "them",
+                    senderName = "Sazzad Jony",
+                    text = "Bhai ajke free achos?",
+                    time = "Yesterday"
+                )
+            )
+        )
+
         composeRule.setContent {
-            var threads by remember { mutableStateOf(ChatboxCatalog.defaultThreads) }
+            var threads by remember { mutableStateOf(fixtureThreads) }
             var activeThreadId by remember { mutableStateOf<String?>("sazzad") }
             val messages = remember {
                 mutableStateMapOf<String, List<ChatboxMessage>>().apply {
-                    putAll(ChatboxCatalog.defaultSeeds)
+                    putAll(fixtureMessages)
                 }
             }
             var nicknames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -235,7 +304,7 @@ class ChatboxDmRobolectricTest {
                     onUnlockHistoryWithPin = { tid, pin ->
                         if (pin == "123456") {
                             threads = threads.map { if (it.id == tid) it.copy(historyLocked = false) else it }
-                            val archived = ChatboxCatalog.archivedHistorySeeds[tid].orEmpty()
+                            val archived = fixtureArchived[tid].orEmpty()
                             if (archived.isNotEmpty()) {
                                 messages[tid] = archived + messages[tid].orEmpty()
                             }
@@ -435,7 +504,7 @@ class ChatboxDmRobolectricTest {
     }
 
     @Test
-    fun `adding friend by 6-digit id works without permission denied error`() {
+    fun `searching and adding friend by 6-digit id or name works cleanly without permission denied error`() {
         composeRule.setContent {
             ChatboxRoot()
         }
@@ -443,20 +512,24 @@ class ChatboxDmRobolectricTest {
         advancePastSplashAndEnterChatbox()
         composeRule.waitUntil(timeoutMillis = 3_000) {
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithTag("chatbox_new_dm_button").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("chatbox_search_toggle_button").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.waitForIdle()
 
-        // Tap Add Friend / New DM button
-        composeRule.onNodeWithTag("chatbox_own_short_id_chip").assertIsDisplayed()
-        composeRule.onNodeWithTag("chatbox_new_dm_button").performClick()
+        // Tap compact lavender Search icon button
+        composeRule.onAllNodesWithTag("chatbox_own_short_id_chip").assertCountEquals(0)
+        composeRule.onNodeWithTag("chatbox_search_toggle_button").performClick()
         composeRule.waitForIdle()
 
-        // Enter ONLY 6-digit ID "685331" (matching user's Screenshot 1 input)
-        composeRule.onNodeWithTag("new_dm_identifier_input").performTextInput("685331")
+        // Search by 6-digit ID "685331" and add/open DM
+        composeRule.onNodeWithTag("chatbox_search_input").performTextInput("685331")
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("new_dm_start_button").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("chatbox_search_add_user_button").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 3_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+            composeRule.onAllNodesWithTag("chatbox_thread_screen").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.waitForIdle()
 
         // Opens DM thread directly without any Permission denied error
@@ -465,6 +538,24 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("chatbox_thread_screen").assertIsDisplayed()
         composeRule.onAllNodesWithText("685331", substring = true).fetchSemanticsNodes().let { nodes ->
             assertTrue("Expected created thread to include 685331", nodes.isNotEmpty())
+        }
+
+        // Navigate back -> search by user name "Rahim" and add
+        composeRule.onNodeWithTag("chatbox_thread_back").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatbox_search_toggle_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatbox_search_input").performTextInput("Rahim")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatbox_search_add_user_button").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 3_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+            composeRule.onAllNodesWithTag("chatbox_thread_screen").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatbox_thread_screen").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Rahim", substring = true).fetchSemanticsNodes().let { nodes ->
+            assertTrue("Expected created thread to include Rahim", nodes.isNotEmpty())
         }
     }
 

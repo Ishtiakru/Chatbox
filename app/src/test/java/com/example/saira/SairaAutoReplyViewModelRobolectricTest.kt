@@ -7,6 +7,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.AvatarStyle
+import com.example.data.model.ChatboxThread
 import com.example.ui.viewmodel.ChatboxAppViewModel
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
@@ -108,14 +110,27 @@ class SairaAutoReplyViewModelRobolectricTest {
         vm.continuationDebounceMs = 30L
         vm.clockHourProvider = { 19 }
         vm.onlineOverride = false
+        runSuspendAndAwait {
+            vm.prefs.saveChatboxThreads(
+                listOf(
+                    ChatboxThread(id = "test_sazzad", name = "Sazzad Jony", shortId = "102938", style = AvatarStyle.LAVENDER, online = true),
+                    ChatboxThread(id = "test_maya", name = "Maya Rahman", shortId = "554433", style = AvatarStyle.PEACH, online = true),
+                    ChatboxThread(id = "test_arif", name = "Arif Hasan", shortId = "223344", style = AvatarStyle.LAVENDER, online = true)
+                )
+            )
+        }
         vm.setOneMinAutoReplyEnabled(true)
         vm.clearSairaAutoReplyLogs()
-        awaitCondition { vm.oneMinAutoReplyEnabled.value && vm.sairaAutoReplyLogs.value.isEmpty() }
+        awaitCondition {
+            vm.oneMinAutoReplyEnabled.value &&
+                vm.sairaAutoReplyLogs.value.isEmpty() &&
+                vm.chatboxThreads.value.any { it.id == "test_sazzad" }
+        }
 
         // 1) User messages Sazzad -> peer doesn't reply -> Saira steps in with time greeting & name
-        vm.sendChatboxMessage("sazzad", "Kire kothay tui?", "07:00 PM")
+        vm.sendChatboxMessage("test_sazzad", "Kire kothay tui?", "07:00 PM")
         awaitCondition {
-            vm.chatboxMessages.value["sazzad"]?.any {
+            vm.chatboxMessages.value["test_sazzad"]?.any {
                 it.from == "them" && it.senderName == "Saira" && it.text.contains("শুভ সন্ধ্যা")
             } == true
         }
@@ -123,33 +138,33 @@ class SairaAutoReplyViewModelRobolectricTest {
             vm.sairaAutoReplyLogs.value.any { it.contactName == "Sazzad Jony" }
         }
 
-        val countAfterFirstAutoReply = vm.chatboxMessages.value["sazzad"].orEmpty().size
+        val countAfterFirstAutoReply = vm.chatboxMessages.value["test_sazzad"].orEmpty().size
 
         // 2) Follow-up while Saira is already engaged -> continues conversation without repeating initial greeting
-        vm.sendChatboxMessage("sazzad", "Ajke dekha hobe?", "07:01 PM")
+        vm.sendChatboxMessage("test_sazzad", "Ajke dekha hobe?", "07:01 PM")
         awaitCondition {
-            vm.chatboxMessages.value["sazzad"].orEmpty().size >= countAfterFirstAutoReply + 2
+            vm.chatboxMessages.value["test_sazzad"].orEmpty().size >= countAfterFirstAutoReply + 2
         }
-        val latestFollowUp = vm.chatboxMessages.value["sazzad"].orEmpty().last()
+        val latestFollowUp = vm.chatboxMessages.value["test_sazzad"].orEmpty().last()
         assertEquals("Saira", latestFollowUp.senderName)
         assertFalse(latestFollowUp.text.startsWith("হ্যালো Chatbox User! শুভ সন্ধ্যা"))
 
         // 3) Disabled toggle -> MUST NOT auto-reply
         vm.setOneMinAutoReplyEnabled(false)
         awaitCondition { !vm.oneMinAutoReplyEnabled.value }
-        val mayaBefore = vm.chatboxMessages.value["maya"].orEmpty().size
-        vm.sendChatboxMessage("maya", "Hi Maya", "07:02 PM")
+        val mayaBefore = vm.chatboxMessages.value["test_maya"].orEmpty().size
+        vm.sendChatboxMessage("test_maya", "Hi Maya", "07:02 PM")
         pumpLooper(180)
-        assertEquals(mayaBefore + 1, vm.chatboxMessages.value["maya"].orEmpty().size)
+        assertEquals(mayaBefore + 1, vm.chatboxMessages.value["test_maya"].orEmpty().size)
 
         // 4) Re-enable, but blocked thread -> MUST NOT auto-reply
         vm.setOneMinAutoReplyEnabled(true)
-        vm.toggleThreadBlocked("arif")
-        awaitCondition { vm.oneMinAutoReplyEnabled.value && "arif" in vm.chatboxBlockedThreads.value }
-        val arifBefore = vm.chatboxMessages.value["arif"].orEmpty().size
-        vm.sendChatboxMessage("arif", "Yo Arif", "07:03 PM")
+        vm.toggleThreadBlocked("test_arif")
+        awaitCondition { vm.oneMinAutoReplyEnabled.value && "test_arif" in vm.chatboxBlockedThreads.value }
+        val arifBefore = vm.chatboxMessages.value["test_arif"].orEmpty().size
+        vm.sendChatboxMessage("test_arif", "Yo Arif", "07:03 PM")
         pumpLooper(180)
-        assertEquals(arifBefore + 1, vm.chatboxMessages.value["arif"].orEmpty().size)
+        assertEquals(arifBefore + 1, vm.chatboxMessages.value["test_arif"].orEmpty().size)
     }
 
     @Test
@@ -235,18 +250,28 @@ class SairaAutoReplyViewModelRobolectricTest {
         assertTrue(turn2.replyText.contains("https://maps.google.com/?q=23.79250,90.40780"))
 
         // Incoming DM auto-reply cancelled when owner replies manually before autoReplyWaitMs
+        runSuspendAndAwait {
+            vm.prefs.saveChatboxThreads(
+                listOf(
+                    ChatboxThread(id = "test_maya", name = "Maya Rahman", shortId = "554433", style = AvatarStyle.PEACH, online = true)
+                )
+            )
+        }
         vm.setOneMinAutoReplyEnabled(true)
-        awaitCondition { vm.oneMinAutoReplyEnabled.value }
-        val mayaBefore = vm.chatboxMessages.value["maya"].orEmpty().size
+        awaitCondition {
+            vm.oneMinAutoReplyEnabled.value &&
+                vm.chatboxThreads.value.any { it.id == "test_maya" }
+        }
+        val mayaBefore = vm.chatboxMessages.value["test_maya"].orEmpty().size
         vm.autoReplyWaitMs = 220L
-        vm.simulateIncomingChatboxMessage("maya", "Are you coming?", triggerAutoReplyAfterWait = true)
-        awaitCondition { vm.chatboxMessages.value["maya"].orEmpty().size >= mayaBefore + 1 }
+        vm.simulateIncomingChatboxMessage("test_maya", "Are you coming?", triggerAutoReplyAfterWait = true)
+        awaitCondition { vm.chatboxMessages.value["test_maya"].orEmpty().size >= mayaBefore + 1 }
         // Disable 10s absence before owner sends manual reply so we assert incoming auto-reply is cancelled cleanly
         vm.setOneMinAutoReplyEnabled(false)
         awaitCondition { !vm.oneMinAutoReplyEnabled.value }
-        vm.sendChatboxMessage("maya", "Yes, leaving now!", "09:10 AM")
+        vm.sendChatboxMessage("test_maya", "Yes, leaving now!", "09:10 AM")
         pumpLooper(300)
-        val mayaMessagesAfter = vm.chatboxMessages.value["maya"].orEmpty()
+        val mayaMessagesAfter = vm.chatboxMessages.value["test_maya"].orEmpty()
         assertFalse(mayaMessagesAfter.drop(mayaBefore).any { it.senderName == "Saira" })
     }
 }

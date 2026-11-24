@@ -160,23 +160,22 @@ class AppPreferencesRepository(private val context: Context) {
 
     val chatboxThreads: Flow<List<ChatboxThread>> =
         context.appDataStore.data.map { prefs ->
-            val raw = prefs[chatboxThreadsKey] ?: return@map ChatboxCatalog.defaultThreads
+            val raw = prefs[chatboxThreadsKey] ?: return@map emptyList()
             try {
-                val decoded = json.decodeFromString<List<ChatboxThread>>(raw)
-                if (decoded.isEmpty()) ChatboxCatalog.defaultThreads else decoded
+                json.decodeFromString<List<ChatboxThread>>(raw)
+                    .filterNot { it.id in ChatboxCatalog.DEMO_THREAD_IDS }
             } catch (_: Exception) {
-                ChatboxCatalog.defaultThreads
+                emptyList()
             }
         }
 
     val chatboxMessages: Flow<Map<String, List<ChatboxMessage>>> =
         context.appDataStore.data.map { prefs ->
-            val raw = prefs[chatboxMessagesKey] ?: return@map ChatboxCatalog.defaultSeeds
+            val raw = prefs[chatboxMessagesKey] ?: return@map emptyMap()
             try {
-                val decoded = json.decodeFromString<Map<String, List<ChatboxMessage>>>(raw)
-                ChatboxCatalog.defaultSeeds + decoded
+                json.decodeFromString<Map<String, List<ChatboxMessage>>>(raw)
             } catch (_: Exception) {
-                ChatboxCatalog.defaultSeeds
+                emptyMap()
             }
         }
 
@@ -197,11 +196,12 @@ class AppPreferencesRepository(private val context: Context) {
 
     val chatboxCallLogs: Flow<List<ChatboxCallEntry>> =
         context.appDataStore.data.map { prefs ->
-            val raw = prefs[chatboxCallLogsKey] ?: return@map ChatboxCatalog.defaultCallLogs
+            val raw = prefs[chatboxCallLogsKey] ?: return@map emptyList()
             try {
                 json.decodeFromString<List<ChatboxCallEntry>>(raw)
+                    .filterNot { it.id in ChatboxCatalog.DEMO_CALL_LOG_IDS }
             } catch (_: Exception) {
-                ChatboxCatalog.defaultCallLogs
+                emptyList()
             }
         }
 

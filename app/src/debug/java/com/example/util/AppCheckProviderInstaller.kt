@@ -5,7 +5,8 @@ import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 
 internal fun installDebugAppCheckProvider(appCheck: FirebaseAppCheck): Boolean {
     appCheck.installAppCheckProviderFactory(
-        DebugAppCheckProviderFactory.getInstance()
+        DebugAppCheckProviderFactory.getInstance(),
+        true
     )
     return true
 }

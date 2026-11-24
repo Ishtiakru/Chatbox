@@ -144,11 +144,19 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val aiFallbackModel: StateFlow<String> = prefs.aiFallbackModel
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    val chatboxThreads: StateFlow<List<ChatboxThread>> = prefs.chatboxThreads
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ChatboxCatalog.defaultThreads)
+    private val _pendingCreatedThreads = MutableStateFlow<List<ChatboxThread>>(emptyList())
+    private val chatboxThreadsMutex = Mutex()
+
+    val chatboxThreads: StateFlow<List<ChatboxThread>> = combine(
+        prefs.chatboxThreads,
+        _pendingCreatedThreads
+    ) { stored, pending ->
+        val storedIds = stored.map { it.id }.toSet()
+        pending.filterNot { it.id in storedIds } + stored
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val chatboxMessages: StateFlow<Map<String, List<ChatboxMessage>>> = prefs.chatboxMessages
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ChatboxCatalog.defaultSeeds)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     val chatboxBackupPin: StateFlow<String> = prefs.chatboxBackupPin
         .stateIn(viewModelScope, SharingStarted.Eagerly, "123456")
@@ -157,7 +165,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     val chatboxCallLogs: StateFlow<List<ChatboxCallEntry>> = prefs.chatboxCallLogs
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ChatboxCatalog.defaultCallLogs)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val chatboxReports: StateFlow<List<ChatboxReportEntry>> = prefs.chatboxReports
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -212,7 +220,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val _selectedTab = MutableStateFlow<AppTab>(AppTab.Core(CoreAppTab.CHATBOX))
     val selectedTab: StateFlow<AppTab> = _selectedTab.asStateFlow()
 
-    private val _activeThreadId = MutableStateFlow<String?>("sazzad")
+    private val _activeThreadId = MutableStateFlow<String?>(null)
     val activeThreadId: StateFlow<String?> = _activeThreadId.asStateFlow()
 
     private val _showProfileDialog = MutableStateFlow(false)
@@ -1251,8 +1259,34 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             online = true,
             readReceiptsEnabled = true
         )
-        val updated = listOf(thread) + chatboxThreads.value
-        viewModelScope.launch { prefs.saveChatboxThreads(updated) }
+        _pendingCreatedThreads.value = listOf(thread) + _pendingCreatedThreads.value.filterNot { it.id == newId }
+        viewModelScope.launch {
+            chatboxThreadsMutex.withLock {
+                val currentStored = prefs.chatboxThreads.first()
+                if (currentStored.none { it.id == newId }) {
+                    prefs.saveChatboxThreads(listOf(thread) + currentStored)
+                }
+                _pendingCreatedThreads.value = _pendingCreatedThreads.value.filterNot { it.id == newId }
+            }
+            if (isSixDigitId && cleanNameInput.isEmpty() && currentUser.value != null && isOnline.value) {
+                val peerProfile = liveChatRepo.lookupPeerByShortId(resolvedIdentifier)
+                if (peerProfile != null && peerProfile.displayName.isNotBlank()) {
+                    val peerInitials = peerProfile.displayName
+                        .split(" ")
+                        .filter { it.isNotBlank() }
+                        .take(2)
+                        .joinToString("") { it.take(1).uppercase() }
+                        .ifEmpty { peerProfile.displayName.take(2).uppercase() }
+                    updateThread(newId) { existingThread ->
+                        existingThread.copy(
+                            name = peerProfile.displayName,
+                            avatarLabel = peerInitials,
+                            workBio = peerProfile.about.ifBlank { existingThread.workBio }
+                        )
+                    }
+                }
+            }
+        }
         return newId
     }
 
@@ -1286,20 +1320,27 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             readReceiptsEnabled = true
         )
         val now = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-        val updatedThreads = listOf(newGroup) + chatboxThreads.value
-        val currentMap = chatboxMessages.value.toMutableMap()
-        currentMap[newId] = listOf(
-            ChatboxMessage(
-                id = "grp_init_${System.currentTimeMillis()}",
-                from = "them",
-                senderName = cleanMembers.firstOrNull() ?: "Chatbox",
-                text = "Group \"$resolvedName\" created with ${cleanMembers.joinToString(", ")}.",
-                time = now
-            )
+        _pendingCreatedThreads.value = listOf(newGroup) + _pendingCreatedThreads.value.filterNot { it.id == newId }
+        val initMsg = ChatboxMessage(
+            id = "grp_init_${System.currentTimeMillis()}",
+            from = "them",
+            senderName = cleanMembers.firstOrNull() ?: "Chatbox",
+            text = "Group \"$resolvedName\" created with ${cleanMembers.joinToString(", ")}.",
+            time = now
         )
         viewModelScope.launch {
-            prefs.saveChatboxThreads(updatedThreads)
-            prefs.saveChatboxMessages(currentMap)
+            chatboxThreadsMutex.withLock {
+                val currentStored = prefs.chatboxThreads.first()
+                if (currentStored.none { it.id == newId }) {
+                    prefs.saveChatboxThreads(listOf(newGroup) + currentStored)
+                }
+                _pendingCreatedThreads.value = _pendingCreatedThreads.value.filterNot { it.id == newId }
+            }
+            chatboxMessagesMutex.withLock {
+                val currentMap = prefs.chatboxMessages.first().toMutableMap()
+                currentMap[newId] = currentMap[newId].orEmpty() + initMsg
+                prefs.saveChatboxMessages(currentMap)
+            }
         }
         return newId
     }
@@ -1463,8 +1504,15 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun updateThread(threadId: String, transform: (ChatboxThread) -> ChatboxThread) {
-        val list = chatboxThreads.value.map { if (it.id == threadId) transform(it) else it }
-        viewModelScope.launch { prefs.saveChatboxThreads(list) }
+        _pendingCreatedThreads.value = _pendingCreatedThreads.value.map {
+            if (it.id == threadId) transform(it) else it
+        }
+        viewModelScope.launch {
+            chatboxThreadsMutex.withLock {
+                val list = prefs.chatboxThreads.first().map { if (it.id == threadId) transform(it) else it }
+                prefs.saveChatboxThreads(list)
+            }
+        }
     }
 
     companion object {
