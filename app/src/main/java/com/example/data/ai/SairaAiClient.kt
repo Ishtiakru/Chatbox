@@ -25,7 +25,12 @@ object SairaAiClient {
         AiRouter(
             primary = geminiProvider,
             fallback = { currentBackupProvider() },
-            cooldowns = AiCooldownStore()
+            cooldowns = AiCooldownStore(),
+            // Never let a raw AI exception reach the UI: when every provider is
+            // down / exhausted / unconfigured, fall back to a friendly message so
+            // Saira always responds smoothly instead of showing an error.
+            neverThrow = true,
+            safetyNet = { error -> AiSafeResponses.forError(error) }
         )
     }
 

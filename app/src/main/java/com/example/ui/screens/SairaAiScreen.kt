@@ -318,7 +318,7 @@ fun SairaAiScreen(
         activeJob = scope.launch {
             val accumulated = StringBuilder()
             try {
-                withTimeout(50_000L) {
+                withTimeout(70_000L) {
                     SairaAiClient.stream(
                         systemInstruction = SairaPrompts.chatSystemInstruction,
                         history = historyForModel,
@@ -358,14 +358,14 @@ fun SairaAiScreen(
                 } else {
                     exchanges = exchanges.filterNot { it.id == exId }
                     if (draft.isEmpty()) draft = question
-                    errorMessage = "Saira returned an empty response. Please try again."
+                    errorMessage = "Saira এই মুহূর্তে উত্তর দিতে পারছে না। একটু পরে আবার চেষ্টা করুন।"
                 }
             } catch (e: TimeoutCancellationException) {
                 exchanges = exchanges
                     .filter { it.id != exId || it.answer.isNotEmpty() }
                     .map { it.copy(isStreaming = false) }
                 if (accumulated.isEmpty() && draft.isEmpty()) draft = question
-                errorMessage = e.message ?: "Saira AI timed out. Please try again."
+                errorMessage = "Saira এই মুহূর্তে একটু ধীরগতির। অল্পক্ষণ পর আবার লিখুন।"
             } catch (_: CancellationException) {
                 exchanges = exchanges
                     .filter { it.id != exId || it.answer.isNotEmpty() }
@@ -375,7 +375,7 @@ fun SairaAiScreen(
                     .filter { it.id != exId || it.answer.isNotEmpty() }
                     .map { it.copy(isStreaming = false) }
                 if (accumulated.isEmpty() && draft.isEmpty()) draft = question
-                errorMessage = e.message ?: "Saira AI is temporarily unavailable."
+                errorMessage = "Saira এখন অনলাইন নেই মনে হচ্ছে। অল্পক্ষণ পর আবার চেষ্টা করুন।"
             } finally {
                 isBusy = false
                 activeJob = null
