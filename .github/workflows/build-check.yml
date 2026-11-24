@@ -124,6 +124,12 @@ jobs:
                 enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
                 echo "::error::${enc}"
               done
+            # Extract failing test names + messages from JUnit XML reports.
+            python3 .github/scripts/extract-test-failures.py > failing-tests.txt 2>&1 || true
+            while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              echo "::error::TESTFAIL ${enc}"
+            done < failing-tests.txt
             echo "::error::Gradle exited with status $status."
           fi
           exit "$status"
