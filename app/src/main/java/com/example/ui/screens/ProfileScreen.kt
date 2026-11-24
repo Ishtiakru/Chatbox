@@ -715,7 +715,7 @@ fun ProfileScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         ProfileShortcutBubble(
-                            label = "Demo",
+                            label = "Chatbox",
                             icon = Icons.Rounded.ChatBubbleOutline,
                             onClick = { onNavigateTab(CoreAppTab.DEMO) }
                         )

@@ -239,7 +239,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         key(user.uid) {
             val navItems = remember(isAdmin, dynamicConfig.customMenus) {
                 buildList {
-                    add(NavDestinationItem("demo", AppTab.Core(CoreAppTab.DEMO), "Demo", Icons.Rounded.ChatBubbleOutline))
+                    add(NavDestinationItem("demo", AppTab.Core(CoreAppTab.DEMO), "Chatbox", Icons.Rounded.ChatBubbleOutline))
                     add(NavDestinationItem("live", AppTab.Core(CoreAppTab.LIVE), "Live", Icons.Rounded.Groups))
                     add(NavDestinationItem("saira", AppTab.Core(CoreAppTab.SAIRA), "Saira", Icons.Rounded.AutoAwesome))
                     add(NavDestinationItem("calls", AppTab.Core(CoreAppTab.CALLS), "Calls", Icons.Rounded.Phone))

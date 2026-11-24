@@ -5,7 +5,7 @@
     <string name="app_tagline_bn">কাছের মানুষদের সাথে থাকার একটি শান্ত জায়গা</string>
     <string name="update_badge">Update</string>
     <string name="offline_banner">Offline · Connect to the internet to sync messages and AI.</string>
-    <string name="nav_demo">Demo</string>
+    <string name="nav_demo">Chatbox</string>
     <string name="nav_live">Live</string>
     <string name="nav_saira">Saira</string>
     <string name="nav_calls">Calls</string>

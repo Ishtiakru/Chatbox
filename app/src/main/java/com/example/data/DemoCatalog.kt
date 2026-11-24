@@ -19,7 +19,7 @@ object DemoCatalog {
         DemoContact(
             id = "maya",
             name = "Maya Rahman",
-            role = "Demo conversation",
+            role = "Chatbox conversation",
             avatar = "MR",
             style = AvatarStyle.PEACH,
             online = true
@@ -27,7 +27,7 @@ object DemoCatalog {
         DemoContact(
             id = "arif",
             name = "Arif Hasan",
-            role = "Demo conversation",
+            role = "Chatbox conversation",
             avatar = "AH",
             style = AvatarStyle.LAVENDER,
             online = false
@@ -35,7 +35,7 @@ object DemoCatalog {
         DemoContact(
             id = "nora",
             name = "Nora Ahmed",
-            role = "Demo conversation",
+            role = "Chatbox conversation",
             avatar = "NA",
             style = AvatarStyle.YELLOW,
             online = false
@@ -43,7 +43,7 @@ object DemoCatalog {
         DemoContact(
             id = "together",
             name = "The good people",
-            role = "Demo group",
+            role = "Chatbox group",
             avatar = "✳",
             style = AvatarStyle.BLUE,
             online = false
@@ -94,11 +94,11 @@ object DemoCatalog {
             Regex("firebase|ফায়ারবেস").containsMatchIn(text) ->
                 "Google Sign-In, Cloud Firestore, Firebase Storage এবং Firebase AI Logic (App Check সহ) Chatbox-এ সংযুক্ত আছে।"
             Regex("feature|chat|message|ফিচার|চ্যাট|মেসেজ|কি আছে").containsMatchIn(text) ->
-                "এখন আপনি ডেমো চ্যাট দেখতে ও খুঁজতে পারেন, এবং Google দিয়ে সাইন ইন করলে Live chats, Saira AI ও Admin Panel ব্যবহার করতে পারবেন।"
+                "এখন আপনি লোকাল Chatbox চ্যাট দেখতে ও খুঁজতে পারেন, এবং Google দিয়ে সাইন ইন করলে Live chats, Saira AI ও Admin Panel ব্যবহার করতে পারবেন।"
             Regex("develop|built|made|বানানো|তৈরি|কিভাবে").containsMatchIn(text) ->
                 "এই নেটিভ Android অ্যাপটি Kotlin ও Jetpack Compose (Material 3) দিয়ে তৈরি, যা Firebase Auth, Firestore, Storage ও Gemini AI ব্যবহার করে।"
             else ->
-                "আমি এখন ডেমো মোডের একটি সীমিত অফলাইন গাইড। পূর্ণ Saira AI ও অটো-রিপ্লাই সুবিধার জন্য নিচের Saira ট্যাব ব্যবহার করুন।"
+                "আমি এখন Chatbox-এর একটি সীমিত অফলাইন গাইড। পূর্ণ Saira AI ও অটো-রিপ্লাই সুবিধার জন্য নিচের Saira ট্যাব ব্যবহার করুন।"
         }
     }
 }

@@ -288,12 +288,12 @@ private fun DemoListPane(
                     )
                     Column {
                         Text(
-                            text = "DEMO EXPLORER",
+                            text = "CHATBOX WORKSPACE",
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.inkSubtle
                         )
                         Text(
-                            text = "Demo Chats",
+                            text = "Chatbox",
                             style = MaterialTheme.typography.titleMedium,
                             color = colors.ink
                         )
@@ -312,7 +312,7 @@ private fun DemoListPane(
             ChatboxSearchField(
                 value = searchQuery,
                 onValueChange = onSearchChange,
-                placeholder = "Search demo chats…",
+                placeholder = "Search chats…",
                 testTag = "demo_search_input"
             )
 
@@ -320,7 +320,7 @@ private fun DemoListPane(
                 NoticeBanner(text = publicWelcomeBanner)
             }
             if (!isOnline) {
-                NoticeBanner(text = "Offline · Demo chats stay saved locally on device.", isError = true)
+                NoticeBanner(text = "Offline · Chatbox messages stay saved locally on device.", isError = true)
             }
         }
 
@@ -534,7 +534,7 @@ private fun DemoThreadPane(
         ) {
             item {
                 NoticeBanner(
-                    text = "Local Demo preview — messages stay saved in DataStore. Use Live chats for real-time Firestore messaging."
+                    text = "Local Chatbox — messages stay saved in DataStore. Use Live chats for real-time Firestore messaging."
                 )
             }
             items(messages) { msg ->
@@ -642,7 +642,7 @@ private fun DemoDetailsPane(
         Text(text = selectedContact.role, style = MaterialTheme.typography.bodySmall, color = colors.inkSubtle)
         HorizontalDivider(color = colors.border)
         Text(
-            text = "This is a local Demo workspace. Switch to Saira for an offline guide or open Live chats to message friends in real time.",
+            text = "This is a local Chatbox space. Switch to Saira for an offline guide or open Live chats to message friends in real time.",
             style = MaterialTheme.typography.bodySmall,
             color = colors.inkMuted
         )
@@ -666,10 +666,10 @@ private fun DemoInfoModalDialog(
             "Voice calling preview is ready in the Calls tab. Live calling signaling is not connected in this build."
         DemoModal.VIDEO -> "Video call with $contactName" to
             "Video calling preview is ready in the Calls tab. Use Live chats for real-time messaging, images, and voice notes."
-        DemoModal.ATTACH -> "Demo attachments" to
-            "Demo chats save local text messages on this device. Open Live chats to share compressed images and recorded voice notes."
+        DemoModal.ATTACH -> "Local attachments" to
+            "Local Chatbox threads save text messages on this device. Open Live chats to share compressed images and recorded voice notes."
         DemoModal.NEW_CHAT -> "Start a live conversation" to
-            "Demo contacts are fixed sample threads. Open the Live tab and enter a friend's 6-digit Chatbox ID or phone number to start chatting in real time."
+            "These are built-in Chatbox threads. Open the Live tab and enter a friend's 6-digit Chatbox ID or phone number to start chatting in real time."
         DemoModal.ABOUT -> "About Chatbox v${ChatboxConstants.APP_VERSION}" to
             "Chatbox — WhatsApp-style 6-digit ID profiles, Live Firestore messaging, Meta AI-inspired Saira AI, and Admin Dashboard."
     }
