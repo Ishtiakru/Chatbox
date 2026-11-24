@@ -293,7 +293,7 @@ class AuthRepository(private val context: Context) {
         val firebaseCred = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
         val authResult = auth.signInWithCredential(firebaseCred).await()
         val user = authResult.user
-            ?: return AuthResult.Failure("Firebase authentication returned no user.")
+            ?: return AuthResult.Failure("Chatbox authentication returned no user.")
         return AuthResult.Success(user)
     }
 }

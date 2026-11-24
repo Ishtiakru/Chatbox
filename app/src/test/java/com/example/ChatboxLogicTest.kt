@@ -145,4 +145,42 @@ class ChatboxLogicTest {
         assertTrue(autoPrompt.contains("সুপ্রভাত"))
         assertTrue(autoPrompt.contains("NOT permitted"))
     }
+
+    @Test
+    fun `saira user directory prioritizes self deduplicates drops blanks and caps at max users`() {
+        val self = com.example.saira.SairaDirectoryUser(
+            uid = "uid_self",
+            name = " Sojib ",
+            shortId = " 123456 ",
+            about = " Hey there ",
+            isSelf = true
+        )
+        val peers = buildList {
+            add(com.example.saira.SairaDirectoryUser(uid = "uid_self", name = "Duplicate Self", shortId = "999999"))
+            add(com.example.saira.SairaDirectoryUser(uid = "uid_blank", name = "   ", shortId = "111111"))
+            add(com.example.saira.SairaDirectoryUser(uid = "   ", name = "No Uid", shortId = "222222"))
+            for (i in 1..45) {
+                add(com.example.saira.SairaDirectoryUser(uid = "peer_$i", name = "User $i", shortId = "%06d".format(i)))
+            }
+            add(com.example.saira.SairaDirectoryUser(uid = "peer_1", name = "Duplicate Peer", shortId = "888888"))
+        }
+
+        val built = com.example.saira.SairaUserDirectory.build(self = self, peers = peers)
+        assertEquals(com.example.saira.SairaUserDirectory.MAX_USERS, built.size)
+        assertEquals("uid_self", built.first().uid)
+        assertEquals("Sojib", built.first().name)
+        assertEquals("123456", built.first().shortId)
+        assertTrue(built.first().isSelf)
+        assertEquals(built.size, built.map { it.uid }.toSet().size)
+        assertFalse(built.any { it.uid == "uid_blank" })
+    }
+
+    @Test
+    fun `bootstrapped owner email and phone lookup edge cases behave consistently`() {
+        assertEquals(setOf("sojibsheikhuk@gmail.com"), ChatboxConstants.BOOTSTRAPPED_OWNER_EMAILS)
+        assertTrue(LiveChatRepository.buildPhoneLookupCandidates("123").isEmpty())
+        val intlCandidates = LiveChatRepository.buildPhoneLookupCandidates("+8801712345678")
+        assertTrue("8801712345678" in intlCandidates)
+        assertTrue("01712345678" in intlCandidates)
+    }
 }

@@ -130,6 +130,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val notifAutoReplyEnabled by viewModel.notifAutoReplyEnabled.collectAsState()
     val liveLocationEnabled by viewModel.liveLocationEnabled.collectAsState()
     val liveLocationAllowedPeers by viewModel.liveLocationAllowedPeers.collectAsState()
+    val dmPeerNicknames by viewModel.dmPeerNicknames.collectAsState()
+    val dmMutedPeers by viewModel.dmMutedPeers.collectAsState()
     val sairaRules by viewModel.sairaRules.collectAsState()
     val sairaAutoReplyLogs by viewModel.sairaAutoReplyLogs.collectAsState()
     val fallbackKindId by viewModel.aiFallbackProviderKind.collectAsState()
@@ -224,6 +226,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 rememberMeEnabled = rememberMeEnabled,
                 rememberedPhone = rememberedPhone,
                 onSaveRememberedPhone = viewModel::saveRememberedLoginPhone,
+                onQueuePendingPhone = viewModel::queuePendingPhoneForSignIn,
                 onLanguageSelected = viewModel::setLoginLanguage,
                 onGoogleSignIn = { viewModel.signInWithGoogle(context) },
                 onChooseGoogleAccount = { viewModel.signInWithGoogleWithAccountPicker(context) },
@@ -308,11 +311,16 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     liveLocationAllowedPeers = liveLocationAllowedPeers,
                                     quickReaction = quickReaction,
                                     ownProfile = ownProfile,
+                                    ownAvatarPath = userAvatarPath,
                                     homeAnnouncement = dynamicConfig.homeAnnouncement,
                                     appTitle = dynamicConfig.appTitle,
                                     liveChatRepo = viewModel.liveChatRepo,
+                                    peerNicknames = dmPeerNicknames,
+                                    mutedPeerIds = dmMutedPeers,
                                     onQuickReactionChange = viewModel::setQuickReaction,
                                     onSetPeerLocationAllowed = viewModel::setPeerLocationAllowed,
+                                    onSetPeerNickname = viewModel::setDmPeerNickname,
+                                    onSetPeerMuted = viewModel::setDmPeerMuted,
                                     onOpenProfile = { viewModel.selectTab(AppTab.Core(CoreAppTab.PROFILE)) },
                                     onOpenCalls = { viewModel.selectTab(AppTab.Core(CoreAppTab.CALLS)) },
                                     onAppUpdateClick = { viewModel.openUpdateDialog(true) }

@@ -447,8 +447,8 @@ fun ProfileStorageDialog(
     val formatted = remember(cacheBytes) {
         when {
             cacheBytes < 1024L -> "$cacheBytes B"
-            cacheBytes < 1024L * 1024L -> String.format("%.1f KB", cacheBytes / 1024.0)
-            else -> String.format("%.2f MB", cacheBytes / (1024.0 * 1024.0))
+            cacheBytes < 1024L * 1024L -> String.format(java.util.Locale.US, "%.1f KB", cacheBytes / 1024.0)
+            else -> String.format(java.util.Locale.US, "%.2f MB", cacheBytes / (1024.0 * 1024.0))
         }
     }
     var cleared by remember { mutableStateOf(false) }

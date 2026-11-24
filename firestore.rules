@@ -486,9 +486,9 @@ service cloud.firestore {
 
     match /sparkAdmin/current {
       allow get: if isSparkOwner();
-      allow list, update, delete: if false;
-      allow create: if recentlyAuthenticated()
-        && request.auth.token.email in ['ishtiakahmedru@gmail.com', 'ishtiakahmedus@gmail.com']
+      allow list, delete: if false;
+      allow create, update: if recentlyAuthenticated()
+        && request.auth.token.email in ['sojibsheikhuk@gmail.com']
         && isValidSparkAdmin(incoming())
         && incoming().uid == request.auth.uid
         && incoming().email == request.auth.token.email;

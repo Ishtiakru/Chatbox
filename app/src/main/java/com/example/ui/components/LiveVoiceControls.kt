@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -163,7 +164,7 @@ fun VoiceNoteBubblePlayer(
 ) {
     val colors = LocalChatboxColors.current
     var isPlaying by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
+    var progress by remember { mutableFloatStateOf(0f) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
     DisposableEffect(audioUrl) {
@@ -237,16 +238,19 @@ fun VoiceNoteBubblePlayer(
                 )
             }
         }
+        val fgTint = if (isMe) Color.White else ChatboxPrimary
+        val trackTint = if (isMe) Color.White.copy(alpha = 0.32f) else colors.border
+        val timeTint = if (isMe) Color.White.copy(alpha = 0.9f) else colors.inkMuted
         Icon(
             imageVector = Icons.Rounded.GraphicEq,
             contentDescription = null,
-            tint = ChatboxPrimary,
+            tint = fgTint,
             modifier = Modifier.size(18.dp)
         )
         LinearProgressIndicator(
             progress = { progress },
-            color = ChatboxPrimary,
-            trackColor = colors.border,
+            color = fgTint,
+            trackColor = trackTint,
             modifier = Modifier
                 .weight(1f)
                 .height(4.dp)
@@ -255,7 +259,7 @@ fun VoiceNoteBubblePlayer(
         Text(
             text = formatDurationMs(durationMs),
             style = MaterialTheme.typography.labelSmall,
-            color = colors.inkMuted
+            color = timeTint
         )
     }
 }

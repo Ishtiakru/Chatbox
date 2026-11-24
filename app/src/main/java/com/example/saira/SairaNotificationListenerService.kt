@@ -74,7 +74,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val notification = target.notification ?: return
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
         val extras = notification.extras ?: return
-        if (extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)) return
+        if (isGroupConversation(extras)) return
         if (findReplyAction(notification) == null) return
         if (SairaNotificationMatcher.platformForPackage(target.packageName) == null) return
 
@@ -139,7 +139,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
 
         val extras = notification.extras ?: return
-        val isGroupConversation = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
+        val isGroupConversation = isGroupConversation(extras)
         if (isGroupSummary || isGroupConversation) return
 
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -394,11 +394,13 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 } else {
                     null
                 }
-                val senderName = (senderPerson?.name ?: bundle.getCharSequence("sender"))
+                val senderPersonName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) senderPerson?.name else null
+                val senderPersonKey = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) senderPerson?.key else null
+                val senderName = (senderPersonName ?: bundle.getCharSequence("sender"))
                     ?.toString()
                     ?.trim()
                     .orEmpty()
-                val matchesSelfPerson = (selfPersonKey != null && senderPerson?.key == selfPersonKey) ||
+                val matchesSelfPerson = (selfPersonKey != null && senderPersonKey == selfPersonKey) ||
                     (selfPersonName.isNotEmpty() && senderName.equals(selfPersonName, ignoreCase = true))
                 val matchesLastReply = !lastSentReply.isNullOrBlank() &&
                     msgText.equals(lastSentReply.trim(), ignoreCase = true)
@@ -480,6 +482,13 @@ class SairaNotificationListenerService : NotificationListenerService() {
         }
         return clean
     }
+
+    private fun isGroupConversation(extras: Bundle): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
+        } else {
+            extras.getBoolean("android.isGroupConversation", false)
+        }
 
     private fun isIgnoredSystemStatusText(text: String): Boolean {
         val clean = text.trim().lowercase()

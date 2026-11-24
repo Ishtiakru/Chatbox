@@ -27,8 +27,7 @@ object ChatboxConstants {
     val VALID_GMAIL_REGEX = Regex("^[a-z0-9][a-z0-9._%+-]{0,63}@gmail\\.com$")
 
     val BOOTSTRAPPED_OWNER_EMAILS = setOf(
-        "ishtiakahmedru@gmail.com",
-        "ishtiakahmedus@gmail.com"
+        "sojibsheikhuk@gmail.com"
     )
 }
 

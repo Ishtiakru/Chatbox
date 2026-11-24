@@ -102,6 +102,7 @@ fun AuthLoginScreen(
     rememberMeEnabled: Boolean,
     rememberedPhone: String,
     onSaveRememberedPhone: (Boolean, String) -> Unit,
+    onQueuePendingPhone: (String) -> Unit = {},
     onLanguageSelected: (String) -> Unit,
     onGoogleSignIn: () -> Unit,
     onChooseGoogleAccount: () -> Unit = onGoogleSignIn,
@@ -360,11 +361,13 @@ fun AuthLoginScreen(
                             formNotice = if (bn) "পাসওয়ার্ড দুটি মিলছে না।" else "Passwords do not match."
                             return@Button
                         }
+                        formNotice = null
                         onSaveRememberedPhone(rememberChecked, cleanPhone)
-                        formNotice = if (bn) {
-                            "নিরাপদ প্রবেশের জন্য নিচে \"Google দিয়ে চালিয়ে যান\" বাটনে ট্যাপ করুন।"
+                        onQueuePendingPhone(cleanPhone)
+                        if (createMode) {
+                            onChooseGoogleAccount()
                         } else {
-                            "Tap \"Continue with Google\" below to sign in securely and link your phone number inside Profile."
+                            onGoogleSignIn()
                         }
                     },
                     enabled = !authLoading && isOnline,
@@ -375,13 +378,23 @@ fun AuthLoginScreen(
                         .height(50.dp)
                         .testTag("phone_login_submit_button")
                 ) {
-                    Text(
-                        text = if (createMode) {
-                            if (bn) "নতুন অ্যাকাউন্ট তৈরি করুন" else "Create account"
-                        } else {
-                            if (bn) "লগ ইন" else "Log in"
-                        }
-                    )
+                    if (authLoading) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (bn) "সাইন ইন হচ্ছে…" else "Signing in…")
+                    } else {
+                        Text(
+                            text = if (createMode) {
+                                if (bn) "নতুন অ্যাকাউন্ট তৈরি করুন" else "Create account"
+                            } else {
+                                if (bn) "লগ ইন" else "Log in"
+                            }
+                        )
+                    }
                 }
 
                 Row(
@@ -437,7 +450,10 @@ fun AuthLoginScreen(
 
                 // Primary Google Credential Manager Sign-In CTA
                 Button(
-                    onClick = onGoogleSignIn,
+                    onClick = {
+                        onQueuePendingPhone(phoneInput)
+                        onGoogleSignIn()
+                    },
                     enabled = !authLoading && isOnline,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = ChatboxAccentViolet),
@@ -478,7 +494,10 @@ fun AuthLoginScreen(
                 }
 
                 TextButton(
-                    onClick = onChooseGoogleAccount,
+                    onClick = {
+                        onQueuePendingPhone(phoneInput)
+                        onChooseGoogleAccount()
+                    },
                     enabled = !authLoading && isOnline,
                     modifier = Modifier.testTag("choose_gmail_account_button")
                 ) {
@@ -693,9 +712,9 @@ private fun ForgotPasswordDialog(
 
                 Text(
                     text = if (bn) {
-                        "আপনার Gmail বা অ্যাকাউন্ট ইমেল ঠিকানা দিন। Firebase থেকে পাসওয়ার্ড রিসেট লিংক পাঠানো হবে।"
+                        "আপনার Gmail বা অ্যাকাউন্ট ইমেল ঠিকানা দিন। Chatbox থেকে পাসওয়ার্ড রিসেট লিংক পাঠানো হবে।"
                     } else {
-                        "Enter your Gmail address to receive a Firebase password reset link."
+                        "Enter your Gmail address to receive a Chatbox password reset link."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = ChatboxInkMuted

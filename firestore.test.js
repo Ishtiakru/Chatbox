@@ -11,7 +11,7 @@ const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
 const ALICE_UID = "alice_uid_123";
 const BOB_UID = "bob_uid_456";
 const CHARLIE_UID = "charlie_uid_789";
-const OWNER_EMAIL = "ishtiakahmedru@gmail.com";
+const OWNER_EMAIL = "sojibsheikhuk@gmail.com";
 const DELEGATE_EMAIL = "delegate.user@gmail.com";
 
 const [emulatorHost, emulatorPortStr] = (
@@ -326,6 +326,15 @@ test("Spark Admin enforces verified Google owner, sparkConfig customMenus, spark
     spoofedOwner.collection("sparkAdmin").doc("current").set({
       uid: ALICE_UID,
       email: OWNER_EMAIL,
+      pendingEmail: "",
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+  await assertFails(
+    outsider.collection("sparkAdmin").doc("current").set({
+      uid: CHARLIE_UID,
+      email: "other@gmail.com",
       pendingEmail: "",
       createdAt: now,
       updatedAt: now,

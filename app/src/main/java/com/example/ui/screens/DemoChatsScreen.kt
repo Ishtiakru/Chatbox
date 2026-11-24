@@ -24,12 +24,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AttachFile
-import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.SentimentSatisfiedAlt
 import androidx.compose.material.icons.rounded.Videocam
@@ -92,7 +92,7 @@ fun DemoChatsScreen(
     val colors = LocalChatboxColors.current
     var selectedContactId by remember { mutableStateOf("saira") }
     var searchQuery by remember { mutableStateOf("") }
-    var draft by remember { mutableStateOf("") }
+    var draft by remember(selectedContactId) { mutableStateOf("") }
     var showMobileThread by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var activeModal by remember { mutableStateOf<DemoModal?>(null) }
@@ -158,7 +158,7 @@ fun DemoChatsScreen(
                     selectedContact = selectedContact,
                     messages = activeMessages,
                     draft = draft,
-                    onDraftChange = { draft = it },
+                    onDraftChange = { draft = it.take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH) },
                     showBack = false,
                     onBack = {},
                     onCallClick = { activeModal = DemoModal.CALL },
@@ -213,7 +213,7 @@ fun DemoChatsScreen(
                     selectedContact = selectedContact,
                     messages = activeMessages,
                     draft = draft,
-                    onDraftChange = { draft = it },
+                    onDraftChange = { draft = it.take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH) },
                     showBack = true,
                     onBack = { showMobileThread = false },
                     onCallClick = { activeModal = DemoModal.CALL },
@@ -304,7 +304,7 @@ private fun DemoListPane(
                         Icon(Icons.Rounded.Add, contentDescription = "New conversation", tint = ChatboxPrimary)
                     }
                     IconButton(onClick = onAboutClick, modifier = Modifier.testTag("demo_about_button")) {
-                        Icon(Icons.Rounded.HelpOutline, contentDescription = "About Chatbox", tint = colors.inkSubtle)
+                        Icon(Icons.AutoMirrored.Rounded.HelpOutline, contentDescription = "About Chatbox", tint = colors.inkSubtle)
                     }
                 }
             }
@@ -444,7 +444,7 @@ private fun DemoListPane(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.testTag("demo_sign_out_button")
             ) {
-                Icon(Icons.Rounded.Logout, contentDescription = "Sign out", modifier = Modifier.size(16.dp))
+                Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = "Sign out", modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Sign out")
             }

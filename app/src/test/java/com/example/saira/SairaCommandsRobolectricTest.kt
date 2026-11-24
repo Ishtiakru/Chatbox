@@ -560,4 +560,101 @@ class SairaCommandsRobolectricTest {
             assertTrue(info.isNightTime)
         }
     }
+
+    @Test
+    fun `app preferences persist dm nicknames mute states and saira user directory cleanly`() = runBlocking {
+        val prefs = AppPreferencesRepository(application)
+
+        prefs.setDmPeerNickname("peer_1", "  Robiul Bhai  ")
+        assertEquals("Robiul Bhai", prefs.dmPeerNicknames.first()["peer_1"])
+
+        // Blank nickname removes entry rather than storing empty string
+        prefs.setDmPeerNickname("peer_1", "   ")
+        assertFalse(prefs.dmPeerNicknames.first().containsKey("peer_1"))
+
+        // Special characters in peer UID / nickname still serialize cleanly
+        prefs.setDmPeerNickname("peer:2", "Friend 💜")
+        assertEquals("Friend 💜", prefs.dmPeerNicknames.first()["peer:2"])
+
+        prefs.setDmPeerMuted("peer_1", true)
+        assertTrue("peer_1" in prefs.dmMutedPeers.first())
+        prefs.setDmPeerMuted("peer_1", false)
+        assertFalse("peer_1" in prefs.dmMutedPeers.first())
+
+        val dir = listOf(
+            SairaDirectoryUser(uid = "u1", name = "Sojib", shortId = "100200", isSelf = true),
+            SairaDirectoryUser(uid = "u2", name = "Robiul", shortId = "300400", isSelf = false)
+        )
+        prefs.saveSairaUserDirectory(dir)
+        val restored = prefs.sairaUserDirectory.first()
+        assertEquals(2, restored.size)
+        assertEquals("100200", restored.first().shortId)
+        assertTrue(restored.first().isSelf)
+    }
+
+    @Test
+    fun `group conversation notifications are skipped without dispatching reply`() = runBlocking {
+        val prefs = AppPreferencesRepository(application)
+        prefs.clearAutoReplyLogs()
+        prefs.setSairaNotifReplyEnabled(true)
+        prefs.saveSairaNotificationRules(
+            listOf(
+                SairaNotificationRule(
+                    id = "rule_group_test",
+                    contactName = "সজীব",
+                    platform = SairaPlatform.WHATSAPP,
+                    taughtReplyGuidance = "হ্যালো",
+                    enabled = true,
+                    useAiReply = false
+                )
+            )
+        )
+
+        var dispatched = false
+        val actionName = "com.example.TEST_GROUP_SKIP"
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                dispatched = true
+            }
+        }
+        application.registerReceiver(receiver, IntentFilter(actionName), Context.RECEIVER_EXPORTED)
+
+        val remoteInput = RemoteInput.Builder("key_reply").setAllowFreeFormInput(true).build()
+        val pendingIntent = PendingIntent.getBroadcast(
+            application,
+            299,
+            Intent(actionName).setPackage(application.packageName),
+            PendingIntent.FLAG_MUTABLE
+        )
+        val action = Notification.Action.Builder(null, "Reply", pendingIntent)
+            .addRemoteInput(remoteInput)
+            .build()
+        val notif = Notification.Builder(application, "wa_ch")
+            .setContentTitle("সজীব")
+            .setContentText("কেমন আছো?")
+            .addAction(action)
+            .build()
+        notif.extras.putBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, true)
+        @Suppress("DEPRECATION")
+        val groupSbn = StatusBarNotification(
+            "com.whatsapp",
+            "com.whatsapp",
+            599,
+            null,
+            Process.myUid(),
+            0,
+            0,
+            notif,
+            Process.myUserHandle(),
+            System.currentTimeMillis()
+        )
+
+        val service = Robolectric.buildService(SairaNotificationListenerService::class.java).create().get()
+        service.processNotification(groupSbn)
+        Shadows.shadowOf(application.mainLooper).idle()
+
+        assertFalse(dispatched)
+        assertTrue(prefs.sairaAutoReplyLogs.first().isEmpty())
+        application.unregisterReceiver(receiver)
+    }
 }

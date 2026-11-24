@@ -36,8 +36,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Block
@@ -48,10 +50,12 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.SentimentSatisfiedAlt
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,11 +72,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -132,6 +139,11 @@ private fun formatLiveTimestamp(msg: LiveMessage, isOnline: Boolean): String {
     return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(date)
 }
 
+private fun formatLiveGroupHeader(msg: LiveMessage): String {
+    val date = msg.sentAt?.toDate() ?: return "Just now"
+    return SimpleDateFormat("MMM d HH:mm", Locale.getDefault()).format(date)
+}
+
 @Composable
 fun LiveChatsScreen(
     currentUserId: String,
@@ -143,11 +155,16 @@ fun LiveChatsScreen(
     liveLocationAllowedPeers: Set<String>,
     quickReaction: String,
     ownProfile: UserProfile?,
+    ownAvatarPath: String? = null,
     homeAnnouncement: String,
     appTitle: String = "Chatbox",
     liveChatRepo: LiveChatRepository,
+    peerNicknames: Map<String, String> = emptyMap(),
+    mutedPeerIds: Set<String> = emptySet(),
     onQuickReactionChange: (String) -> Unit,
     onSetPeerLocationAllowed: (String, Boolean) -> Unit,
+    onSetPeerNickname: (String, String) -> Unit = { _, _ -> },
+    onSetPeerMuted: (String, Boolean) -> Unit = { _, _ -> },
     onOpenProfile: () -> Unit,
     onOpenCalls: () -> Unit,
     onAppUpdateClick: () -> Unit
@@ -168,6 +185,7 @@ fun LiveChatsScreen(
     var selectedConvId by remember { mutableStateOf<String?>(null) }
     var showMobileThread by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var openThreadSearchSignal by remember { mutableIntStateOf(0) }
     var listSearch by remember { mutableStateOf("") }
     var showNewConvDialog by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -177,12 +195,11 @@ fun LiveChatsScreen(
         conversations.mapNotNull { c -> c.participants.firstOrNull { it != currentUserId } }.distinct()
     }
     LaunchedEffect(peerUids) {
+        peerProfiles.keys.retainAll(peerUids.toSet())
         peerUids.forEach { pUid ->
-            if (!peerProfiles.containsKey(pUid)) {
-                launch {
-                    liveChatRepo.observePeerProfile(pUid).collect { prof ->
-                        if (prof != null) peerProfiles[pUid] = prof
-                    }
+            launch {
+                liveChatRepo.observePeerProfile(pUid).collect { prof ->
+                    if (prof != null) peerProfiles[pUid] = prof
                 }
             }
         }
@@ -192,13 +209,14 @@ fun LiveChatsScreen(
         conversations.firstOrNull { it.id == selectedConvId }
     }
 
-    val filteredConversations = remember(conversations, listSearch, peerProfiles.size, currentUserId) {
+    val filteredConversations = remember(conversations, listSearch, peerProfiles.toMap(), peerNicknames, currentUserId) {
         val q = listSearch.trim().lowercase()
         if (q.isEmpty()) conversations
         else conversations.filter { conv ->
             val peerId = conv.participants.firstOrNull { it != currentUserId }.orEmpty()
             val peer = peerProfiles[peerId]
             peerId.lowercase().contains(q) ||
+                peerNicknames[peerId]?.lowercase()?.contains(q) == true ||
                 peer?.displayName?.lowercase()?.contains(q) == true ||
                 peer?.shortId?.contains(q) == true
         }
@@ -207,15 +225,18 @@ fun LiveChatsScreen(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(Color.White)
             .imePadding()
     ) {
         val isWide = maxWidth >= 720.dp
 
         if (!isWide && showMobileThread) {
             BackHandler {
-                showDetails = false
-                showMobileThread = false
+                if (showDetails) {
+                    showDetails = false
+                } else {
+                    showMobileThread = false
+                }
             }
         }
 
@@ -225,6 +246,7 @@ fun LiveChatsScreen(
                     modifier = Modifier.width(320.dp).fillMaxHeight(),
                     currentUserId = currentUserId,
                     ownProfile = ownProfile,
+                    ownAvatarPath = ownAvatarPath,
                     isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     homeAnnouncement = homeAnnouncement,
@@ -233,15 +255,20 @@ fun LiveChatsScreen(
                     onListSearchChange = { listSearch = it },
                     conversations = filteredConversations,
                     peerProfiles = peerProfiles,
+                    peerNicknames = peerNicknames,
+                    mutedPeerIds = mutedPeerIds,
                     blockedIds = blockedIds,
                     selectedConvId = selectedConvId,
                     actionError = actionError,
-                    onSelectConversation = { id -> selectedConvId = id },
+                    onSelectConversation = { id ->
+                        selectedConvId = id
+                        showDetails = false
+                    },
                     onNewChatClick = { showNewConvDialog = true },
                     onOpenProfile = onOpenProfile,
                     onAppUpdateClick = onAppUpdateClick
                 )
-                HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = colors.border)
+                HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = DmHairlineBorder)
                 if (selectedConversation != null) {
                     val peerId = selectedConversation.participants.firstOrNull { it != currentUserId }.orEmpty()
                     LiveThreadPane(
@@ -250,7 +277,9 @@ fun LiveChatsScreen(
                         userDisplayName = ownProfile?.displayName ?: displayName ?: "Friend",
                         conversation = selectedConversation,
                         peerProfile = peerProfiles[peerId],
+                        peerNickname = peerNicknames[peerId],
                         peerUid = peerId,
+                        isMuted = peerId in mutedPeerIds,
                         isBlockedByMe = peerId in blockedIds,
                         isOnline = isOnline,
                         oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
@@ -259,6 +288,7 @@ fun LiveChatsScreen(
                         onSetPeerLocationAllowed = { allowed -> onSetPeerLocationAllowed(peerId, allowed) },
                         quickReaction = quickReaction,
                         showBack = false,
+                        openSearchSignal = openThreadSearchSignal,
                         liveChatRepo = liveChatRepo,
                         onBack = {},
                         onToggleDetails = { showDetails = !showDetails },
@@ -279,6 +309,7 @@ fun LiveChatsScreen(
                     modifier = Modifier.fillMaxSize(),
                     currentUserId = currentUserId,
                     ownProfile = ownProfile,
+                    ownAvatarPath = ownAvatarPath,
                     isOnline = isOnline,
                     appUpdateActive = appUpdateActive,
                     homeAnnouncement = homeAnnouncement,
@@ -287,11 +318,14 @@ fun LiveChatsScreen(
                     onListSearchChange = { listSearch = it },
                     conversations = filteredConversations,
                     peerProfiles = peerProfiles,
+                    peerNicknames = peerNicknames,
+                    mutedPeerIds = mutedPeerIds,
                     blockedIds = blockedIds,
                     selectedConvId = selectedConvId,
                     actionError = actionError,
                     onSelectConversation = { id ->
                         selectedConvId = id
+                        showDetails = false
                         showMobileThread = true
                     },
                     onNewChatClick = { showNewConvDialog = true },
@@ -306,7 +340,9 @@ fun LiveChatsScreen(
                     userDisplayName = ownProfile?.displayName ?: displayName ?: "Friend",
                     conversation = selectedConversation,
                     peerProfile = peerProfiles[peerId],
+                    peerNickname = peerNicknames[peerId],
                     peerUid = peerId,
+                    isMuted = peerId in mutedPeerIds,
                     isBlockedByMe = peerId in blockedIds,
                     isOnline = isOnline,
                     oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
@@ -315,6 +351,7 @@ fun LiveChatsScreen(
                     onSetPeerLocationAllowed = { allowed -> onSetPeerLocationAllowed(peerId, allowed) },
                     quickReaction = quickReaction,
                     showBack = true,
+                    openSearchSignal = openThreadSearchSignal,
                     liveChatRepo = liveChatRepo,
                     onBack = { showMobileThread = false },
                     onToggleDetails = { showDetails = !showDetails },
@@ -345,68 +382,39 @@ fun LiveChatsScreen(
         val peerId = selectedConversation.participants.firstOrNull { it != currentUserId }.orEmpty()
         val peerProf = peerProfiles[peerId]
         val isBlocked = peerId in blockedIds
-        Dialog(onDismissRequest = { showDetails = false }) {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    MessengerAvatar(label = peerProf?.displayName ?: peerId, size = 64.dp)
-                    Text(peerProf?.displayName ?: "Chatbox User", style = MaterialTheme.typography.titleMedium)
-                    if (!peerProf?.shortId.isNullOrBlank()) {
-                        Text(
-                            text = "ID: ${peerProf!!.shortId}",
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = ChatboxPrimary
-                        )
-                    }
-                    if (!peerProf?.about.isNullOrBlank()) {
-                        Text(peerProf!!.about, style = MaterialTheme.typography.bodySmall, color = colors.inkMuted)
-                    }
-                    HorizontalDivider(color = colors.border)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (selectedConversation.status != "closed") {
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        liveChatRepo.updateConversationStatus(selectedConversation.id, "closed")
-                                        showDetails = false
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Close Chat")
-                            }
-                        }
-                        Button(
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isBlocked) ChatboxPrimary else ChatboxErrorInk
-                            ),
-                            onClick = {
-                                scope.launch {
-                                    if (isBlocked) {
-                                        liveChatRepo.unblockPeerUser(currentUserId, peerId)
-                                    } else {
-                                        liveChatRepo.blockPeerUser(currentUserId, peerId, selectedConversation)
-                                    }
-                                    showDetails = false
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Rounded.Block, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (isBlocked) "Unblock" else "Block User")
-                        }
+        LiveChatDetailsScreen(
+            conversation = selectedConversation,
+            peerUid = peerId,
+            peerProfile = peerProf,
+            peerNickname = peerNicknames[peerId],
+            isOnline = isOnline,
+            isMuted = peerId in mutedPeerIds,
+            isBlockedByMe = isBlocked,
+            liveLocationEnabled = liveLocationEnabled,
+            peerLocationAllowed = peerId in liveLocationAllowedPeers,
+            quickReaction = quickReaction,
+            onClose = { showDetails = false },
+            onOpenCalls = onOpenCalls,
+            onOpenSearch = { openThreadSearchSignal++ },
+            onToggleMute = { muted -> onSetPeerMuted(peerId, muted) },
+            onUpdateNickname = { nick -> onSetPeerNickname(peerId, nick) },
+            onQuickReactionChange = onQuickReactionChange,
+            onTogglePeerLocation = { allowed -> onSetPeerLocationAllowed(peerId, allowed) },
+            onCloseChat = {
+                scope.launch {
+                    liveChatRepo.updateConversationStatus(selectedConversation.id, "closed")
+                }
+            },
+            onToggleBlock = {
+                scope.launch {
+                    if (isBlocked) {
+                        liveChatRepo.unblockPeerUser(currentUserId, peerId)
+                    } else {
+                        liveChatRepo.blockPeerUser(currentUserId, peerId, selectedConversation)
                     }
                 }
             }
-        }
+        )
     }
 }
 
@@ -415,6 +423,7 @@ private fun LiveConversationListPane(
     modifier: Modifier,
     currentUserId: String,
     ownProfile: UserProfile?,
+    ownAvatarPath: String?,
     isOnline: Boolean,
     appUpdateActive: Boolean,
     homeAnnouncement: String,
@@ -423,6 +432,8 @@ private fun LiveConversationListPane(
     onListSearchChange: (String) -> Unit,
     conversations: List<Conversation>,
     peerProfiles: Map<String, UserProfile>,
+    peerNicknames: Map<String, String>,
+    mutedPeerIds: Set<String>,
     blockedIds: Set<String>,
     selectedConvId: String?,
     actionError: String?,
@@ -437,7 +448,7 @@ private fun LiveConversationListPane(
     var copiedOwn by remember { mutableStateOf(false) }
     val shortId = ownProfile?.shortId.orEmpty()
 
-    Column(modifier = modifier.background(colors.surface)) {
+    Column(modifier = modifier.background(Color.White)) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -481,7 +492,19 @@ private fun LiveConversationListPane(
                             .testTag("live_open_profile_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            MessengerAvatar(label = ownProfile?.displayName ?: "U", size = 38.dp)
+                            val hasOwnAvatar = remember(ownAvatarPath) {
+                                !ownAvatarPath.isNullOrBlank() && File(ownAvatarPath).exists()
+                            }
+                            if (hasOwnAvatar) {
+                                AsyncImage(
+                                    model = File(ownAvatarPath!!),
+                                    contentDescription = "Open profile",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(38.dp).clip(CircleShape)
+                                )
+                            } else {
+                                MessengerAvatar(label = ownProfile?.displayName ?: "U", size = 38.dp)
+                            }
                         }
                     }
                 }
@@ -574,41 +597,62 @@ private fun LiveConversationListPane(
                 items(conversations, key = { it.id }) { conv ->
                     val peerId = conv.participants.firstOrNull { it != currentUserId }.orEmpty()
                     val peer = peerProfiles[peerId]
-                    val name = peer?.displayName ?: peerId.take(10)
+                    val name = peerNicknames[peerId]?.takeIf { it.isNotBlank() }
+                        ?: peer?.displayName
+                        ?: peerId.take(10)
                     val selected = conv.id == selectedConvId
+                    val activeOnline = isOnline && conv.status == "active" && peerId !in blockedIds
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .background(if (selected) colors.selectedBg else Color.Transparent)
+                            .background(if (selected) DmLavenderSoft else Color.Transparent)
                             .clickable { onSelectConversation(conv.id) }
                             .padding(12.dp)
                             .testTag("live_conv_${conv.id}"),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        MessengerAvatar(label = name, size = 44.dp)
+                        MessengerAvatar(
+                            label = name,
+                            size = 46.dp,
+                            showOnlineDot = activeOnline
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = colors.ink,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     modifier = Modifier.weight(1f)
-                                )
+                                ) {
+                                    Text(
+                                        text = name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = DmInkDark,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (peerId in mutedPeerIds) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.NotificationsOff,
+                                            contentDescription = "Muted",
+                                            tint = DmInkMuted,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
                                 Surface(
                                     color = when {
                                         peerId in blockedIds -> Color(0xFFFFF1ED)
-                                        conv.status == "active" -> ChatboxSoftLavender
-                                        else -> colors.fieldBg
+                                        conv.status == "active" -> DmLavenderSoft
+                                        else -> DmIncomingBubbleBg
                                     },
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text(
                                         text = when {
@@ -616,8 +660,8 @@ private fun LiveConversationListPane(
                                             else -> conv.status.uppercase()
                                         },
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (peerId in blockedIds) ChatboxErrorInk else ChatboxPrimary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        color = if (peerId in blockedIds) ChatboxErrorInk else DmLavenderDeep,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -626,7 +670,7 @@ private fun LiveConversationListPane(
                                     ?: peer?.about?.takeIf { it.isNotEmpty() }
                                     ?: "Chatbox contact",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = colors.inkMuted,
+                                color = DmInkMuted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -675,7 +719,9 @@ private fun LiveThreadPane(
     userDisplayName: String,
     conversation: Conversation,
     peerProfile: UserProfile?,
+    peerNickname: String?,
     peerUid: String,
+    isMuted: Boolean,
     isBlockedByMe: Boolean,
     isOnline: Boolean,
     oneMinAutoReplyEnabled: Boolean,
@@ -684,6 +730,7 @@ private fun LiveThreadPane(
     onSetPeerLocationAllowed: (Boolean) -> Unit,
     quickReaction: String,
     showBack: Boolean,
+    openSearchSignal: Int,
     liveChatRepo: LiveChatRepository,
     onBack: () -> Unit,
     onToggleDetails: () -> Unit,
@@ -710,21 +757,33 @@ private fun LiveThreadPane(
         seen.values.toList()
     }
 
-    var draft by remember { mutableStateOf("") }
-    var busySending by remember { mutableStateOf(false) }
-    var threadError by remember { mutableStateOf<String?>(null) }
-    var lightboxUrl by remember { mutableStateOf<String?>(null) }
-    var showReactionPicker by remember { mutableStateOf(false) }
-    var searchOpen by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
+    var draft by remember(conversation.id) { mutableStateOf("") }
+    var busySending by remember(conversation.id) { mutableStateOf(false) }
+    var threadError by remember(conversation.id) { mutableStateOf<String?>(null) }
+    var lightboxUrl by remember(conversation.id) { mutableStateOf<String?>(null) }
+    var showReactionPicker by remember(conversation.id) { mutableStateOf(false) }
+    var searchOpen by remember(conversation.id) { mutableStateOf(false) }
+    var searchQuery by remember(conversation.id) { mutableStateOf("") }
+    var lastHandledSearchSignal by remember(conversation.id) { mutableIntStateOf(openSearchSignal) }
+    var revealedTimestampId by remember(conversation.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(openSearchSignal, conversation.id) {
+        if (openSearchSignal > lastHandledSearchSignal) {
+            lastHandledSearchSignal = openSearchSignal
+            searchOpen = true
+        }
+    }
 
     // Voice recorder
     val recorder = remember { VoiceNoteRecorder(context) }
-    var isRecording by remember { mutableStateOf(false) }
-    var recordingMs by remember { mutableLongStateOf(0L) }
+    var isRecording by remember(conversation.id) { mutableStateOf(false) }
+    var recordingMs by remember(conversation.id) { mutableLongStateOf(0L) }
 
-    DisposableEffect(Unit) {
-        onDispose { recorder.stop() }
+    DisposableEffect(conversation.id) {
+        onDispose {
+            val (file, _) = recorder.stop()
+            runCatching { file?.delete() }
+        }
     }
 
     LaunchedEffect(isRecording) {
@@ -742,7 +801,9 @@ private fun LiveThreadPane(
     var companionBusy by remember(conversation.id) { mutableStateOf(false) }
     var showLocationConsentDialog by remember(conversation.id) { mutableStateOf(false) }
     val latestMsg = combinedMessages.lastOrNull()
-    val peerName = peerProfile?.displayName ?: peerUid.take(10)
+    val peerName = peerNickname?.takeIf { it.isNotBlank() }
+        ?: peerProfile?.displayName
+        ?: peerUid.take(10)
     LaunchedEffect(latestMsg?.id, oneMinAutoReplyEnabled, conversation.status, isOnline, peerName) {
         if (!oneMinAutoReplyEnabled || conversation.status != "active") {
             companionNotice = null
@@ -873,59 +934,110 @@ private fun LiveThreadPane(
     }
 
     val isPendingRecipient = conversation.status == "pending" && conversation.createdBy != currentUserId
+    val showPeerActive = isOnline && conversation.status == "active" && !isBlockedByMe
 
-    Column(modifier = modifier.background(colors.background)) {
-        // Header
-        Surface(color = colors.surface) {
+    Column(modifier = modifier.background(Color.White)) {
+        // White & Lavender Messenger-style Header
+        Surface(color = Color.White) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (showBack) {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("live_thread_back")) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = ChatboxPrimary)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back",
+                            tint = DmInkDark
+                        )
                     }
                 }
-                MessengerAvatar(label = peerName, size = 38.dp)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(peerName, style = MaterialTheme.typography.titleSmall, color = colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        text = peerProfile?.shortId?.takeIf { it.isNotEmpty() }?.let { "ID: $it · ${conversation.status}" } ?: conversation.status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.inkSubtle,
-                        maxLines = 1
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onToggleDetails() }
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .testTag("dm_header_peer_area")
+                ) {
+                    MessengerAvatar(
+                        label = peerName,
+                        size = 40.dp,
+                        showOnlineDot = showPeerActive
                     )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = peerName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = DmInkDark,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val statusSubtitle = when {
+                            isBlockedByMe -> "Blocked"
+                            !isOnline -> "Offline"
+                            conversation.status == "pending" -> "Chat request pending"
+                            conversation.status == "closed" -> "Conversation closed"
+                            isMuted -> "Active now · Muted"
+                            else -> "Active now"
+                        }
+                        Text(
+                            text = statusSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DmInkMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-                IconButton(onClick = { searchOpen = !searchOpen }) {
-                    Icon(Icons.Rounded.Search, contentDescription = "Search in thread", tint = ChatboxPrimary)
+                IconButton(onClick = onOpenCalls, modifier = Modifier.testTag("dm_header_call")) {
+                    Icon(Icons.Rounded.Phone, contentDescription = "Audio call", tint = DmLavenderAccent)
                 }
-                IconButton(onClick = onOpenCalls) {
-                    Icon(Icons.Rounded.Phone, contentDescription = "Calls", tint = ChatboxPrimary)
+                IconButton(onClick = onOpenCalls, modifier = Modifier.testTag("dm_header_video")) {
+                    Icon(Icons.Rounded.Videocam, contentDescription = "Video call", tint = DmLavenderAccent)
                 }
-                IconButton(onClick = onToggleDetails) {
-                    Icon(Icons.Rounded.Info, contentDescription = "Conversation details", tint = ChatboxPrimary)
+                IconButton(onClick = onToggleDetails, modifier = Modifier.testTag("dm_header_settings")) {
+                    Icon(Icons.Rounded.Settings, contentDescription = "Chat settings", tint = DmLavenderAccent)
                 }
             }
         }
-        HorizontalDivider(color = colors.border)
+        HorizontalDivider(color = DmHairlineBorder)
 
         if (searchOpen) {
-            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                ChatboxSearchField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = "Search messages in this chat…",
-                    testTag = "live_thread_search_input"
-                )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    ChatboxSearchField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = "Search messages in this chat…",
+                        testTag = "live_thread_search_input"
+                    )
+                }
+                IconButton(onClick = {
+                    searchOpen = false
+                    searchQuery = ""
+                }) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close search", tint = DmInkMuted)
+                }
             }
         }
 
         // Consent banners
         if (conversation.status == "pending") {
-            Surface(color = ChatboxSoftLavender, modifier = Modifier.fillMaxWidth()) {
+            Surface(color = DmLavenderSoft, modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -938,11 +1050,12 @@ private fun LiveThreadPane(
                             "Waiting for $peerName to accept your chat request."
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = colors.ink,
+                        color = DmInkDark,
                         modifier = Modifier.weight(1f)
                     )
                     if (isPendingRecipient) {
                         Button(
+                            colors = ButtonDefaults.buttonColors(containerColor = DmLavenderAccent),
                             onClick = {
                                 scope.launch {
                                     liveChatRepo.updateConversationStatus(conversation.id, "active")
@@ -980,8 +1093,9 @@ private fun LiveThreadPane(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .background(Color.White)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (messagesState.first.size >= 100 && hasMoreOlder && searchQuery.isEmpty()) {
                 item {
@@ -1002,66 +1116,141 @@ private fun LiveThreadPane(
                                 }
                             }
                         ) {
-                            Text(if (loadingOlder) "Loading older…" else "Load older messages")
+                            Text(if (loadingOlder) "Loading older…" else "Load older messages", color = DmLavenderDeep)
                         }
                     }
                 }
             }
 
-            items(displayedMessages, key = { it.id }) { msg ->
+            items(displayedMessages.size, key = { idx -> displayedMessages[idx].id }) { idx ->
+                val msg = displayedMessages[idx]
+                val prevMsg = displayedMessages.getOrNull(idx - 1)
+                val nextMsg = displayedMessages.getOrNull(idx + 1)
                 val isMe = msg.senderId == currentUserId
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = if (isMe) Alignment.End else Alignment.Start
-                ) {
-                    Surface(
-                        color = if (isMe) colors.outgoingBubble else colors.incomingBubble,
-                        shape = RoundedCornerShape(
-                            topStart = 18.dp,
-                            topEnd = 18.dp,
-                            bottomStart = if (isMe) 18.dp else 4.dp,
-                            bottomEnd = if (isMe) 4.dp else 18.dp
-                        ),
-                        modifier = Modifier.widthIn(max = 300.dp)
+
+                val prevTimeMs = prevMsg?.sentAt?.toDate()?.time ?: 0L
+                val currTimeMs = msg.sentAt?.toDate()?.time ?: 0L
+                val showDateDivider = idx == 0 ||
+                    (currTimeMs > 0L && prevTimeMs > 0L && (currTimeMs - prevTimeMs) > 15 * 60_000L)
+
+                val showPeerAvatar = !isMe && (nextMsg == null || nextMsg.senderId != msg.senderId)
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (showDateDivider) {
+                        Text(
+                            text = formatLiveGroupHeader(msg),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DmInkMuted,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .padding(vertical = 8.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+                        verticalAlignment = Alignment.Bottom
                     ) {
+                        if (!isMe) {
+                            if (showPeerAvatar) {
+                                MessengerAvatar(
+                                    label = peerName,
+                                    size = 28.dp,
+                                    modifier = Modifier.padding(end = 6.dp, bottom = 2.dp)
+                                )
+                            } else {
+                                Spacer(Modifier.width(34.dp))
+                            }
+                        }
+
                         Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
+                            modifier = Modifier.widthIn(max = 290.dp)
                         ) {
-                            if (!msg.imageUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = msg.imageUrl,
-                                    contentDescription = "Shared photo",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(190.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { lightboxUrl = msg.imageUrl }
-                                )
-                            }
-                            if (!msg.audioUrl.isNullOrBlank()) {
-                                VoiceNoteBubblePlayer(
-                                    audioUrl = msg.audioUrl,
-                                    durationMs = msg.audioDurationMs,
-                                    isMe = isMe
-                                )
-                            }
-                            if (msg.body.isNotBlank()) {
+                            val isSoloEmoji = msg.imageUrl.isNullOrBlank() &&
+                                msg.audioUrl.isNullOrBlank() &&
+                                msg.body.trim().length <= 4 &&
+                                msg.body.trim().isNotEmpty() &&
+                                msg.body.trim().none { it.isLetterOrDigit() }
+
+                            if (isSoloEmoji) {
                                 Text(
-                                    text = msg.body,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (isMe) colors.outgoingText else colors.incomingText
+                                    text = msg.body.trim(),
+                                    fontSize = 34.sp,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .clickable {
+                                            revealedTimestampId = if (revealedTimestampId == msg.id) null else msg.id
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            } else {
+                                Surface(
+                                    color = if (isMe) DmLavenderAccent else DmIncomingBubbleBg,
+                                    shape = RoundedCornerShape(
+                                        topStart = 20.dp,
+                                        topEnd = 20.dp,
+                                        bottomStart = if (isMe) 20.dp else 6.dp,
+                                        bottomEnd = if (isMe) 6.dp else 20.dp
+                                    ),
+                                    modifier = Modifier
+                                        .clip(
+                                            RoundedCornerShape(
+                                                topStart = 20.dp,
+                                                topEnd = 20.dp,
+                                                bottomStart = if (isMe) 20.dp else 6.dp,
+                                                bottomEnd = if (isMe) 6.dp else 20.dp
+                                            )
+                                        )
+                                        .clickable {
+                                            revealedTimestampId = if (revealedTimestampId == msg.id) null else msg.id
+                                        }
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (!msg.imageUrl.isNullOrBlank()) {
+                                            AsyncImage(
+                                                model = msg.imageUrl,
+                                                contentDescription = "Shared photo",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(190.dp)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .clickable { lightboxUrl = msg.imageUrl }
+                                            )
+                                        }
+                                        if (!msg.audioUrl.isNullOrBlank()) {
+                                            VoiceNoteBubblePlayer(
+                                                audioUrl = msg.audioUrl,
+                                                durationMs = msg.audioDurationMs,
+                                                isMe = isMe
+                                            )
+                                        }
+                                        if (msg.body.isNotBlank()) {
+                                            Text(
+                                                text = msg.body,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (isMe) Color.White else DmInkDark
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (revealedTimestampId == msg.id || (msg.pendingWrites && !isOnline)) {
+                                Text(
+                                    text = formatLiveTimestamp(msg, isOnline),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DmInkMuted,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
                     }
-                    Text(
-                        text = formatLiveTimestamp(msg, isOnline),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.inkSubtle,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
                 }
             }
         }
@@ -1142,7 +1331,7 @@ private fun LiveThreadPane(
                             },
                             modifier = Modifier.testTag("live_saira_companion_send")
                         ) {
-                            Icon(Icons.Rounded.Send, contentDescription = "Ask Saira", tint = ChatboxPrimary)
+                            Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Ask Saira", tint = ChatboxPrimary)
                         }
                     }
                 }
@@ -1174,7 +1363,7 @@ private fun LiveThreadPane(
             }
         }
 
-        // Composer / Voice Recorder
+        // Composer / Voice Recorder (White & Lavender Messenger-style bar)
         val canSend = conversation.status == "active" && !isBlockedByMe
         if (isRecording) {
             VoiceRecordingBar(
@@ -1210,14 +1399,14 @@ private fun LiveThreadPane(
                 }
             )
         } else {
-            HorizontalDivider(color = colors.border)
+            HorizontalDivider(color = DmHairlineBorder)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                    .background(Color.White)
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 IconButton(
                     enabled = canSend && isOnline && !busySending,
@@ -1228,7 +1417,7 @@ private fun LiveThreadPane(
                     },
                     modifier = Modifier.testTag("live_image_picker_button")
                 ) {
-                    Icon(Icons.Rounded.Image, contentDescription = "Send compressed photo", tint = ChatboxPrimary)
+                    Icon(Icons.Rounded.Image, contentDescription = "Send compressed photo", tint = DmLavenderAccent)
                 }
 
                 IconButton(
@@ -1243,7 +1432,7 @@ private fun LiveThreadPane(
                     },
                     modifier = Modifier.testTag("live_record_audio_button")
                 ) {
-                    Icon(Icons.Rounded.Mic, contentDescription = "Record voice note", tint = ChatboxPrimary)
+                    Icon(Icons.Rounded.Mic, contentDescription = "Record voice note", tint = DmLavenderAccent)
                 }
 
                 IconButton(
@@ -1262,25 +1451,66 @@ private fun LiveThreadPane(
                     Icon(
                         imageVector = Icons.Rounded.MyLocation,
                         contentDescription = "Share Live Location with consent",
-                        tint = if (liveLocationEnabled && peerLocationAllowed) ChatboxUpdateGreen else ChatboxPrimary
+                        tint = if (liveLocationEnabled && peerLocationAllowed) ChatboxUpdateGreen else DmLavenderAccent
                     )
                 }
 
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it.take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH) },
-                    enabled = canSend && !busySending,
-                    placeholder = {
-                        Text(
-                            if (canSend) "Message $peerName…" else "Messaging locked until active"
-                        )
-                    },
-                    singleLine = true,
+                // Clean Pill Input (White/Soft Lavender with Emoji Picker button inside)
+                Surface(
                     shape = CircleShape,
+                    color = DmIncomingBubbleBg,
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("live_message_input")
-                )
+                        .height(44.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 14.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (draft.isEmpty()) {
+                                Text(
+                                    text = if (canSend) "Message" else "Messaging locked",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = DmInkMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            BasicTextField(
+                                value = draft,
+                                onValueChange = { draft = it.take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH) },
+                                enabled = canSend && !busySending,
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = DmInkDark),
+                                cursorBrush = SolidColor(DmLavenderAccent),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("live_message_input")
+                            )
+                        }
+                        IconButton(
+                            onClick = { showReactionPicker = !showReactionPicker },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .testTag("live_emoji_picker_toggle")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SentimentSatisfiedAlt,
+                                contentDescription = "Pick quick reaction",
+                                tint = DmLavenderAccent,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.width(4.dp))
 
                 if (draft.isBlank()) {
                     Surface(
@@ -1294,13 +1524,13 @@ private fun LiveThreadPane(
                             }
                         },
                         shape = CircleShape,
-                        color = ChatboxSoftLavender,
+                        color = DmLavenderSoft,
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(44.dp)
                             .testTag("live_quick_reaction_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text(quickReaction)
+                            Text(text = quickReaction, fontSize = 20.sp)
                         }
                     }
                 } else {
@@ -1321,9 +1551,9 @@ private fun LiveThreadPane(
                             }
                         },
                         shape = CircleShape,
-                        color = ChatboxPrimary,
+                        color = DmLavenderAccent,
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(44.dp)
                             .testTag("live_send_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {

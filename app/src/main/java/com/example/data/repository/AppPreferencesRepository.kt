@@ -38,6 +38,8 @@ class AppPreferencesRepository(private val context: Context) {
     private val aiFallbackModelKey = stringPreferencesKey("ai_fallback_model_v1")
     private val demoMessagesKey = stringPreferencesKey("demo_messages_v1")
     private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
+    private val dmPeerNicknamesKey = stringPreferencesKey("dm_peer_nicknames_v1")
+    private val dmMutedPeersKey = stringPreferencesKey("dm_muted_peers_v1")
 
     val loginLanguage: Flow<String> =
         context.appDataStore.data.map { prefs ->
@@ -158,6 +160,26 @@ class AppPreferencesRepository(private val context: Context) {
                 map[uid]?.takeIf { it.isNotBlank() }
             } catch (_: Exception) {
                 null
+            }
+        }
+
+    val dmPeerNicknames: Flow<Map<String, String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[dmPeerNicknamesKey] ?: return@map emptyMap()
+            try {
+                json.decodeFromString<Map<String, String>>(raw)
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+
+    val dmMutedPeers: Flow<Set<String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[dmMutedPeersKey] ?: return@map emptySet()
+            try {
+                json.decodeFromString<Set<String>>(raw)
+            } catch (_: Exception) {
+                emptySet()
             }
         }
 
@@ -287,6 +309,35 @@ class AppPreferencesRepository(private val context: Context) {
                 current[cleanUid] = path.trim()
             }
             prefs[profileAvatarsKey] = json.encodeToString(current)
+        }
+    }
+
+    suspend fun setDmPeerNickname(peerUid: String, nickname: String) {
+        val cleanUid = peerUid.trim()
+        if (cleanUid.isEmpty()) return
+        val cleanNick = nickname.trim().take(48)
+        context.appDataStore.edit { prefs ->
+            val current = prefs[dmPeerNicknamesKey]?.let {
+                runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull()
+            }.orEmpty().toMutableMap()
+            if (cleanNick.isEmpty()) {
+                current.remove(cleanUid)
+            } else {
+                current[cleanUid] = cleanNick
+            }
+            prefs[dmPeerNicknamesKey] = json.encodeToString(current)
+        }
+    }
+
+    suspend fun setDmPeerMuted(peerUid: String, muted: Boolean) {
+        val cleanUid = peerUid.trim()
+        if (cleanUid.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[dmMutedPeersKey]?.let {
+                runCatching { json.decodeFromString<Set<String>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = if (muted) current + cleanUid else current - cleanUid
+            prefs[dmMutedPeersKey] = json.encodeToString(updated)
         }
     }
 }

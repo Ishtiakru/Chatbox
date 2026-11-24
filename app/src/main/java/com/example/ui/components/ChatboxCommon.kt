@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Book
@@ -45,7 +46,6 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
@@ -302,24 +302,38 @@ private val messengerPalettes = listOf(
 fun MessengerAvatar(
     label: String,
     size: Dp = 40.dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showOnlineDot: Boolean = false
 ) {
     val clean = label.trim().ifEmpty { "U" }
     val initial = clean.take(1).uppercase()
     val palette = messengerPalettes[(clean.first().code) % messengerPalettes.size]
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(Brush.linearGradient(palette.first)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = initial,
-            color = palette.second,
-            fontWeight = FontWeight.Bold,
-            fontSize = (size.value * 0.4f).coerceAtLeast(12f).sp
-        )
+    Box(modifier = modifier.size(size)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(Brush.linearGradient(palette.first)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = initial,
+                color = palette.second,
+                fontWeight = FontWeight.Bold,
+                fontSize = (size.value * 0.4f).coerceAtLeast(12f).sp
+            )
+        }
+        if (showOnlineDot) {
+            val dotSize = (size * 0.28f).coerceIn(10.dp, 20.dp)
+            Box(
+                modifier = Modifier
+                    .size(dotSize)
+                    .align(Alignment.BottomEnd)
+                    .clip(CircleShape)
+                    .background(Color(0xFF1E8E3E))
+                    .border(2.dp, Color.White, CircleShape)
+            )
+        }
     }
 }
 
@@ -764,7 +778,7 @@ fun ProfileModalDialog(
                                 modifier = Modifier.testTag("profile_logout_button")
                             ) {
                                 Icon(
-                                    Icons.Rounded.Logout,
+                                    Icons.AutoMirrored.Rounded.Logout,
                                     contentDescription = "Log out",
                                     tint = ChatboxErrorInk,
                                     modifier = Modifier.size(18.dp)

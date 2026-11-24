@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.graphics.scale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.DemoCatalog
@@ -88,6 +89,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val liveLocationAllowedPeers: StateFlow<Set<String>> = prefs.sairaLiveLocationAllowedPeers
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
+    val dmPeerNicknames: StateFlow<Map<String, String>> = prefs.dmPeerNicknames
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    val dmMutedPeers: StateFlow<Set<String>> = prefs.dmMutedPeers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     val sairaRules: StateFlow<List<SairaNotificationRule>> = prefs.sairaNotificationRules
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -152,14 +159,17 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     fun syncSairaUserDirectory() {
         viewModelScope.launch {
             runCatching {
-                currentUser
-                    .filterNotNull()
+                val peersFlow = currentUser
                     .flatMapLatest { user ->
-                        liveChatRepo.observeUserConversations(user.uid).map { conversations ->
-                            conversations
-                                .flatMap { it.participants }
-                                .filter { it.isNotBlank() && it != user.uid }
-                                .distinct()
+                        if (user == null) {
+                            flowOf(emptyList())
+                        } else {
+                            liveChatRepo.observeUserConversations(user.uid).map { conversations ->
+                                conversations
+                                    .flatMap { it.participants }
+                                    .filter { it.isNotBlank() && it != user.uid }
+                                    .distinct()
+                            }
                         }
                     }
                     .distinctUntilChanged()
@@ -172,13 +182,19 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         }
                     }
-                    .collect { peers ->
-                        val directory = com.example.saira.SairaUserDirectory.build(
-                            self = _ownProfile.value?.toSairaDirectoryUser(isSelf = true),
+
+                combine(_ownProfile, peersFlow) { own, peers ->
+                    if (own == null && peers.isEmpty()) {
+                        emptyList()
+                    } else {
+                        com.example.saira.SairaUserDirectory.build(
+                            self = own?.toSairaDirectoryUser(isSelf = true),
                             peers = peers.mapNotNull { it?.toSairaDirectoryUser(isSelf = false) }
                         )
-                        prefs.saveSairaUserDirectory(directory)
                     }
+                }.distinctUntilChanged().collect { directory ->
+                    prefs.saveSairaUserDirectory(directory)
+                }
             }
         }
     }
@@ -202,8 +218,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
 
     private var lastLoadedUid: String? = null
+    private var pendingPhoneToLink: String? = null
 
     init {
+        syncSairaUserDirectory()
         viewModelScope.launch {
             currentUser.collect { user ->
                 if (user == null) {
@@ -235,7 +253,32 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
         viewModelScope.launch {
             liveChatRepo.ensureOwnProfile(user.uid, user.displayName)
-                .onSuccess { profile -> _ownProfile.value = profile }
+                .onSuccess { profile ->
+                    _ownProfile.value = profile
+                    val candidatePhone = pendingPhoneToLink?.trim()
+                        ?.takeIf {
+                            com.example.data.model.ChatboxConstants.VALID_PHONE_KEY_REGEX.matches(
+                                LiveChatRepository.normalizePhoneDigits(it)
+                            )
+                        }
+                    pendingPhoneToLink = null
+                    if (!candidatePhone.isNullOrBlank()) {
+                        val existingPhone = liveChatRepo.loadOwnProfileDetails(user.uid, profile.displayName)
+                            .getOrNull()?.second.orEmpty()
+                        if (existingPhone.isBlank()) {
+                            liveChatRepo.saveOwnWhatsAppProfile(
+                                uid = user.uid,
+                                currentShortId = profile.shortId,
+                                displayName = profile.displayName,
+                                about = profile.about,
+                                phoneNumber = candidatePhone,
+                                previousPhoneNumber = ""
+                            ).onSuccess { (updatedProfile, _) ->
+                                _ownProfile.value = updatedProfile
+                            }
+                        }
+                    }
+                }
         }
     }
 
@@ -287,7 +330,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                     val targetW = max(1, (decoded.width * scale).roundToInt())
                     val targetH = max(1, (decoded.height * scale).roundToInt())
                     val scaled = if (targetW != decoded.width || targetH != decoded.height) {
-                        Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
+                        decoded.scale(targetW, targetH).also {
                             if (it != decoded) decoded.recycle()
                         }
                     } else {
@@ -330,8 +373,19 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         _authError.value = null
     }
 
-    fun signInWithGoogle(activityContext: Context) {
+    fun queuePendingPhoneForSignIn(phone: String) {
+        val trimmed = phone.trim().take(com.example.data.model.ChatboxConstants.MAX_PHONE_LENGTH)
+        val digits = LiveChatRepository.normalizePhoneDigits(trimmed)
+        pendingPhoneToLink = if (com.example.data.model.ChatboxConstants.VALID_PHONE_KEY_REGEX.matches(digits)) {
+            trimmed
+        } else {
+            null
+        }
+    }
+
+    fun signInWithGoogle(activityContext: Context, phoneToLink: String = "") {
         if (_authLoading.value) return
+        if (phoneToLink.isNotBlank()) queuePendingPhoneForSignIn(phoneToLink)
         viewModelScope.launch {
             _authLoading.value = true
             _authError.value = null
@@ -347,8 +401,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun signInWithGoogleWithAccountPicker(activityContext: Context) {
+    fun signInWithGoogleWithAccountPicker(activityContext: Context, phoneToLink: String = "") {
         if (_authLoading.value) return
+        if (phoneToLink.isNotBlank()) queuePendingPhoneForSignIn(phoneToLink)
         viewModelScope.launch {
             _authLoading.value = true
             _authError.value = null
@@ -405,6 +460,14 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setPeerLocationAllowed(peerUid: String, allowed: Boolean) {
         viewModelScope.launch { prefs.setPeerLocationAllowed(peerUid, allowed) }
+    }
+
+    fun setDmPeerNickname(peerUid: String, nickname: String) {
+        viewModelScope.launch { prefs.setDmPeerNickname(peerUid, nickname) }
+    }
+
+    fun setDmPeerMuted(peerUid: String, muted: Boolean) {
+        viewModelScope.launch { prefs.setDmPeerMuted(peerUid, muted) }
     }
 
     fun saveSairaRules(rules: List<SairaNotificationRule>) {

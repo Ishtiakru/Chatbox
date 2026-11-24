@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.graphics.scale
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.Conversation
 import com.example.data.model.LiveMessage
@@ -196,6 +197,19 @@ class LiveChatRepository(private val context: Context) {
         }
 
         return try {
+            val existingPhoneSnap = if (newDigits.isNotEmpty() && ChatboxConstants.VALID_PHONE_KEY_REGEX.matches(newDigits)) {
+                val phoneRef = db.collection("phoneDirectory").document(newDigits)
+                val snap = phoneRef.get().await()
+                if (snap.exists() && snap.getString("uid") != uid) {
+                    return Result.failure(
+                        IllegalStateException("This phone number is already linked to another Chatbox account.")
+                    )
+                }
+                snap
+            } else {
+                null
+            }
+
             val shortId = if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(currentShortId)) {
                 currentShortId
             } else {
@@ -236,13 +250,7 @@ class LiveChatRepository(private val context: Context) {
 
             if (newDigits.isNotEmpty() && ChatboxConstants.VALID_PHONE_KEY_REGEX.matches(newDigits)) {
                 val phoneRef = db.collection("phoneDirectory").document(newDigits)
-                val existingSnap = phoneRef.get().await()
-                if (existingSnap.exists() && existingSnap.getString("uid") != uid) {
-                    return Result.failure(
-                        IllegalStateException("This phone number is already linked to another Chatbox account.")
-                    )
-                }
-                if (existingSnap.exists()) {
+                if (existingPhoneSnap?.exists() == true) {
                     phoneRef.update("displayName", cleanName).await()
                 } else {
                     phoneRef.set(mapOf("uid" to uid, "displayName" to cleanName)).await()
@@ -648,7 +656,7 @@ class LiveChatRepository(private val context: Context) {
         val targetW = max(1, (decoded.width * scale).roundToInt())
         val targetH = max(1, (decoded.height * scale).roundToInt())
         val scaled = if (targetW != decoded.width || targetH != decoded.height) {
-            Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
+            decoded.scale(targetW, targetH).also {
                 if (it != decoded) decoded.recycle()
             }
         } else decoded
