@@ -32,14 +32,22 @@ object SairaAiClient {
     /** Pre-warms App Check token and Gemini model instance so the first reply starts in 1-2s. */
     suspend fun warmUp() {
         withContext(Dispatchers.IO) {
+            val appContext = runCatching { FirebaseApp.getInstance().applicationContext }.getOrNull()
+            if (appContext != null) {
+                com.example.util.configureAppCheck(appContext, null)
+            }
             runCatching {
                 geminiProvider.warmUp(SairaPrompts.chatSystemInstruction)
             }
             runCatching {
                 withTimeoutOrNull(8_000L) {
                     val token = FirebaseAppCheck.getInstance().getAppCheckToken(false).await().token
-                    if (token.isBlank()) {
-                        FirebaseAppCheck.getInstance().getAppCheckToken(true).await()
+                    if (token.isBlank() || token == "eyJlcnJvciI6IlVOS05PV05fRVJST1IifQ==") {
+                        if (appContext != null) {
+                            com.example.util.refreshAppCheckToken(appContext, timeoutMs = 8_000L)
+                        } else {
+                            FirebaseAppCheck.getInstance().getAppCheckToken(true).await()
+                        }
                     }
                 }
             }

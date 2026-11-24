@@ -14,6 +14,7 @@ import com.example.data.model.ChatboxReportEntry
 import com.example.data.model.ChatboxThread
 import com.example.data.model.LocalSairaSessionData
 import com.example.data.model.LocalUserProfile
+import com.example.data.model.ScheduledCallEntry
 import com.example.data.model.WorldLanguages
 import com.example.saira.SairaDirectoryUser
 import com.example.saira.SairaNotificationRule
@@ -47,6 +48,8 @@ class AppPreferencesRepository(private val context: Context) {
     private val chatboxBackupPinKey = stringPreferencesKey("chatbox_backup_pin_v1")
     private val chatboxBlockedThreadsKey = stringPreferencesKey("chatbox_blocked_threads_v1")
     private val chatboxCallLogsKey = stringPreferencesKey("chatbox_call_logs_v1")
+    private val chatboxFavoriteThreadsKey = stringPreferencesKey("chatbox_favorite_threads_v1")
+    private val chatboxScheduledCallsKey = stringPreferencesKey("chatbox_scheduled_calls_v1")
     private val chatboxReportsKey = stringPreferencesKey("chatbox_reports_v1")
     private val localUserProfileKey = stringPreferencesKey("local_user_profile_v1")
     private val localSairaSessionsKey = stringPreferencesKey("local_saira_sessions_v1")
@@ -200,6 +203,29 @@ class AppPreferencesRepository(private val context: Context) {
             try {
                 json.decodeFromString<List<ChatboxCallEntry>>(raw)
                     .filterNot { it.id in ChatboxCatalog.DEMO_CALL_LOG_IDS }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    val chatboxFavoriteThreads: Flow<Set<String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxFavoriteThreadsKey] ?: return@map emptySet()
+            try {
+                json.decodeFromString<Set<String>>(raw)
+                    .filterNot { it in ChatboxCatalog.DEMO_THREAD_IDS }
+                    .toSet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+
+    val chatboxScheduledCalls: Flow<List<ScheduledCallEntry>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[chatboxScheduledCallsKey] ?: return@map emptyList()
+            try {
+                json.decodeFromString<List<ScheduledCallEntry>>(raw)
+                    .filterNot { it.threadId in ChatboxCatalog.DEMO_THREAD_IDS }
             } catch (_: Exception) {
                 emptyList()
             }
@@ -426,6 +452,31 @@ class AppPreferencesRepository(private val context: Context) {
         val encoded = json.encodeToString(entries.take(50))
         context.appDataStore.edit { prefs ->
             prefs[chatboxCallLogsKey] = encoded
+        }
+    }
+
+    suspend fun clearChatboxCallLogs() {
+        context.appDataStore.edit { prefs ->
+            prefs.remove(chatboxCallLogsKey)
+        }
+    }
+
+    suspend fun setChatboxThreadFavorite(threadId: String, favorite: Boolean) {
+        val clean = threadId.trim()
+        if (clean.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[chatboxFavoriteThreadsKey]?.let {
+                runCatching { json.decodeFromString<Set<String>>(it) }.getOrNull()
+            }.orEmpty()
+            val updated = if (favorite) current + clean else current - clean
+            prefs[chatboxFavoriteThreadsKey] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun saveScheduledCalls(entries: List<ScheduledCallEntry>) {
+        val encoded = json.encodeToString(entries.take(30))
+        context.appDataStore.edit { prefs ->
+            prefs[chatboxScheduledCallsKey] = encoded
         }
     }
 

@@ -73,6 +73,8 @@ class ChatboxDmRobolectricTest {
             val prefs = AppPreferencesRepository(context)
             prefs.saveChatboxThreads(emptyList())
             prefs.saveChatboxMessages(emptyMap())
+            prefs.clearChatboxCallLogs()
+            prefs.saveScheduledCalls(emptyList())
         }
     }
 
@@ -557,6 +559,52 @@ class ChatboxDmRobolectricTest {
         composeRule.onAllNodesWithText("Rahim", substring = true).fetchSemanticsNodes().let { nodes ->
             assertTrue("Expected created thread to include Rahim", nodes.isNotEmpty())
         }
+    }
+
+    @Test
+    fun `calls menu shows quick actions number or id search add button and zero demo users`() {
+        composeRule.setContent {
+            ChatboxRoot()
+        }
+
+        advancePastSplashAndEnterChatbox()
+        composeRule.onNodeWithTag("nav_calls").performClick()
+        composeRule.waitForIdle()
+
+        // Zero demo users in Calls
+        composeRule.onAllNodesWithText("Sazzad", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Maya", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Arif", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Nora", substring = true, ignoreCase = true).assertCountEquals(0)
+
+        // WhatsApp Calls style quick actions + Recent + Search bar + small Add button + FAB
+        composeRule.onNodeWithTag("calls_action_call").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_action_schedule").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_action_keypad").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_action_favorites").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_search_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_add_user_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_new_call_fab").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_empty_state").performScrollTo().assertIsDisplayed()
+
+        // Search by 6-digit user ID and tap small Add button -> Audio Call -> End call -> logged in Recent
+        composeRule.onNodeWithTag("calls_search_input").performTextInput("774411")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("calls_add_user_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("calls_added_user_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_added_audio_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("calls_active_call_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("calls_dialog_end").performClick()
+        composeRule.waitUntil(timeoutMillis = 3_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+            composeRule.onAllNodesWithText("774411", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onAllNodesWithTag("calls_empty_state").assertCountEquals(0)
     }
 
     @Test

@@ -122,6 +122,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val chatboxBackupPin by viewModel.chatboxBackupPin.collectAsState()
     val chatboxBlockedThreads by viewModel.chatboxBlockedThreads.collectAsState()
     val chatboxCallLogs by viewModel.chatboxCallLogs.collectAsState()
+    val chatboxFavoriteThreads by viewModel.chatboxFavoriteThreads.collectAsState()
+    val chatboxScheduledCalls by viewModel.chatboxScheduledCalls.collectAsState()
     val localSairaSessions by viewModel.localSairaSessions.collectAsState()
     val quickReaction by viewModel.quickReaction.collectAsState()
     val oneMinAutoReplyEnabled by viewModel.oneMinAutoReplyEnabled.collectAsState()
@@ -347,10 +349,21 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 isOnline = isOnline,
                                 appUpdateActive = appUpdate.active,
                                 callLogs = chatboxCallLogs,
+                                threads = chatboxThreads,
+                                favoriteThreadIds = chatboxFavoriteThreads,
+                                scheduledCalls = chatboxScheduledCalls,
                                 onOpenThread = { threadId ->
                                     viewModel.selectThread(threadId)
                                     viewModel.selectTab(AppTab.Core(CoreAppTab.CHATBOX))
                                 },
+                                onAddOrFindContact = { query ->
+                                    viewModel.openOrCreateDirectThread(query, "")
+                                },
+                                onLogCall = viewModel::logChatboxCall,
+                                onToggleFavorite = viewModel::toggleFavoriteThread,
+                                onScheduleCall = viewModel::scheduleCall,
+                                onRemoveScheduledCall = viewModel::removeScheduledCall,
+                                onClearCallLogs = viewModel::clearChatboxCallLogs,
                                 onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                 onBackToConversations = { viewModel.selectTab(AppTab.Core(CoreAppTab.CHATBOX)) }
                             )

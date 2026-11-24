@@ -26,6 +26,7 @@ import com.example.data.model.CoreAppTab
 import com.example.data.model.LocalSairaExchange
 import com.example.data.model.LocalSairaSessionData
 import com.example.data.model.LocalUserProfile
+import com.example.data.model.ScheduledCallEntry
 import com.example.data.model.SparkAppearance
 import com.example.data.model.SparkAppUpdate
 import com.example.data.model.SparkDynamicConfig
@@ -165,6 +166,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     val chatboxCallLogs: StateFlow<List<ChatboxCallEntry>> = prefs.chatboxCallLogs
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val chatboxFavoriteThreads: StateFlow<Set<String>> = prefs.chatboxFavoriteThreads
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    val chatboxScheduledCalls: StateFlow<List<ScheduledCallEntry>> = prefs.chatboxScheduledCalls
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val chatboxReports: StateFlow<List<ChatboxReportEntry>> = prefs.chatboxReports
@@ -1459,6 +1466,41 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             prefs.saveChatboxCallLogs(updatedLogs)
             prefs.saveChatboxMessages(currentMap)
         }
+    }
+
+    fun clearChatboxCallLogs() {
+        viewModelScope.launch { prefs.clearChatboxCallLogs() }
+    }
+
+    fun toggleFavoriteThread(threadId: String) {
+        val clean = threadId.trim()
+        if (clean.isEmpty()) return
+        val currentlyFav = clean in chatboxFavoriteThreads.value
+        viewModelScope.launch { prefs.setChatboxThreadFavorite(clean, !currentlyFav) }
+    }
+
+    fun scheduleCall(
+        threadId: String,
+        peerName: String,
+        isVideo: Boolean,
+        scheduledForLabel: String
+    ) {
+        val cleanName = peerName.trim().ifEmpty { "Chatbox Friend" }
+        val cleanTime = scheduledForLabel.trim().ifEmpty { "Today, 8:00 PM" }
+        val entry = ScheduledCallEntry(
+            id = "sched_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+            threadId = threadId,
+            peerName = cleanName,
+            isVideo = isVideo,
+            scheduledForLabel = cleanTime
+        )
+        val updated = listOf(entry) + chatboxScheduledCalls.value
+        viewModelScope.launch { prefs.saveScheduledCalls(updated) }
+    }
+
+    fun removeScheduledCall(callId: String) {
+        val updated = chatboxScheduledCalls.value.filterNot { it.id == callId }
+        viewModelScope.launch { prefs.saveScheduledCalls(updated) }
     }
 
     fun saveLocalSairaExchange(

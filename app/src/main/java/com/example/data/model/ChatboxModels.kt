@@ -142,6 +142,15 @@ data class ChatboxCallEntry(
 )
 
 @Serializable
+data class ScheduledCallEntry(
+    val id: String,
+    val threadId: String,
+    val peerName: String,
+    val isVideo: Boolean = false,
+    val scheduledForLabel: String
+)
+
+@Serializable
 data class ChatboxReportEntry(
     val id: String,
     val threadId: String,

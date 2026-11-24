@@ -121,6 +121,7 @@ import com.example.ui.theme.MetaOrbPurple
 import com.example.ui.viewmodel.SairaAutoReplyTestResult
 import com.example.util.AppCheckRefreshResult
 import com.example.util.applyManualDebugToken
+import com.example.util.getAppSigningShaFingerprints
 import com.example.util.getOrCreateLocalDebugToken
 import com.example.util.refreshAppCheckToken
 import kotlinx.coroutines.CancellationException
@@ -503,9 +504,14 @@ fun SairaAiScreen(
                     err.contains("app check", ignoreCase = true) ||
                     err.contains("appcheck", ignoreCase = true) ||
                     err.contains("attestation", ignoreCase = true) ||
+                    err.contains("sha-1", ignoreCase = true) ||
                     err.contains("backup ai", ignoreCase = true) ||
                     err.contains("quota", ignoreCase = true)
                 ) {
+                    var copiedSha by remember(err) { mutableStateOf(false) }
+                    val releaseSha = remember(err) {
+                        if (!BuildConfig.DEBUG) getAppSigningShaFingerprints(context) else null
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -528,6 +534,28 @@ fun SairaAiScreen(
                                 modifier = Modifier.testTag("saira_appcheck_debug_token_button")
                             ) {
                                 Text("Debug Token")
+                            }
+                        } else if (releaseSha != null) {
+                            OutlinedButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    clipboard?.setPrimaryClip(
+                                        ClipData.newPlainText(
+                                            "Chatbox Signing SHA",
+                                            "SHA-1: ${releaseSha.sha1}\nSHA-256: ${releaseSha.sha256}"
+                                        )
+                                    )
+                                    copiedSha = true
+                                },
+                                modifier = Modifier.testTag("saira_appcheck_copy_sha_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (copiedSha) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (copiedSha) "SHA কপি হয়েছে" else "SHA-1 কপি")
                             }
                         }
                         TextButton(
@@ -849,7 +877,9 @@ fun SairaAiScreen(
             initialModel = fallbackModel,
             onSave = { k, key, url, mod ->
                 onSaveFallbackConfig(k, key, url, mod)
+                errorMessage = null
                 showBackupKeyDialog = false
+                scope.launch { SairaAiClient.resetCooldowns() }
             },
             onDismiss = { showBackupKeyDialog = false }
         )

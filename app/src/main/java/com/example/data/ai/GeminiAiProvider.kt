@@ -76,19 +76,37 @@ class GeminiAiProvider(
             }
             if (isAppCheckError(e)) {
                 Log.w(TAG, "App Check error on primary generate(); force-refreshing token and retrying once.", e)
-                forceRefreshAppCheckToken()
-                return try {
-                    withTimeout(TOTAL_TIMEOUT_MS) {
-                        val chat: Chat = model(modelName, systemInstruction).startChat(history = convertedHistory)
-                        chat.sendMessage(prompt).text?.trim().orEmpty()
+                val appContext = runCatching {
+                    com.google.firebase.FirebaseApp.getInstance().applicationContext
+                }.getOrNull()
+                when (val refresh = forceRefreshAppCheckToken(appContext)) {
+                    is com.example.util.AppCheckRefreshResult.Failure -> {
+                        throw AiUnavailableException(refresh.message, e)
                     }
-                } catch (retryErr: TimeoutCancellationException) {
-                    throw AiUnavailableException("Gemini took too long to respond. Please try again.", retryErr)
-                } catch (retryErr: CancellationException) {
-                    throw retryErr
-                } catch (retryErr: Throwable) {
-                    Log.e(TAG, "Gemini failed again after App Check refresh", retryErr)
-                    throw retryErr
+                    is com.example.util.AppCheckRefreshResult.Success -> {
+                        return try {
+                            withTimeout(TOTAL_TIMEOUT_MS) {
+                                val chat: Chat = model(modelName, systemInstruction).startChat(history = convertedHistory)
+                                chat.sendMessage(prompt).text?.trim().orEmpty()
+                            }
+                        } catch (retryErr: TimeoutCancellationException) {
+                            throw AiUnavailableException("Gemini took too long to respond. Please try again.", retryErr)
+                        } catch (retryErr: CancellationException) {
+                            throw retryErr
+                        } catch (retryErr: Throwable) {
+                            Log.e(TAG, "Gemini failed again after App Check refresh", retryErr)
+                            if (isAppCheckError(retryErr)) {
+                                throw AiUnavailableException(
+                                    com.example.util.buildAppCheckDiagnosticMessage(
+                                        appContext,
+                                        retryErr.localizedMessage ?: "Firebase App Check token is invalid."
+                                    ),
+                                    retryErr
+                                )
+                            }
+                            throw retryErr
+                        }
+                    }
                 }
             }
             Log.w(TAG, "Primary model '$modelName' failed; attempting fallback '$fallbackModelName'", e)
@@ -179,12 +197,31 @@ class GeminiAiProvider(
                 if (AiErrorClassifier.isQuotaExhausted(e)) {
                     throw AiQuotaExhaustedException("Gemini quota exhausted", e)
                 }
-                if (!emittedAny && !refreshedAppCheckOnce && isAppCheckError(e)) {
-                    refreshedAppCheckOnce = true
-                    Log.w(TAG, "App Check error during stream(); force-refreshing token and retrying.", e)
-                    forceRefreshAppCheckToken()
-                    // Retry the same primary candidate once with a fresh App Check token
-                    continue
+                if (!emittedAny && isAppCheckError(e)) {
+                    val appContext = runCatching {
+                        com.google.firebase.FirebaseApp.getInstance().applicationContext
+                    }.getOrNull()
+                    if (!refreshedAppCheckOnce) {
+                        refreshedAppCheckOnce = true
+                        Log.w(TAG, "App Check error during stream(); force-refreshing token and retrying.", e)
+                        when (val refresh = forceRefreshAppCheckToken(appContext)) {
+                            is com.example.util.AppCheckRefreshResult.Success -> {
+                                // Retry primary candidate once with freshly issued App Check token
+                                continue
+                            }
+                            is com.example.util.AppCheckRefreshResult.Failure -> {
+                                throw AiUnavailableException(refresh.message, e)
+                            }
+                        }
+                    } else {
+                        throw AiUnavailableException(
+                            com.example.util.buildAppCheckDiagnosticMessage(
+                                appContext,
+                                e.localizedMessage ?: "Firebase App Check token is invalid."
+                            ),
+                            e
+                        )
+                    }
                 }
                 lastError = e
                 if (emittedAny) break
