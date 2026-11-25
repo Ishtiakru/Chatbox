@@ -18,7 +18,17 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.FirebaseException
+import com.google.firebase.FirebaseTooManyRequestsException
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.PhoneAuthCredential
+import com.google.firebase.auth.PhoneAuthOptions
+import com.google.firebase.auth.PhoneAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
@@ -31,6 +41,33 @@ sealed interface AuthResult {
     data class Success(val user: FirebaseUser) : AuthResult
     data object Cancelled : AuthResult
     data class Failure(val message: String) : AuthResult
+}
+
+/** Result of asking Firebase to send an SMS code. */
+sealed interface PhoneCodeResult {
+    data class CodeSent(
+        val verificationId: String,
+        val resendToken: PhoneAuthProvider.ForceResendingToken?
+    ) : PhoneCodeResult
+    /** Android auto-read the SMS (or instant verification) and already signed in. */
+    data class SignedIn(val user: FirebaseUser) : PhoneCodeResult
+    data class Failure(val message: String) : PhoneCodeResult
+}
+
+object PhoneNumbers {
+    /** "01712345678" / "8801712345678" / "+8801712345678" → "+8801712345678"; null if invalid. */
+    fun toE164(raw: String): String? {
+        val trimmed = raw.trim()
+        val digits = trimmed.filter { it.isDigit() }
+        val e164 = when {
+            trimmed.startsWith("+") -> "+$digits"
+            digits.startsWith("880") && digits.length == 13 -> "+$digits"
+            digits.startsWith("01") && digits.length == 11 -> "+88$digits"
+            digits.startsWith("1") && digits.length == 10 -> "+880$digits"
+            else -> return null
+        }
+        return if (e164.length in 9..16) e164 else null
+    }
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -52,6 +89,93 @@ class AuthRepository(private val context: Context) {
     }
 
     fun currentUser(): FirebaseUser? = auth.currentUser
+
+    /**
+     * Sends an SMS verification code via Firebase Phone Auth. Resolves once:
+     * code sent, instant/auto verification signed in, or failure.
+     */
+    suspend fun sendPhoneCode(
+        uiContext: Context,
+        phoneE164: String,
+        resendToken: PhoneAuthProvider.ForceResendingToken? = null
+    ): PhoneCodeResult {
+        val activity = uiContext.findActivity()
+            ?: return PhoneCodeResult.Failure("অ্যাপটি আবার খুলে চেষ্টা করুন।")
+        return suspendCancellableCoroutine { cont ->
+            val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+                    auth.signInWithCredential(credential)
+                        .addOnSuccessListener { res ->
+                            val user = res.user
+                            if (cont.isActive) {
+                                cont.resume(
+                                    if (user != null) PhoneCodeResult.SignedIn(user)
+                                    else PhoneCodeResult.Failure("Login সম্পূর্ণ হয়নি, আবার চেষ্টা করুন।")
+                                )
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            if (cont.isActive) cont.resume(PhoneCodeResult.Failure(friendlyPhoneError(e)))
+                        }
+                }
+
+                override fun onVerificationFailed(e: FirebaseException) {
+                    Log.w(TAG, "Phone verification failed", e)
+                    if (cont.isActive) cont.resume(PhoneCodeResult.Failure(friendlyPhoneError(e)))
+                }
+
+                override fun onCodeSent(
+                    verificationId: String,
+                    token: PhoneAuthProvider.ForceResendingToken
+                ) {
+                    if (cont.isActive) cont.resume(PhoneCodeResult.CodeSent(verificationId, token))
+                }
+            }
+            val builder = PhoneAuthOptions.newBuilder(auth)
+                .setPhoneNumber(phoneE164)
+                .setTimeout(60L, TimeUnit.SECONDS)
+                .setActivity(activity)
+                .setCallbacks(callbacks)
+            if (resendToken != null) builder.setForceResendingToken(resendToken)
+            runCatching { PhoneAuthProvider.verifyPhoneNumber(builder.build()) }
+                .onFailure { e ->
+                    if (cont.isActive) cont.resume(PhoneCodeResult.Failure(friendlyPhoneError(e)))
+                }
+        }
+    }
+
+    /** Verifies the 6-digit SMS code and signs in. */
+    suspend fun verifyPhoneCode(verificationId: String, code: String): AuthResult = try {
+        val credential = PhoneAuthProvider.getCredential(verificationId, code.trim())
+        val user = auth.signInWithCredential(credential).await().user
+        if (user != null) AuthResult.Success(user) else AuthResult.Failure("Login সম্পূর্ণ হয়নি।")
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AuthResult.Failure(friendlyPhoneError(e))
+    }
+
+    suspend fun updateDisplayName(name: String) {
+        val user = auth.currentUser ?: return
+        runCatching { user.updateProfile(UserProfileChangeRequest.Builder().setDisplayName(name).build()).await() }
+    }
+
+    private fun friendlyPhoneError(e: Throwable): String {
+        val msg = e.message.orEmpty()
+        return when {
+            e is FirebaseAuthInvalidCredentialsException && msg.contains("code", true) ->
+                "কোডটি ভুল বা মেয়াদ শেষ। আবার দেখে লিখুন বা নতুন কোড নিন।"
+            e is FirebaseAuthInvalidCredentialsException ->
+                "মোবাইল নম্বরটি সঠিক নয়। যেমন: 01712345678"
+            e is FirebaseTooManyRequestsException ->
+                "অনেকবার চেষ্টা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।"
+            msg.contains("BILLING", true) ->
+                "SMS পাঠানো এখন বন্ধ আছে (Firebase billing)। Admin-কে জানান।"
+            msg.contains("network", true) ->
+                "ইন্টারনেট সংযোগ চেক করে আবার চেষ্টা করুন।"
+            else -> "কোড পাঠানো/যাচাই করা যায়নি। আবার চেষ্টা করুন। (${msg.take(80)})"
+        }
+    }
 
     /**
      * Keeps a silent sign-in limited to the single authorized account that Credential Manager
@@ -297,3 +421,5 @@ class AuthRepository(private val context: Context) {
         return AuthResult.Success(user)
     }
 }
+
+private const val TAG = "AuthRepository"

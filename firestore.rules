@@ -6,7 +6,16 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null && ('email_verified' in request.auth.token && request.auth.token.email_verified == true);
+      return request.auth != null && (
+        ('email_verified' in request.auth.token && request.auth.token.email_verified == true)
+        || request.auth.token.firebase.sign_in_provider == 'phone'
+      );
+    }
+
+    // Phone-auth users may only claim their own SMS-verified number.
+    function ownsPhoneKey(phoneKey) {
+      return request.auth.token.firebase.sign_in_provider != 'phone'
+        || request.auth.token.phone_number == '+' + phoneKey;
     }
 
     function incoming() {
@@ -333,6 +342,7 @@ service cloud.firestore {
       allow list: if false;
       allow create: if isSignedIn()
         && isValidPhoneKey(phoneKey)
+        && ownsPhoneKey(phoneKey)
         && isValidDirectoryEntry(incoming());
       allow update: if isSignedIn()
         && isValidPhoneKey(phoneKey)

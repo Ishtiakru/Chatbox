@@ -218,7 +218,9 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 onLoginWithCredentials = viewModel::loginWithCredentials,
                 onCreateAccount = viewModel::createAccountWithCredentials,
                 onResetPassword = viewModel::resetAccountPassword,
-                onGoogleSignIn = viewModel::signInWithGoogleFromLogin
+                onGoogleSignIn = viewModel::signInWithGoogleFromLogin,
+                onSendPhoneCode = viewModel::sendPhoneLoginCode,
+                onVerifyPhoneCode = viewModel::verifyPhoneLoginCode
             )
             return@ChatboxTheme
         }

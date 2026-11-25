@@ -82,6 +82,8 @@ import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.data.model.WorldLanguages
 import com.example.data.repository.AuthResult
+import com.example.data.repository.PhoneCodeResult
+import com.google.firebase.auth.PhoneAuthProvider
 import com.example.ui.components.NoticeBanner
 import com.example.ui.theme.LoginBg
 import com.example.ui.theme.LoginBrandBlue
@@ -100,7 +102,9 @@ fun AuthLoginScreen(
     onLoginWithCredentials: suspend (identifier: String, password: String) -> Result<Unit>,
     onCreateAccount: suspend (fullName: String, identifier: String, password: String) -> Result<Unit>,
     onResetPassword: suspend (identifier: String, newPassword: String) -> Result<String>,
-    onGoogleSignIn: suspend (Context) -> AuthResult
+    onGoogleSignIn: suspend (Context) -> AuthResult,
+    onSendPhoneCode: (suspend (Context, String, String, PhoneAuthProvider.ForceResendingToken?) -> PhoneCodeResult)? = null,
+    onVerifyPhoneCode: (suspend (String, String, String) -> AuthResult)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -116,6 +120,7 @@ fun AuthLoginScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showForgotDialog by remember { mutableStateOf(false) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
+    var showPhoneOtpDialog by remember { mutableStateOf(false) }
 
     val languageLabel = remember(selectedLanguageCode) {
         WorldLanguages.displayLabel(selectedLanguageCode)
@@ -244,6 +249,32 @@ fun AuthLoginScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (onSendPhoneCode != null && onVerifyPhoneCode != null) {
+                    Button(
+                        onClick = { showPhoneOtpDialog = true },
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = LoginBrandBlue,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("login_phone_otp_button")
+                    ) {
+                        Text(
+                            text = "📱 মোবাইল নম্বর দিয়ে Login (SMS কোড)",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        text = "বন্ধুদের মেসেজ পাঠাতে ও খুঁজে পেতে এটি দিয়ে login করুন",
+                        color = LoginInkMuted,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 OutlinedTextField(
                     value = identifier,
                     onValueChange = {
@@ -720,4 +751,133 @@ fun AuthLoginScreen(
             }
         )
     }
+
+    if (showPhoneOtpDialog && onSendPhoneCode != null && onVerifyPhoneCode != null) {
+        PhoneOtpDialog(
+            onSendCode = onSendPhoneCode,
+            onVerifyCode = onVerifyPhoneCode,
+            onDismiss = { showPhoneOtpDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun PhoneOtpDialog(
+    onSendCode: suspend (Context, String, String, PhoneAuthProvider.ForceResendingToken?) -> PhoneCodeResult,
+    onVerifyCode: suspend (String, String, String) -> AuthResult,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var verificationId by remember { mutableStateOf<String?>(null) }
+    var resendToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var info by remember { mutableStateOf<String?>(null) }
+
+    fun send(resend: Boolean) {
+        if (busy) return
+        error = null
+        info = null
+        scope.launch {
+            busy = true
+            when (val r = onSendCode(context, phone, name, if (resend) resendToken else null)) {
+                is PhoneCodeResult.CodeSent -> {
+                    verificationId = r.verificationId
+                    resendToken = r.resendToken
+                    info = "কোড পাঠানো হয়েছে। SMS-এ আসা ৬ সংখ্যার কোড লিখুন।"
+                }
+                is PhoneCodeResult.SignedIn -> onDismiss()
+                is PhoneCodeResult.Failure -> error = r.message
+            }
+            busy = false
+        }
+    }
+
+    fun verify() {
+        val id = verificationId ?: return
+        if (busy) return
+        error = null
+        scope.launch {
+            busy = true
+            when (val r = onVerifyCode(id, code, name)) {
+                is AuthResult.Success -> onDismiss()
+                is AuthResult.Failure -> error = r.message
+                AuthResult.Cancelled -> Unit
+            }
+            busy = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        modifier = Modifier.testTag("phone_otp_dialog"),
+        title = { Text("মোবাইল নম্বর দিয়ে Login") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (verificationId == null) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it.take(40) },
+                        label = { Text("আপনার নাম") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_name_input")
+                    )
+                    OutlinedTextField(
+                        value = phone,
+                        onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' }.take(16) },
+                        label = { Text("মোবাইল নম্বর (যেমন 01712345678)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Phone,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { send(false) }),
+                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_phone_input")
+                    )
+                } else {
+                    Text("$phone নম্বরে কোড পাঠানো হয়েছে", color = LoginInkMuted, fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.filter { c -> c.isDigit() }.take(6) },
+                        label = { Text("৬ সংখ্যার কোড") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { verify() }),
+                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_code_input")
+                    )
+                    TextButton(
+                        onClick = { send(true) },
+                        enabled = !busy,
+                        modifier = Modifier.testTag("phone_otp_resend_button")
+                    ) { Text("কোড আসেনি? আবার পাঠান") }
+                }
+                info?.let { NoticeBanner(text = it) }
+                error?.let { NoticeBanner(text = it, isError = true) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !busy && (if (verificationId == null) phone.length >= 10 else code.length == 6),
+                colors = ButtonDefaults.buttonColors(containerColor = LoginBrandBlue),
+                onClick = { if (verificationId == null) send(false) else verify() },
+                modifier = Modifier.testTag("phone_otp_submit_button")
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                } else {
+                    Text(if (verificationId == null) "কোড পাঠান" else "Login")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("বাতিল") }
+        }
+    )
 }

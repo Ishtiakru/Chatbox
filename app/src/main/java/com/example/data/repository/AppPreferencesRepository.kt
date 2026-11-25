@@ -57,7 +57,9 @@ class AppPreferencesRepository(private val context: Context) {
     private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
     private val dmPeerNicknamesKey = stringPreferencesKey("dm_peer_nicknames_v1")
     private val dmMutedPeersKey = stringPreferencesKey("dm_muted_peers_v1")
-    private val hasCompletedLoginKey = booleanPreferencesKey("has_completed_login_v1")
+    // v2: users who only had the old local-only login see the login screen once more
+    // so they can sign in for real (mobile number + SMS code).
+    private val hasCompletedLoginKey = booleanPreferencesKey("has_completed_login_v2")
     private val accountIdentifierKey = stringPreferencesKey("account_identifier_v1")
     private val accountPasswordHashKey = stringPreferencesKey("account_password_hash_v1")
 

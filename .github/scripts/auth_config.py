@@ -65,7 +65,10 @@ def summarize(cfg: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", required=True)
-    ap.add_argument("--mode", choices=["inspect", "enable-phone"], required=True)
+    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha"], required=True)
+    ap.add_argument("--sha1", default="")
+    ap.add_argument("--sha256", default="")
+    ap.add_argument("--package", default="com.aistudio.chatbox.kxmpzq")
     ap.add_argument("--project", default="gen-lang-client-0251556445")
     ap.add_argument("--test-number", default="")
     ap.add_argument("--test-code", default="")
@@ -75,6 +78,30 @@ def main():
     creds.refresh(AuthTransportRequest())
     tok = creds.token
     cfg_url = f"{IDT}/projects/{a.project}/config"
+
+    if a.mode == "sha":
+        fb = "https://firebase.googleapis.com/v1beta1"
+        st, apps = call(tok, "GET", f"{fb}/projects/{a.project}/androidApps?pageSize=100")
+        if st != 200:
+            notice(f"androidApps HTTP {st}: {apps}")
+            sys.exit(1)
+        app = next((x for x in apps.get("apps", []) if x.get("packageName") == a.package), None)
+        if not app:
+            notice(f"no android app for {a.package}; apps={[x.get('packageName') for x in apps.get('apps', [])]}")
+            sys.exit(1)
+        name = app["name"]
+        st, shas = call(tok, "GET", f"{fb}/{name}/sha")
+        have = {c.get("shaHash", "").lower() for c in shas.get("certificates", [])}
+        added = []
+        for h, t in ((a.sha1, "SHA_1"), (a.sha256, "SHA_256")):
+            h = h.replace(":", "").lower()
+            if h and h not in have:
+                st2, out = call(tok, "POST", f"{fb}/{name}/sha", {"shaHash": h, "certType": t})
+                added.append(f"{t}:{'OK' if st2 == 200 else f'HTTP{st2} {out}'}")
+        notice(f"sha app={app.get('appId')} registered={len(have)} added={added or 'none'} "
+               f"release_sha1_present={a.sha1.replace(':','').lower() in have} "
+               f"release_sha256_present={a.sha256.replace(':','').lower() in have}")
+        return
 
     st, cfg = call(tok, "GET", cfg_url)
     if st != 200:
