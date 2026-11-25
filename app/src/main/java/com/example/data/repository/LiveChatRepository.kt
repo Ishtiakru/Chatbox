@@ -432,28 +432,61 @@ class LiveChatRepository(private val context: Context) {
      * (uid + current display name + real short ID). Returns null when no
      * account is linked to the identifier.
      */
-    suspend fun lookupPeerByIdentifier(rawIdentifier: String): UserProfile? {
-        val trimmed = rawIdentifier.trim()
-        val compact = trimmed.removePrefix("#").replace(Regex("\\s+"), "")
-        if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compact)) {
-            return lookupPeerByShortId(compact)
-        }
-        if (!Regex("^[\\d+\\-\\s()]{7,24}$").matches(trimmed)) return null
-        return try {
-            var peerUid = ""
-            for (candidate in buildPhoneLookupCandidates(trimmed)) {
-                val snap = db.collection("phoneDirectory").document(candidate).get(Source.SERVER).await()
-                if (snap.exists()) {
-                    peerUid = snap.getString("uid").orEmpty()
-                    break
-                }
-            }
-            if (!ChatboxConstants.VALID_ID_REGEX.matches(peerUid)) return null
-            fetchPeerProfile(peerUid)
+    suspend fun lookupPeerByIdentifier(rawIdentifier: String): UserProfile? =
+        try {
+            findPeer(rawIdentifier).getOrNull()
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
-            null
+        }
+
+    /**
+     * Server lookup that distinguishes "no such account" (success(null)) from
+     * a failed request (failure) so the UI can say "not found" honestly.
+     */
+    suspend fun findPeer(rawIdentifier: String): Result<UserProfile?> {
+        val trimmed = rawIdentifier.trim()
+        val compact = trimmed.removePrefix("#").replace(Regex("\\s+"), "")
+        return try {
+            val peerUid: String
+            val fallbackName: String
+            if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compact)) {
+                val snap = db.collection("shortIds").document(compact).get(Source.SERVER).await()
+                if (!snap.exists()) return Result.success(null)
+                peerUid = snap.getString("uid").orEmpty()
+                fallbackName = snap.getString("displayName").orEmpty()
+            } else if (Regex("^[\\d+\\-\\s()]{7,24}$").matches(trimmed)) {
+                var uid = ""
+                var name = ""
+                for (candidate in buildPhoneLookupCandidates(trimmed)) {
+                    val snap = db.collection("phoneDirectory").document(candidate).get(Source.SERVER).await()
+                    if (snap.exists()) {
+                        uid = snap.getString("uid").orEmpty()
+                        name = snap.getString("displayName").orEmpty()
+                        break
+                    }
+                }
+                if (uid.isEmpty()) return Result.success(null)
+                peerUid = uid
+                fallbackName = name
+            } else {
+                return Result.success(null)
+            }
+            if (!ChatboxConstants.VALID_ID_REGEX.matches(peerUid)) return Result.success(null)
+            val profile = db.collection("profiles").document(peerUid).get(Source.SERVER).await()
+            if (!profile.exists()) return Result.success(null)
+            Result.success(
+                UserProfile(
+                    uid = peerUid,
+                    displayName = profile.getString("displayName")?.takeIf { it.isNotBlank() }
+                        ?: fallbackName.ifBlank { "Chatbox User" },
+                    shortId = profile.getString("shortId").orEmpty(),
+                    about = profile.getString("about").orEmpty()
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 

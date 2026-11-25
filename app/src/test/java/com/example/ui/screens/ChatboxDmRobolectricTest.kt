@@ -23,6 +23,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.ChatboxCatalog
@@ -523,42 +524,26 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("chatbox_search_toggle_button").performClick()
         composeRule.waitForIdle()
 
-        // Search by 6-digit ID "685331" and add/open DM
+        // Search by 6-digit ID: WhatsApp-style server lookup. Signed out in tests,
+        // so the card must ask the user to log in — and NO fake thread is created.
         composeRule.onNodeWithTag("chatbox_search_input").performTextInput("685331")
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("chatbox_search_add_user_button").assertIsDisplayed().performClick()
-        composeRule.waitUntil(timeoutMillis = 3_000) {
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithTag("chatbox_thread_screen").fetchSemanticsNodes().isNotEmpty()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+            composeRule.onAllNodesWithTag("chatbox_search_login_required").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitForIdle()
-
-        // Opens DM thread directly without any Permission denied error
+        composeRule.onNodeWithTag("chatbox_search_login_required").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("chatbox_search_add_user_button").assertCountEquals(0)
         composeRule.onAllNodesWithText("Permission denied", substring = true, ignoreCase = true)
             .assertCountEquals(0)
-        composeRule.onNodeWithTag("chatbox_thread_screen").assertIsDisplayed()
-        composeRule.onAllNodesWithText("685331", substring = true).fetchSemanticsNodes().let { nodes ->
-            assertTrue("Expected created thread to include 685331", nodes.isNotEmpty())
-        }
+        composeRule.onAllNodesWithText("Chatbox Friend", substring = true).assertCountEquals(0)
 
-        // Navigate back -> search by user name "Rahim" and add
-        composeRule.onNodeWithTag("chatbox_thread_back").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("chatbox_search_toggle_button").performClick()
-        composeRule.waitForIdle()
+        // Name search never invents a contact; it explains how to find new people.
+        composeRule.onNodeWithTag("chatbox_search_input").performTextClearance()
         composeRule.onNodeWithTag("chatbox_search_input").performTextInput("Rahim")
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("chatbox_search_add_user_button").assertIsDisplayed().performClick()
-        composeRule.waitUntil(timeoutMillis = 3_000) {
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithTag("chatbox_thread_screen").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("chatbox_thread_screen").assertIsDisplayed()
-        composeRule.onAllNodesWithText("Rahim", substring = true).fetchSemanticsNodes().let { nodes ->
-            assertTrue("Expected created thread to include Rahim", nodes.isNotEmpty())
-        }
+        composeRule.onNodeWithTag("chatbox_search_hint").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("chatbox_search_add_user_button").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("chatbox_thread_screen").assertCountEquals(0)
     }
 
     @Test

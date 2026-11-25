@@ -313,7 +313,10 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 onToggleBlock = viewModel::toggleThreadBlocked,
                                 onSubmitReport = viewModel::submitThreadReport,
                                 onLogCall = viewModel::logChatboxCall,
-                                onAppUpdateClick = { viewModel.openUpdateDialog(true) }
+                                onAppUpdateClick = { viewModel.openUpdateDialog(true) },
+                                onSearchPeer = viewModel::searchPeer,
+                                onOpenPeer = viewModel::openChatWithPeer,
+                                onRequestLogin = viewModel::requestLogin
                             )
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,

@@ -27,6 +27,7 @@ import com.example.data.model.CoreAppTab
 import com.example.data.model.LocalSairaExchange
 import com.example.data.model.LocalSairaSessionData
 import com.example.data.model.LiveMessage
+import com.example.data.model.PeerSearchState
 import com.example.data.model.LocalUserProfile
 import com.example.data.model.ScheduledCallEntry
 import com.example.data.model.SparkAppearance
@@ -1697,6 +1698,18 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
         for (t in candidates) {
             val identifier = t.phoneNumber.ifBlank { t.shortId }
+            val lookup = liveChatRepo.findPeer(identifier)
+            if (lookup.isSuccess && lookup.getOrNull() == null) {
+                // Server confirmed nobody owns this number/ID: the placeholder
+                // thread could never deliver anything, so drop it.
+                chatboxThreadsMutex.withLock {
+                    prefs.saveChatboxThreads(prefs.chatboxThreads.first().filterNot { it.id == t.id })
+                }
+                chatboxMessagesMutex.withLock {
+                    prefs.saveChatboxMessages(prefs.chatboxMessages.first() - t.id)
+                }
+                continue
+            }
             runCatching { linkThreadToRealPeer(t.id, identifier, keepCustomName = false, myUid = uid) }
                 .onFailure { Log.w(LIVE_TAG, "relink failed", it) }
         }
@@ -1720,7 +1733,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 peerUid = peer.uid
             )
         }
-        val conversationId = liveChatRepo.startOrOpenConversation(myUid, peer.uid).getOrNull() ?: return
+        attachConversation(threadId, peer.uid, myUid)
+    }
+
+    private suspend fun attachConversation(threadId: String, peerUid: String, myUid: String) {
+        val conversationId = liveChatRepo.startOrOpenConversation(myUid, peerUid).getOrNull() ?: return
         val duplicate = prefs.chatboxThreads.first()
             .firstOrNull { it.conversationId == conversationId && it.id != threadId }
         if (duplicate != null) {
@@ -1731,6 +1748,81 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         } else {
             updateThreadNow(threadId) { it.copy(conversationId = conversationId) }
         }
+    }
+
+    // ---- WhatsApp-style search: number / 6-digit ID → real account or "not found" ----
+
+    private fun isRemoteSearchQuery(query: String): Boolean {
+        val q = query.trim().removePrefix("#").replace(" ", "")
+        if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(q)) return true
+        return q.none { it.isLetter() } && q.count { it.isDigit() } >= 7
+    }
+
+    suspend fun searchPeer(query: String): PeerSearchState {
+        val q = query.trim()
+        if (!isRemoteSearchQuery(q)) return PeerSearchState.Idle
+        val isId = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(q.removePrefix("#").replace(" ", ""))
+        val what = if (isId) "এই ID" else "এই নম্বর"
+        val me = currentUser.value ?: return PeerSearchState.NeedsLogin
+        if (!effectiveIsOnline()) {
+            return PeerSearchState.Failed("ইন্টারনেট নেই। সংযোগ চালু করে আবার খুঁজুন।")
+        }
+        val result = liveChatRepo.findPeer(q)
+        val error = result.exceptionOrNull()
+        if (error != null) {
+            Log.w(LIVE_TAG, "peer search failed", error)
+            return PeerSearchState.Failed("খোঁজা যায়নি। একটু পরে আবার চেষ্টা করুন।")
+        }
+        val peer = result.getOrNull()
+            ?: return PeerSearchState.NotFound("$what-তে কোনো Chatbox account নেই")
+        if (peer.uid == me.uid) return PeerSearchState.NotFound("এটি আপনার নিজের account")
+        return PeerSearchState.Found(peer)
+    }
+
+    /** Opens (or creates) a real, Firestore-linked chat with a found account. */
+    fun openChatWithPeer(peer: UserProfile): String {
+        val existing = chatboxThreads.value.firstOrNull { !it.isGroup && it.peerUid == peer.uid }
+        val threadId = existing?.id ?: "dm_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
+        val name = peer.displayName.ifBlank { "Chatbox User" }
+        if (existing == null) {
+            val thread = ChatboxThread(
+                id = threadId,
+                name = name,
+                shortId = peer.shortId,
+                role = "Active now",
+                connectionLabel = "You're connected on Chatbox",
+                locationText = "On Chatbox",
+                workBio = peer.about.ifBlank { "Chatbox member · ID ${peer.shortId}" },
+                avatarLabel = initialsOf(name),
+                style = AvatarStyle.entries[Random.nextInt(AvatarStyle.entries.size)],
+                online = true,
+                readReceiptsEnabled = true,
+                peerUid = peer.uid
+            )
+            _pendingCreatedThreads.value = listOf(thread) + _pendingCreatedThreads.value
+            viewModelScope.launch {
+                chatboxThreadsMutex.withLock {
+                    val stored = prefs.chatboxThreads.first()
+                    if (stored.none { it.id == threadId }) prefs.saveChatboxThreads(listOf(thread) + stored)
+                    _pendingCreatedThreads.value = _pendingCreatedThreads.value.filterNot { it.id == threadId }
+                }
+            }
+        } else if (existing.name != name || existing.shortId != peer.shortId) {
+            updateThread(threadId) { it.copy(name = name, avatarLabel = initialsOf(name), shortId = peer.shortId) }
+        }
+        val me = currentUser.value
+        if (me != null && existing?.conversationId.isNullOrBlank()) {
+            viewModelScope.launch {
+                runCatching { attachConversation(threadId, peer.uid, me.uid) }
+                    .onFailure { Log.w(LIVE_TAG, "attach conversation failed", it) }
+            }
+        }
+        return threadId
+    }
+
+    /** Shows the login screen again (used by "login to search" prompts). */
+    fun requestLogin() {
+        viewModelScope.launch { prefs.setHasCompletedLogin(false) }
     }
 
     private suspend fun ensureLiveThread(conversationId: String, peerUid: String) {
