@@ -41,7 +41,7 @@ jobs:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
         run: |
           set -euo pipefail
-          timeout 300s python3 .github/scripts/test_ai_keys.py
+          timeout 900s python3 .github/scripts/test_ai_keys.py
 
       - name: Cleanup
         if: always()
