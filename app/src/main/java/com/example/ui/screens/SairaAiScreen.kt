@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -958,6 +959,7 @@ private fun AutoReplyAndBackupTab(
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
     }
     val listenerAvailable = remember { SairaNotificationListenerService.isListenerAvailable(context) }
+    var setupAttempts by remember { mutableIntStateOf(0) }
     var notifAccessGranted by remember {
         mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
     }
@@ -971,7 +973,14 @@ private fun AutoReplyAndBackupTab(
                 locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
                 notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
                 batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
-                if (notifAccessGranted) SairaNotificationListenerService.ensureBound(context)
+                if (notifAccessGranted) {
+                    SairaNotificationListenerService.ensureBound(context)
+                    // Just granted during setup -> one system "Allow" dialog for reliable background replies.
+                    if (setupAttempts > 0 && !batteryUnrestricted) {
+                        setupAttempts = 0
+                        SairaNotificationListenerService.requestIgnoreBatteryOptimization(context)
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1100,7 +1109,7 @@ private fun AutoReplyAndBackupTab(
                             color = colors.ink
                         )
                         Text(
-                            text = "নিচে যাদের নাম সেট করবেন, তারা WhatsApp/Messenger-এ মেসেজ দিলে ১০ সেকেন্ডের মধ্যে আপনি উত্তর না দিলে সায়রা আপনার হয়ে উত্তর দেবে। সবার জন্য চাইলে নাম হিসেবে \"সবাই\" লিখুন।",
+                            text = "কেউ WhatsApp/Messenger-এ মেসেজ দিলে আপনি ১০ সেকেন্ডে উত্তর না দিলে সায়রা আপনার হয়ে উত্তর দেবে। নিচে নাম সেট না করলে সবাইকে উত্তর দেবে।",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkMuted
                         )
@@ -1156,46 +1165,59 @@ private fun AutoReplyAndBackupTab(
                         Text("২) Full Chatbox ডাউনলোড করুন")
                     }
                 } else {
-                PermissionStatusRow(
-                    granted = notifAccessGranted,
-                    grantedText = "Notification Access চালু আছে",
-                    missingText = "Notification Access বন্ধ (এটা ছাড়া কাজ করবে না)",
-                    actionText = "চালু করুন",
-                    actionTag = "saira_notif_access_button",
-                    onAction = { SairaNotificationListenerService.openNotificationAccessSettings(context) }
-                )
-                if (!notifAccessGranted) {
-                    Text(
-                        text = "তালিকায় \"Chatbox\" চালু করুন। যদি চালু করা না যায় (\"Restricted setting\" দেখায়), তাহলে নিচের \"App info\" চাপুন → উপরের ⋮ মেনু → \"Allow restricted settings\" → তারপর আবার \"চালু করুন\" চাপুন।",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.inkMuted
-                    )
-                    OutlinedButton(
-                        onClick = { SairaNotificationListenerService.openAppDetailsSettings(context) },
-                        modifier = Modifier.testTag("saira_app_info_button")
-                    ) {
-                        Text("App info খুলুন")
+                    val ready = notifAutoReplyEnabled && notifAccessGranted
+                    if (ready) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.testTag("saira_whatsapp_ready")
+                        ) {
+                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = ChatboxUpdateGreen)
+                            Text(
+                                text = "চালু আছে — WhatsApp/Messenger-এ আপনি ১০ সেকেন্ডে উত্তর না দিলে সায়রা উত্তর দেবে।",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = ChatboxUpdateGreen
+                            )
+                        }
+                        if (!batteryUnrestricted) {
+                            TextButton(
+                                onClick = { SairaNotificationListenerService.requestIgnoreBatteryOptimization(context) },
+                                modifier = Modifier.testTag("saira_battery_button")
+                            ) {
+                                Text("স্ক্রিন বন্ধ থাকলেও দ্রুত উত্তরের জন্য এখানে চাপুন → Allow")
+                            }
+                        }
+                    } else {
+                        val needsRestrictedStep = !notifAccessGranted && setupAttempts >= 1 &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                        Text(
+                            text = when {
+                                needsRestrictedStep ->
+                                    "সুইচটা চালু করা যায়নি? Android নতুন app-এর জন্য এটা আটকে রাখে। নিচের বাটন চাপুন → উপরের ⋮ → \"Allow restricted settings\" → তারপর আবার ফিরে এসে বাটন চাপুন।"
+                                !notifAccessGranted ->
+                                    "শুধু একবার: নিচের বাটন চাপুন → \"Chatbox\"-এর সুইচ চালু করুন → Allow → ফিরে আসুন। ব্যস!"
+                                else -> "নিচের বাটন চাপুন, অটো-রিপ্লাই চালু হয়ে যাবে।"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.ink
+                        )
+                        Button(
+                            onClick = {
+                                if (!notifAutoReplyEnabled) onChangeNotifAutoReply(true)
+                                when {
+                                    notifAccessGranted -> Unit
+                                    needsRestrictedStep -> SairaNotificationListenerService.openAppDetailsSettings(context)
+                                    else -> SairaNotificationListenerService.openNotificationAccessForApp(context)
+                                }
+                                if (!notifAccessGranted) setupAttempts += 1
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("saira_notif_access_button")
+                        ) {
+                            Text(if (needsRestrictedStep) "App info খুলুন" else "এক চাপে চালু করুন")
+                        }
                     }
-                }
-                PermissionStatusRow(
-                    granted = batteryUnrestricted,
-                    grantedText = "Battery restriction বন্ধ আছে",
-                    missingText = "Battery optimization চালু (স্ক্রিন বন্ধ থাকলে রিপ্লাই দেরি হতে পারে)",
-                    actionText = "ঠিক করুন",
-                    actionTag = "saira_battery_button",
-                    onAction = { SairaNotificationListenerService.openBatteryOptimizationSettings(context) }
-                )
-                val activeRules = rules.count { it.enabled && it.contactName.isNotBlank() && it.taughtReplyGuidance.isNotBlank() }
-                val ready = notifAutoReplyEnabled && notifAccessGranted && activeRules > 0
-                NoticeBanner(
-                    text = when {
-                        ready -> "✅ চালু আছে: $activeRules জন ব্যক্তির জন্য সায়রা WhatsApp/Messenger-এ উত্তর দেবে।"
-                        !notifAccessGranted -> "এখনো কাজ করবে না: Notification Access চালু করুন।"
-                        !notifAutoReplyEnabled -> "এখনো কাজ করবে না: উপরের সুইচ চালু করুন।"
-                        else -> "এখনো কাজ করবে না: নিচে অন্তত একজন ব্যক্তি ও তার ১ম মেসেজ সেট করুন।"
-                    },
-                    isError = !ready
-                )
                 }
             }
         }
@@ -1275,7 +1297,7 @@ private fun AutoReplyAndBackupTab(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("নির্ধারিত ব্যক্তি ও মেসেজ সেট করুন", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                Text("নির্দিষ্ট ব্যক্তির জন্য আলাদা মেসেজ (ঐচ্ছিক)", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                 OutlinedTextField(
                     value = contactDraft,
                     onValueChange = { contactDraft = it.take(80) },
@@ -1788,36 +1810,3 @@ private fun DebugAppCheckTokenDialog(
     }
 }
 
-@Composable
-private fun PermissionStatusRow(
-    granted: Boolean,
-    grantedText: String,
-    missingText: String,
-    actionText: String,
-    actionTag: String,
-    onAction: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.Close,
-            contentDescription = null,
-            tint = if (granted) ChatboxUpdateGreen else ChatboxErrorInk,
-            modifier = Modifier.size(18.dp)
-        )
-        Text(
-            text = if (granted) grantedText else missingText,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (granted) ChatboxUpdateGreen else ChatboxErrorInk,
-            modifier = Modifier.weight(1f)
-        )
-        if (!granted) {
-            OutlinedButton(onClick = onAction, modifier = Modifier.testTag(actionTag)) {
-                Text(actionText)
-            }
-        }
-    }
-}

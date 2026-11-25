@@ -56,4 +56,13 @@ class SairaMatcherExtrasTest {
         assertFalse(AiSafeResponses.isSafetyMessage("ভালো আছি, তুমি কেমন আছো?"))
         assertFalse(AiSafeResponses.isSafetyMessage(""))
     }
+
+    @Test
+    fun `default everyone rule answers anyone with the polite default text`() {
+        val rule = SairaNotificationMatcher.defaultEveryoneRule()
+        val m = match("Any Random Person", listOf(rule), pkg = "com.facebook.orca")
+        assertNotNull(m)
+        val reply = SairaNotificationMatcher.buildFirstBoxReply("Any Random Person", m!!.rule, null, hourOfDay = 21)
+        assertTrue(reply.contains(SairaNotificationMatcher.DEFAULT_EVERYONE_TEXT))
+    }
 }
