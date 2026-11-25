@@ -1,0 +1,80 @@
+# Adds new Gemini API keys to Firestore settings/aiKeyPool WITHOUT the keys ever
+# appearing in git, inputs or logs (public repo):
+#   1. This run generates a throw-away RSA key pair (private half never leaves
+#      the runner) and prints the public key.
+#   2. The operator encrypts the new keys with it and pushes ONLY ciphertext to
+#      .github/incoming/<run_id>/ on the given branch.
+#   3. The run decrypts, tests every key against Gemini, and merges the working
+#      ones into the existing Firestore pool (union, de-duplicated).
+name: Add Gemini keys (encrypted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch that will receive the encrypted key file
+        required: true
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Install deps
+        run: python3 -m pip install --quiet google-auth
+
+      - name: Ephemeral key pair
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out /tmp/ephemeral.pem 2>/dev/null
+          openssl pkey -in /tmp/ephemeral.pem -pubout -out /tmp/ephemeral.pub
+          echo "::notice title=PUBKEY::$(base64 -w0 /tmp/ephemeral.pub)"
+
+      - name: Wait for encrypted keys
+        env:
+          DIR: .github/incoming/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 100); do
+            git fetch -q origin "${{ inputs.branch }}"
+            if git cat-file -e "FETCH_HEAD:$DIR/keys.enc" 2>/dev/null && git cat-file -e "FETCH_HEAD:$DIR/pass.enc" 2>/dev/null; then
+              git show "FETCH_HEAD:$DIR/keys.enc" > /tmp/keys.enc
+              git show "FETCH_HEAD:$DIR/pass.enc" > /tmp/pass.enc
+              echo "found after $i polls"; exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::encrypted key file never arrived"; exit 1
+
+      - name: Decrypt
+        run: |
+          set -euo pipefail
+          umask 077
+          base64 -d /tmp/pass.enc > /tmp/pass.raw
+          openssl pkeyutl -decrypt -inkey /tmp/ephemeral.pem -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 -in /tmp/pass.raw -out /tmp/pass.bin
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -a -pass file:/tmp/pass.bin \
+            -in /tmp/keys.enc -out /tmp/new_keys.txt
+          rm -f /tmp/ephemeral.pem /tmp/pass.raw /tmp/pass.bin
+          echo "new lines=$(grep -c . /tmp/new_keys.txt)"
+
+      - name: Test + merge into Firestore
+        env:
+          ADMIN_RAW: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          timeout 600s python3 .github/scripts/add_keys.py
+          timeout 300s python3 .github/scripts/sync_keypool.py --key /tmp/admin.json --pool /tmp/merged.txt
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/ephemeral.pem /tmp/pass.* /tmp/new_keys.txt /tmp/merged.txt /tmp/admin.json /tmp/keys.enc

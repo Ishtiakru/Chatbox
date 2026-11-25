@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/incoming/**'
+      - '.github/scripts/**'
+      - '.github/workflows/add-keys.yml'
+      - '.github/workflows/test-ai-keys.yml'
     tags:
       - 'v*'
   workflow_dispatch:
