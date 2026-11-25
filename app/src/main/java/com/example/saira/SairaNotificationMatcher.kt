@@ -206,6 +206,19 @@ object SairaNotificationMatcher {
 
     private val EVERYONE_NAMES = setOf("*", "all", "everyone", "anyone", "সবাই", "সবার জন্য", "সকলে", "sobai")
 
+    const val DEFAULT_EVERYONE_TEXT = "আমি এখন একটু ব্যস্ত আছি, একটু পরেই উত্তর দেব। জরুরি কিছু থাকলে এখানে লিখে রাখুন।"
+
+    /** Used when the owner turned auto-reply on but set no contacts. */
+    fun defaultEveryoneRule(): SairaNotificationRule = SairaNotificationRule(
+        id = "default_everyone",
+        contactName = "সবাই",
+        platform = SairaPlatform.ANY,
+        taughtReplyGuidance = DEFAULT_EVERYONE_TEXT,
+        enabled = true,
+        allowLocationShare = false,
+        useAiReply = true
+    )
+
     /** A rule whose contact is "সবাই" / "everyone" / "*" answers every 1:1 sender. */
     fun isEveryoneRule(ruleContact: String): Boolean =
         stripBidiMarks(ruleContact).trim().lowercase() in EVERYONE_NAMES

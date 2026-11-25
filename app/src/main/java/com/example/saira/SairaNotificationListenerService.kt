@@ -152,7 +152,14 @@ class SairaNotificationListenerService : NotificationListenerService() {
             val prefs = AppPreferencesRepository(applicationContext)
             val notifEnabled = prefs.sairaNotifReplyEnabled.first()
             val locationEnabled = prefs.sairaLiveLocationEnabled.first()
-            val rules = prefs.sairaNotificationRules.first()
+            val savedRules = prefs.sairaNotificationRules.first()
+            // No contacts configured -> reply to everyone with a polite default,
+            // so auto-reply works right after the one-time permission.
+            val rules = if (savedRules.none { it.enabled && it.contactName.isNotBlank() && it.taughtReplyGuidance.isNotBlank() }) {
+                listOf(SairaNotificationMatcher.defaultEveryoneRule())
+            } else {
+                savedRules
+            }
             val chatboxUsers = prefs.sairaUserDirectory.first()
             val hasLocPerm = SairaLocationHelper.hasLocationPermission(applicationContext)
 
@@ -678,6 +685,31 @@ class SairaNotificationListenerService : NotificationListenerService() {
             runCatching {
                 requestRebind(ComponentName(context, SairaNotificationListenerService::class.java))
             }
+        }
+
+        /** Opens Chatbox's own Notification Access toggle directly (Android 11+), else the list. */
+        fun openNotificationAccessForApp(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val component = ComponentName(context, SairaNotificationListenerService::class.java)
+                val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (runCatching { context.startActivity(detail) }.isSuccess) return
+            }
+            openNotificationAccessSettings(context)
+        }
+
+        /** One system "Allow" dialog so replies keep working with the screen off. */
+        @android.annotation.SuppressLint("BatteryLife")
+        fun requestIgnoreBatteryOptimization(context: Context) {
+            if (isBatteryOptimizationIgnored(context)) return
+            val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (runCatching { context.startActivity(request) }.isSuccess) return
+            openBatteryOptimizationSettings(context)
         }
 
         /** App info page — where "Allow restricted settings" lives on Android 13+. */
