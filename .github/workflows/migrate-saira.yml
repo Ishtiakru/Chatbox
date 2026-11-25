@@ -1,0 +1,97 @@
+name: Migrate Saira data (manual)
+
+# Copies users/{uid}/sairaSessions/{sessionId}/exchanges (all Saira AI chat
+# history) from the OLD Firebase project (gen-lang-client-0532609883) into an
+# existing Firestore database of the canonical project (0251556445).
+# Dry-run by default; --mode=execute is required to actually write.
+# Secrets: FIREBASE_ADMIN_KEY_OLD (source project), FIREBASE_ADMIN_KEY (dest).
+# Key values may be raw JSON or base64 (markdown-safe paste from chat).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dry-run (counts only) or execute (writes data)'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - execute
+      source-db:
+        description: 'Firestore database ID in the SOURCE project'
+        required: true
+        default: 'ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70'
+      dest-db:
+        description: 'Firestore database ID in the DESTINATION project'
+        required: true
+        default: 'ai-studio-android-chatbox-bc1e3568-f7e2-4c12-b2b9-9c365ad43fb9'
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Write service-account keys (raw JSON or base64 accepted)
+        env:
+          SRC_KEY: ${{ secrets.FIREBASE_ADMIN_KEY_OLD }}
+          DST_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, sys
+          def decode(name, dest):
+              raw = os.environ.get(name, "").strip()
+              if not raw:
+                  print(f"::error::SECRET {name} is missing - set it in Settings > Secrets and re-run")
+                  sys.exit(1)
+              try:
+                  if raw.startswith("{"):
+                      data, fmt = raw, "raw-json"
+                  else:
+                      data = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+                      fmt = "base64"
+                  json.loads(data)
+                  with open(dest, "w") as fh:
+                      fh.write(data)
+                  print(f"::error::KEY_OK {name} format={fmt} -> {dest}")
+              except Exception as exc:
+                  print(f"::error::SECRET {name} INVALID (raw JSON or base64 expected): {exc}")
+                  sys.exit(1)
+          decode("SRC_KEY", "scripts/firebase-migrate/source.json")
+          decode("DST_KEY", "scripts/firebase-migrate/dest.json")
+          PY
+
+      - name: Install dependencies
+        working-directory: scripts/firebase-migrate
+        run: npm install --no-audit --no-fund
+
+      - name: Run migration (mode below)
+        env:
+          MODE: ${{ inputs.mode }}
+          SOURCE_DB: ${{ inputs.source-db }}
+          DEST_DB: ${{ inputs.dest-db }}
+        run: |
+          set -o pipefail
+          ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --list-auth"
+          if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
+          echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
+          cd scripts/firebase-migrate
+          node migrate-saira.mjs $ARGS 2>&1 | tee /tmp/migrate.log
+
+      - name: Emit findings as annotations
+        if: always()
+        run: python3 .github/scripts/emit_migrate_annotations.py /tmp/migrate.log
+
+      - name: Cleanup keys
+        if: always()
+        run: rm -f scripts/firebase-migrate/source.json scripts/firebase-migrate/dest.json
