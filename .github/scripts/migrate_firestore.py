@@ -22,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from google.auth.transport.urllib.request import Request as AuthTransportRequest
 from google.oauth2 import service_account
 
 SCOPES = ["https://www.googleapis.com/auth/datastore"]
@@ -61,9 +62,7 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         try:
             if not self.creds.valid:
-                self.creds.refresh(
-                    urllib.request.Request("https://oauth2.googleapis.com/token")
-                )
+                self.creds.refresh(AuthTransportRequest())
             req = urllib.request.Request(url, data=data, method=method)
             req.add_header("Authorization", f"Bearer {self.creds.token}")
             if data:
