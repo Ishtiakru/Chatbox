@@ -83,7 +83,7 @@ class GeminiKeyPool(context: Context?) {
             .document(DOC_ID)
             .get()
             .await()
-        if (!snap.exists) {
+        if (!snap.exists()) {
             Log.i(TAG, "settings/$DOC_ID not present yet — key pool empty")
             return emptyList()
         }
