@@ -38,16 +38,22 @@ jobs:
             echo "::error::SECRET_CHECK GOOGLE_SERVICES_JSON is MISSING"
             exit 0
           fi
-          printf '%s' "$GOOGLE_SERVICES_JSON" > /tmp/gs.json
+          printf '%s' "$GOOGLE_SERVICES_JSON" > /tmp/gs.txt
           python3 -c "
-          import json
+          import base64, json, re
+          raw = open('/tmp/gs.txt').read().strip()
           try:
-              d = json.load(open('/tmp/gs.json'))
+              if raw.startswith('{'):
+                  data, fmt = raw, 'raw-json'
+              else:
+                  data = base64.b64decode(re.sub(r'\s+', '', raw)).decode()
+                  fmt = 'base64'
+              d = json.loads(data)
               pid = d.get('project_info', {}).get('project_id', 'UNKNOWN')
               pkgs = [c.get('client_info', {}).get('android_client_info', {}).get('package_name', '?') for c in d.get('client', [])]
-              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON project_id={pid} packages={pkgs} expected=gen-lang-client-0251556445')
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON format={fmt} project_id={pid} packages={pkgs} expected=gen-lang-client-0251556445')
           except Exception as e:
-              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON is INVALID JSON: {e}')
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON INVALID (neither clean JSON nor base64): {e}')
           "
 
       - name: Inspect Firestore

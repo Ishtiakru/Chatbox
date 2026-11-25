@@ -53,6 +53,17 @@ def main() -> int:
         emit("KEY_MISSING: /tmp/firebase-key.json not written")
         return 1
 
+    # The secret may be raw JSON or base64 (base64 survives markdown-mangling
+    # copy/paste in chat clients). Normalize to raw JSON before use.
+    raw = open(KEY_FILE, encoding="utf-8").read()
+    if not raw.strip().startswith("{"):
+        import base64
+        import re
+
+        raw = base64.b64decode(re.sub(r"\s+", "", raw.strip())).decode()
+        with open(KEY_FILE, "w", encoding="utf-8") as fh:
+            fh.write(raw)
+
     from google.auth.transport.requests import Request
     from google.oauth2 import service_account
 
