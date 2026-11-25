@@ -639,7 +639,26 @@ class SairaNotificationListenerService : NotificationListenerService() {
             runCatching { context.startActivity(intent) }
         }
 
-        const val FULL_EDITION_URL = "https://github.com/Ishtiakru/Chatbox/releases/latest"
+        const val FULL_EDITION_URL = "https://github.com/Ishtiakru/Chatbox/releases/latest/download/chatbox-full.apk"
+
+        /** Opens Google Play Protect settings (to switch off "Scan apps" before installing the full APK). */
+        fun openPlayProtectSettings(context: Context) {
+            val candidates = listOf(
+                Intent("com.google.android.gms.settings.VERIFY_APPS_SETTINGS"),
+                Intent().setClassName(
+                    "com.google.android.gms",
+                    "com.google.android.gms.security.settings.VerifyAppsSettingsActivity"
+                ),
+                Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.gms"))
+                    .setPackage("com.android.vending"),
+                context.packageManager.getLaunchIntentForPackage("com.android.vending")
+            )
+            for (intent in candidates) {
+                if (intent == null) continue
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (runCatching { context.startActivity(intent) }.isSuccess) return
+            }
+        }
 
         /**
          * True only in the "full" APK, where the listener is declared in the

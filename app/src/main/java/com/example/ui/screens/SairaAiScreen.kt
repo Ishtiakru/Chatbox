@@ -1121,8 +1121,24 @@ private fun AutoReplyAndBackupTab(
 
                 if (!listenerAvailable) {
                     NoticeBanner(
-                        text = "এই সাধারণ Chatbox-এ WhatsApp/Messenger অটো-রিপ্লাই নেই (Play Protect এটা block করে)। এর জন্য Release পাতা থেকে \"-full.apk\" লেখা Chatbox install করুন। install করার আগে Play Store → Profile → Play Protect → ⚙️ → \"Scan apps with Play Protect\" বন্ধ করে নিন।",
+                        text = "এই সাধারণ Chatbox-এ WhatsApp/Messenger অটো-রিপ্লাই নেই, কারণ Google Play Protect এটা block করে। Chatbox-এর ভেতরের মেসেজে সায়রা ঠিকই উত্তর দেবে। WhatsApp-এর জন্য নিচের ২টা ধাপ করুন:",
                         isError = true
+                    )
+                    Text(
+                        text = "ধাপ ১: নিচের বাটন চাপুন → \"Scan apps with Play Protect\" বন্ধ করুন।",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.ink
+                    )
+                    OutlinedButton(
+                        onClick = { SairaNotificationListenerService.openPlayProtectSettings(context) },
+                        modifier = Modifier.testTag("saira_play_protect_settings_button")
+                    ) {
+                        Text("১) Play Protect সেটিংস খুলুন")
+                    }
+                    Text(
+                        text = "ধাপ ২: Full Chatbox ডাউনলোড করে install করুন (আপনার সব chat ও সেটিং থাকবে)।",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.ink
                     )
                     OutlinedButton(
                         onClick = {
@@ -1137,7 +1153,7 @@ private fun AutoReplyAndBackupTab(
                         },
                         modifier = Modifier.testTag("saira_full_edition_button")
                     ) {
-                        Text("Full সংস্করণ ডাউনলোড পাতা খুলুন")
+                        Text("২) Full Chatbox ডাউনলোড করুন")
                     }
                 } else {
                 PermissionStatusRow(

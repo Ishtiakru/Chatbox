@@ -228,6 +228,8 @@ jobs:
             exit 1
           fi
           cp "$FULL_SOURCE" "chatbox-v${CLEAN_VER}-full.apk"
+          # Stable name so releases/latest/download/chatbox-full.apk always works.
+          cp "$FULL_SOURCE" "chatbox-full.apk"
           BT=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
           FULL_HAS=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "chatbox-v${CLEAN_VER}-full.apk" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
           STD_HAS=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "chatbox-v${CLEAN_VER}.apk" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
@@ -250,12 +252,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chatbox-release-apk
-          path: chatbox-v*.apk
+          path: |
+            chatbox-v*.apk
+            chatbox-full.apk
 
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Chatbox ${{ steps.meta.outputs.tag }}
-          files: chatbox-v*.apk
+          files: |
+            chatbox-v*.apk
+            chatbox-full.apk
           generate_release_notes: true
