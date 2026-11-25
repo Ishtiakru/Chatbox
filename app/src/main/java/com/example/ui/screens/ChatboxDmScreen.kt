@@ -68,6 +68,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -110,6 +111,8 @@ import com.example.data.model.ChatboxConstants
 import com.example.data.model.ChatboxMessage
 import com.example.data.model.ChatboxMessageKind
 import com.example.data.model.ChatboxThread
+import com.example.data.model.PeerSearchState
+import com.example.data.model.UserProfile
 import com.example.data.model.DisappearingOption
 import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.ChatboxSearchField
@@ -176,7 +179,10 @@ fun ChatboxDmScreen(
     onToggleBlock: (threadId: String) -> Unit,
     onSubmitReport: (threadId: String, peerName: String, reason: String, note: String) -> Unit,
     onLogCall: (threadId: String, peerName: String, isVideo: Boolean, isMissed: Boolean, durationLabel: String) -> Unit,
-    onAppUpdateClick: () -> Unit
+    onAppUpdateClick: () -> Unit,
+    onSearchPeer: suspend (String) -> PeerSearchState = { PeerSearchState.Idle },
+    onOpenPeer: (UserProfile) -> String = { "" },
+    onRequestLogin: () -> Unit = {}
 ) {
     val selectedThread = remember(threads, activeThreadId) {
         threads.firstOrNull { it.id == activeThreadId } ?: threads.firstOrNull()
@@ -301,7 +307,10 @@ fun ChatboxDmScreen(
                             onSelectThread(id)
                             onMarkThreadUnread(id, false)
                         },
-                        onCreateDirectThread = onCreateDirectThread
+                        onCreateDirectThread = onCreateDirectThread,
+                        onSearchPeer = onSearchPeer,
+                        onOpenPeer = onOpenPeer,
+                        onRequestLogin = onRequestLogin
                     )
                     HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = DmHairlineBorder)
                     if (selectedThread != null) {
@@ -361,7 +370,10 @@ fun ChatboxDmScreen(
                             onMarkThreadUnread(id, false)
                             showMobileThread = true
                         },
-                        onCreateDirectThread = onCreateDirectThread
+                        onCreateDirectThread = onCreateDirectThread,
+                        onSearchPeer = onSearchPeer,
+                        onOpenPeer = onOpenPeer,
+                        onRequestLogin = onRequestLogin
                     )
                 } else {
                     ChatboxThreadPane(
@@ -728,13 +740,31 @@ private fun ChatboxInboxPane(
     appUpdateActive: Boolean,
     onAppUpdateClick: () -> Unit,
     onSelectThread: (String) -> Unit,
-    onCreateDirectThread: (name: String, identifier: String) -> String
+    onCreateDirectThread: (name: String, identifier: String) -> String,
+    onSearchPeer: suspend (String) -> PeerSearchState = { PeerSearchState.Idle },
+    onOpenPeer: (UserProfile) -> String = { "" },
+    onRequestLogin: () -> Unit = {}
 ) {
     val colors = LocalChatboxColors.current
     val activeContacts = remember(threads, blockedThreadIds) {
         threads.filter { !it.isGroup && it.online && it.id !in blockedThreadIds }
     }
     val trimmedQuery = searchQuery.trim()
+    val isRemoteQuery = remember(trimmedQuery) {
+        val q = trimmedQuery.removePrefix("#").replace(" ", "")
+        ChatboxConstants.VALID_SHORT_ID_REGEX.matches(q) ||
+            (q.none { it.isLetter() } && q.count { it.isDigit() } >= 7)
+    }
+    var peerSearch by remember { mutableStateOf<PeerSearchState>(PeerSearchState.Idle) }
+    LaunchedEffect(trimmedQuery, isRemoteQuery) {
+        if (!isRemoteQuery) {
+            peerSearch = PeerSearchState.Idle
+            return@LaunchedEffect
+        }
+        peerSearch = PeerSearchState.Searching
+        delay(450)
+        peerSearch = onSearchPeer(trimmedQuery)
+    }
     val hasExactThread = remember(threads, trimmedQuery) {
         if (trimmedQuery.isEmpty()) true
         else {
@@ -792,7 +822,7 @@ private fun ChatboxInboxPane(
                 ChatboxSearchField(
                     value = searchQuery,
                     onValueChange = onSearchChange,
-                    placeholder = "Search name or 6-digit ID…",
+                    placeholder = "নাম, মোবাইল নম্বর বা ৬-সংখ্যার ID…",
                     testTag = "chatbox_search_input"
                 )
             }
@@ -885,65 +915,25 @@ private fun ChatboxInboxPane(
                     }
                 }
             }
-            if (trimmedQuery.isNotEmpty() && !hasExactThread) {
-                item(key = "inbox_search_add_user") {
-                    val isSixDigitSearch = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(trimmedQuery)
-                    Surface(
-                        onClick = {
-                            val id = onCreateDirectThread(trimmedQuery, "")
-                            onSelectThread(id)
+            if (trimmedQuery.isNotEmpty() && isRemoteQuery) {
+                item(key = "inbox_peer_search_result") {
+                    PeerSearchResultCard(
+                        state = peerSearch,
+                        onOpen = { profile ->
+                            val id = onOpenPeer(profile)
+                            if (id.isNotBlank()) onSelectThread(id)
                             onSearchChange("")
                             if (searchExpanded) onToggleSearch()
                         },
-                        shape = RoundedCornerShape(16.dp),
-                        color = DmLavenderSoft.copy(alpha = 0.65f),
-                        border = BorderStroke(1.dp, DmHairlineBorder),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .testTag("chatbox_search_add_user_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White,
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Search,
-                                        contentDescription = null,
-                                        tint = DmLavenderAccent,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (isSixDigitSearch) {
-                                        "Add & chat with ID $trimmedQuery"
-                                    } else {
-                                        "Add & chat with \"$trimmedQuery\""
-                                    },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = DmInkDark
-                                )
-                                Text(
-                                    text = if (isSixDigitSearch) {
-                                        "Tap to find and message this 6-digit Chatbox ID"
-                                    } else {
-                                        "Tap to start a Chatbox conversation"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = DmInkMuted
-                                )
-                            }
-                        }
+                        onRequestLogin = onRequestLogin
+                    )
+                }
+            } else if (trimmedQuery.isNotEmpty() && !hasExactThread) {
+                item(key = "inbox_search_hint") {
+                    Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("chatbox_search_hint")) {
+                        NoticeBanner(
+                            text = "নতুন কাউকে খুঁজতে তার মোবাইল নম্বর বা ৬-সংখ্যার Chatbox ID লিখুন।"
+                        )
                     }
                 }
             }
@@ -1965,6 +1955,87 @@ private fun ChatboxThreadPane(
                         Icon(Icons.Rounded.Close, contentDescription = "Close photo", tint = Color.White)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PeerSearchResultCard(
+    state: PeerSearchState,
+    onOpen: (UserProfile) -> Unit,
+    onRequestLogin: () -> Unit
+) {
+    val (title, subtitle, tag) = when (state) {
+        PeerSearchState.Idle, PeerSearchState.Searching ->
+            Triple("খোঁজা হচ্ছে…", "Chatbox-এ এই নম্বর/ID খুঁজছি", "chatbox_search_searching")
+        is PeerSearchState.Found ->
+            Triple(
+                state.profile.displayName,
+                "Chatbox ID ${state.profile.shortId} · মেসেজ পাঠাতে চাপুন",
+                "chatbox_search_add_user_button"
+            )
+        is PeerSearchState.NotFound ->
+            Triple("পাওয়া যায়নি", state.message, "chatbox_search_not_found")
+        PeerSearchState.NeedsLogin ->
+            Triple(
+                "খুঁজতে login করুন",
+                "মোবাইল নম্বর দিয়ে login করলে অন্যদের খুঁজে মেসেজ পাঠাতে পারবেন। চাপুন।",
+                "chatbox_search_login_required"
+            )
+        is PeerSearchState.Failed ->
+            Triple("খোঁজা যায়নি", state.message, "chatbox_search_failed")
+    }
+    val clickable = state is PeerSearchState.Found || state is PeerSearchState.NeedsLogin
+    val isNegative = state is PeerSearchState.NotFound || state is PeerSearchState.Failed
+    Surface(
+        onClick = {
+            when (state) {
+                is PeerSearchState.Found -> onOpen(state.profile)
+                PeerSearchState.NeedsLogin -> onRequestLogin()
+                else -> Unit
+            }
+        },
+        enabled = clickable,
+        shape = RoundedCornerShape(16.dp),
+        color = if (isNegative) Color(0xFFFFF4F4) else DmLavenderSoft.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, DmHairlineBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .testTag(tag)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (state is PeerSearchState.Found) {
+                MessengerAvatar(label = state.profile.displayName, size = 42.dp, showOnlineDot = false)
+            } else {
+                Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(42.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (state is PeerSearchState.Searching || state is PeerSearchState.Idle) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = null,
+                                tint = if (isNegative) Color(0xFFC62828) else DmLavenderAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isNegative) Color(0xFFC62828) else DmInkDark
+                )
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = DmInkMuted)
             }
         }
     }

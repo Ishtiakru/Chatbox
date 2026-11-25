@@ -334,3 +334,13 @@ data class SairaCompanionMessage(
     val isFromUser: Boolean,
     val timestampMs: Long
 )
+
+/** Result of searching a phone number / 6-digit ID on the server (WhatsApp-style). */
+sealed interface PeerSearchState {
+    data object Idle : PeerSearchState
+    data object Searching : PeerSearchState
+    data class Found(val profile: UserProfile) : PeerSearchState
+    data class NotFound(val message: String) : PeerSearchState
+    data object NeedsLogin : PeerSearchState
+    data class Failed(val message: String) : PeerSearchState
+}
