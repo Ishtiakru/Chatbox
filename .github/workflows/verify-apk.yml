@@ -27,6 +27,8 @@ jobs:
           for f in apks/*.apk; do
             name=$(basename "$f")
             listener=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "$f" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
+            perms=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump permissions "$f" | grep -oE "name='[^']+'" | sed "s/name=//; s/'//g" | grep -v "^com.aistudio" | tr '\n' ' ')
+            echo "::notice title=PERMS::$name $perms"
             if ! unzip -l "$f" | grep -q "assets/saira_pool.dat"; then
               echo "::notice title=SUMMARY::$name bundled_asset=MISSING listener=$listener"; continue
             fi
