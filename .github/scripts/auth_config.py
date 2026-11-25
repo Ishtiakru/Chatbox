@@ -37,6 +37,17 @@ def call(token, method, url, body=None):
         return e.code, {"raw": e.read().decode(errors="replace")[:400]}
 
 
+def sms_desc(cfg: dict) -> str:
+    sms = cfg.get("smsRegionConfig", {}) or {}
+    if "allowlistOnly" in sms:
+        regs = (sms["allowlistOnly"] or {}).get("allowedRegions", [])
+        return "ALLOWLIST:" + ",".join(regs)
+    if "allowByDefault" in sms:
+        regs = (sms["allowByDefault"] or {}).get("disallowedRegions", [])
+        return "DEFAULT_ALLOW_except:" + ",".join(regs)
+    return "unset"
+
+
 def summarize(cfg: dict) -> str:
     s = cfg.get("signIn", {})
     phone = s.get("phoneNumber", {})
@@ -47,7 +58,7 @@ def summarize(cfg: dict) -> str:
         f"phone={phone.get('enabled')} test_numbers={masked} "
         f"anonymous={s.get('anonymous', {}).get('enabled')} "
         f"authorizedDomains={len(cfg.get('authorizedDomains', []))} "
-        f"smsRegion={json.dumps(cfg.get('smsRegionConfig', {}))[:120]}"
+        f"smsRegion={sms_desc(cfg)}"
     )
 
 
@@ -85,7 +96,21 @@ def main():
     if existing_tests:
         phone["testPhoneNumbers"] = existing_tests
     body = {"signIn": {"phoneNumber": phone}}
-    st, out = call(tok, "PATCH", cfg_url + "?updateMask=signIn.phoneNumber", body)
+    mask = "signIn.phoneNumber"
+    sms = cfg.get("smsRegionConfig", {}) or {}
+    if "allowlistOnly" in sms:
+        regs = list((sms["allowlistOnly"] or {}).get("allowedRegions", []))
+        if "BD" not in regs:
+            regs.append("BD")
+            body["smsRegionConfig"] = {"allowlistOnly": {"allowedRegions": regs}}
+            mask += ",smsRegionConfig"
+    elif "allowByDefault" in sms:
+        dis = list((sms["allowByDefault"] or {}).get("disallowedRegions", []))
+        if "BD" in dis:
+            dis.remove("BD")
+            body["smsRegionConfig"] = {"allowByDefault": {"disallowedRegions": dis}}
+            mask += ",smsRegionConfig"
+    st, out = call(tok, "PATCH", cfg_url + "?updateMask=" + mask, body)
     if st != 200:
         notice(f"enable-phone HTTP {st}: {out}")
         sys.exit(1)
