@@ -120,7 +120,7 @@ jobs:
       - name: Determine release version & tag
         id: meta
         run: |
-          BASE_VER=$(grep -E 'versionName\s*=' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1)
+          BASE_VER=$(grep -E 'versionName\s*=' app/build.gradle.kts | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' | tr -d '"' | head -n 1)
           BASE_VER="${BASE_VER:-1.0.0}"
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF_NAME}"
@@ -134,6 +134,7 @@ jobs:
             TAG="v${VER}"
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "code=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Resolve fixed keystore (GitHub Secret or repo release.keystore)
@@ -197,12 +198,14 @@ jobs:
       - name: Build & sign Native Android Release APK
         env:
           CLEAN_VER: ${{ steps.meta.outputs.version }}
+          VERSION_CODE: ${{ steps.meta.outputs.code }}
           KEYSTORE_PATH: ${{ steps.ks.outputs.store_path }}
           KEYSTORE_PASS: ${{ steps.ks.outputs.store_pass }}
           KEY_ALIAS: ${{ steps.ks.outputs.key_alias }}
           KEY_PASS: ${{ steps.ks.outputs.key_pass }}
         run: |
           gradle :app:assembleRelease --no-daemon \
+            -Pchatbox.versionCode="$VERSION_CODE" -Pchatbox.versionName="$CLEAN_VER" \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
@@ -218,6 +221,7 @@ jobs:
           # Full edition: same app + WhatsApp/Messenger auto-reply listener.
           rm -rf app/build/outputs/apk/release
           gradle :app:assembleRelease --no-daemon -Pchatbox.autoReply=true \
+            -Pchatbox.versionCode="$VERSION_CODE" -Pchatbox.versionName="$CLEAN_VER" \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \

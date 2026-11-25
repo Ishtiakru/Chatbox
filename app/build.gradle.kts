@@ -15,8 +15,10 @@ android {
         applicationId = "com.aistudio.chatbox.kxmpzq"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI passes an always-increasing code (workflow run number) so every
+        // release is a real upgrade for Android's package installer.
+        versionCode = (project.findProperty("chatbox.versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("chatbox.versionName") as String?)?.takeIf { it.isNotBlank() } ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
