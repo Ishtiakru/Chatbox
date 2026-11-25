@@ -135,6 +135,7 @@ def doc_rel_path(doc: dict) -> str:
 def migrate_collection(
     src: Client, dst: Client, col_path: str, execute: bool, stats: dict
 ) -> None:
+    before = stats["docs"]
     for doc in src.list_docs(col_path):
         rel = doc_rel_path(doc)
         stats["docs"] += 1
@@ -145,6 +146,7 @@ def migrate_collection(
             migrate_collection(
                 src, dst, f"{rel}/{sub}", execute, stats
             )
+    emit(f"count {col_path}: {stats['docs'] - before}")
 
 
 def main() -> int:
