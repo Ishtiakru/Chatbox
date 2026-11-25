@@ -47,7 +47,16 @@ def main() -> int:
     if not picked:
         picked = lines[-15:] or ["(log was empty)"]
 
-    for line in picked[:50]:
+    # Always show the raw tail — the failure reason may be on lines that
+    # match no pattern (e.g. a raw stack trace).
+    tail = [ln.rstrip() for ln in lines[-12:] if ln.strip()]
+    seen = set(picked)
+    for ln in tail:
+        if ln not in seen:
+            picked.append(ln)
+            seen.add(ln)
+
+    for line in picked[:55]:
         clean = line.replace("%", "%25").replace("\r", "%0D").replace("\n", " ").strip()
         print(f"::error::{clean}")
     return 0
