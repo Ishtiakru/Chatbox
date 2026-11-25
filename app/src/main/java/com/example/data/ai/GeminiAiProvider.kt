@@ -237,8 +237,11 @@ class GeminiAiProvider(
     companion object {
         private const val TAG = "GeminiAiProvider"
         const val DEFAULT_ID = "gemini"
-        const val DEFAULT_MODEL = "gemini-3.8-flash"
-        const val FALLBACK_MODEL = "gemini-3.5-flash-lite"
+        // Measured 2026-11-25 (test-ai-keys.yml): gemini-3.8-flash and
+        // gemini-flash-latest were 0/6 (503 high demand / 25s hangs) while both
+        // lite models answered 6/6 in 0.7–4s. Lite first keeps Saira responsive.
+        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
+        const val FALLBACK_MODEL = "gemini-flash-lite-latest"
         const val FIRST_CHUNK_TIMEOUT_MS = 12_000L
         const val TOTAL_TIMEOUT_MS = 35_000L
     }
