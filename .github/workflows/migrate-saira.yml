@@ -3,9 +3,11 @@ name: Migrate Saira data (manual)
 # Copies users/{uid}/sairaSessions/{sessionId}/exchanges (all Saira AI chat
 # history) from the OLD Firebase project (gen-lang-client-0532609883) into an
 # existing Firestore database of the canonical project (0251556445).
-# Dry-run by default; --mode=execute is required to actually write.
+# Dry-run by default; mode=execute is required to actually write.
 # Secrets: FIREBASE_ADMIN_KEY_OLD (source project), FIREBASE_ADMIN_KEY (dest).
 # Key values may be raw JSON or base64 (markdown-safe paste from chat).
+# Python + REST instead of firebase-admin/Node: Node was being killed
+# mid-network-call on the runner; python completed full inspections.
 
 on:
   workflow_dispatch:
@@ -26,6 +28,10 @@ on:
         description: 'Firestore database ID in the DESTINATION project'
         required: true
         default: 'ai-studio-android-chatbox-bc1e3568-f7e2-4c12-b2b9-9c365ad43fb9'
+      collections:
+        description: 'Comma-separated top-level collections to copy'
+        required: true
+        default: 'users'
 
 permissions:
   contents: read
@@ -37,10 +43,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python3 -m pip install --quiet google-auth
 
       - name: Write service-account keys (raw JSON or base64 accepted)
         env:
@@ -71,37 +80,18 @@ jobs:
           decode("DST_KEY", "scripts/firebase-migrate/dest.json")
           PY
 
-      - name: Install dependencies
-        working-directory: scripts/firebase-migrate
-        run: npm install --no-audit --no-fund
-
-      - name: Run migration (mode below)
+      - name: Run migration
         env:
           MODE: ${{ inputs.mode }}
           SOURCE_DB: ${{ inputs.source-db }}
           DEST_DB: ${{ inputs.dest-db }}
+          COLLECTIONS: ${{ inputs.collections }}
         run: |
-          set +e  # keep going after node fails so POSTFLIGHT/cat always run
-          # --list-auth omitted for now: listUsers() is where runs were being
-          # killed; Firestore dry-run counts do not need it.
-          ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB}"
+          echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB} collections=${COLLECTIONS}"
+          echo "::error::PREFLIGHT sha=$(git rev-parse --short HEAD)"
+          ARGS="--source-key scripts/firebase-migrate/source.json --dest-key scripts/firebase-migrate/dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --collections ${COLLECTIONS}"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
-          echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
-          echo "::error::REDIRECT_V2_ACTIVE"
-          echo "::error::PREFLIGHT sha=$(git rev-parse --short HEAD) diag_in_script=$(grep -c 'diag' scripts/firebase-migrate/migrate-saira.mjs || true)"
-          sed -n '164,172p' scripts/firebase-migrate/migrate-saira.mjs | while IFS= read -r l; do echo "::error::PREFLIGHT $l"; done
-          cd scripts/firebase-migrate
-          # stdout to a FILE is synchronous in Node — piping to tee lets
-          # process.exit() drop the tail of the log (observed in run 1).
-          timeout 90s node migrate-saira.mjs $ARGS > /tmp/migrate.log 2>&1
-          code=$?
-          echo "::error::POSTFLIGHT exit=$code log_lines=$(wc -l < /tmp/migrate.log) log_diag=$(grep -c 'diag' /tmp/migrate.log || true)"
-          cat /tmp/migrate.log
-          exit $code
-
-      - name: Emit findings as annotations
-        if: always()
-        run: python3 .github/scripts/emit_migrate_annotations.py /tmp/migrate.log
+          timeout 300s python3 .github/scripts/migrate_firestore.py $ARGS
 
       - name: Cleanup keys
         if: always()
