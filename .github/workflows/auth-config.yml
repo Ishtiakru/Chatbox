@@ -1,0 +1,40 @@
+# Inspect / configure Firebase Auth providers for the app project.
+name: Firebase Auth config
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: inspect | enable-phone
+        required: true
+        default: inspect
+        type: choice
+        options: [inspect, enable-phone]
+
+jobs:
+  auth:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --quiet google-auth
+      - name: Decode admin key
+        env:
+          ADMIN_RAW: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, re
+          raw = os.environ["ADMIN_RAW"]
+          txt = raw if raw.lstrip().startswith("{") else base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+          json.loads(txt)
+          open("/tmp/admin.json", "w").write(txt)
+          PY
+      - name: Run
+        run: |
+          timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
+            --mode "${{ inputs.mode }}" --test-number "+8801000000000" --test-code "123456"
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/admin.json
