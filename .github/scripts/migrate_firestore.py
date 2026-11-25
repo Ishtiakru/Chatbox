@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from google.auth.transport.urllib.request import Request as AuthTransportRequest
+from google.auth.transport.requests import Request as AuthTransportRequest
 from google.oauth2 import service_account
 
 SCOPES = ["https://www.googleapis.com/auth/datastore"]
