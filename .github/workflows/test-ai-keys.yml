@@ -1,0 +1,48 @@
+# Probes the Gemini key pool against the live API from CI (read-only).
+# Public-safe output: masked keys + status classes only, single SUMMARY line.
+name: Test AI keys
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Probe keys
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decode secret (raw or base64)
+        env:
+          POOL_RAW: ${{ secrets.AI_KEY_POOL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, re, sys
+          raw = os.environ.get("POOL_RAW") or ""
+          if not raw.strip():
+              print("::error::AI_KEY_POOL secret missing/empty")
+              sys.exit(1)
+          if not raw.lstrip().startswith("AQ.") and not raw.lstrip().startswith("AIza"):
+              try:
+                  raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+              except Exception as exc:
+                  print(f"::error::cannot decode pool: {exc}")
+                  sys.exit(1)
+          open("/tmp/pool.txt", "w", encoding="utf-8").write(raw)
+          print("pool loaded")
+          PY
+
+      - name: Probe keys against generativelanguage.googleapis.com
+        env:
+          AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
+        run: |
+          set -euo pipefail
+          timeout 300s python3 .github/scripts/test_ai_keys.py
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/pool.txt
