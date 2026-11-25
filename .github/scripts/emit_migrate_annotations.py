@@ -1,25 +1,11 @@
 #!/usr/bin/env python3
-"""Emit key lines of the Saira migration log as GitHub Actions annotations.
+"""Dump every non-empty line of the migration log as a GitHub annotation.
 
-Raw CI logs cannot be downloaded in the agent sandbox (blob storage is
-blocked), so every important line must surface as an annotation, readable
-via `gh api .../check-runs/<id>/annotations`.
+Pattern-based picking kept hiding the real failure (lines that matched no
+regex vanished). Logs are small (~20-60 lines), so dump them all — capped
+for safety — and prefix each line with its number for cross-referencing.
 """
-import re
 import sys
-
-FORCED = re.compile(
-    r"Docs scanned:|Docs written:|ERROR|Migration failed|Mode:|Source project:|"
-    r"Dest project:|Auth users in|Could not list Auth"
-)
-INTERESTING = re.compile(
-    r"^Chatbox Saira|^=|Collections:|Source DB:|Dest DB:|Copying top-level|"
-    r"— \d+ doc\(s\)|\(empty\)|WARNING|orphaned|Done\.|Re-run with"
-)
-UID = re.compile(r"^\s*- uid=")
-
-MAX_LINES = 45
-MAX_UIDS = 25
 
 
 def main() -> int:
@@ -31,34 +17,19 @@ def main() -> int:
         print("::error::MIGRATE log missing — migration step crashed before logging")
         return 0
 
-    picked: list[str] = []
-    uids = 0
-    for raw in lines:
+    emitted = 0
+    for i, raw in enumerate(lines, 1):
         line = raw.rstrip()
         if not line:
             continue
-        if FORCED.search(line) or (UID.match(line) and uids < MAX_UIDS):
-            if UID.match(line):
-                uids += 1
-            picked.append(line)
-        elif INTERESTING.search(line) and len(picked) < MAX_LINES:
-            picked.append(line)
-
-    if not picked:
-        picked = lines[-15:] or ["(log was empty)"]
-
-    # Always show the raw tail — the failure reason may be on lines that
-    # match no pattern (e.g. a raw stack trace).
-    tail = [ln.rstrip() for ln in lines[-12:] if ln.strip()]
-    seen = set(picked)
-    for ln in tail:
-        if ln not in seen:
-            picked.append(ln)
-            seen.add(ln)
-
-    for line in picked[:55]:
+        if emitted >= 55:
+            print(f"::error::... log truncated at line {i} (total {len(lines)})")
+            break
         clean = line.replace("%", "%25").replace("\r", "%0D").replace("\n", " ").strip()
-        print(f"::error::{clean}")
+        print(f"::error::L{i}: {clean}")
+        emitted += 1
+    if emitted == 0:
+        print("::error::(log file was empty)")
     return 0
 
 

@@ -81,6 +81,7 @@ jobs:
           SOURCE_DB: ${{ inputs.source-db }}
           DEST_DB: ${{ inputs.dest-db }}
         run: |
+          set +e  # keep going after node fails so POSTFLIGHT/cat always run
           ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --list-auth"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
