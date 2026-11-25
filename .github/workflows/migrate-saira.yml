@@ -81,12 +81,16 @@ jobs:
           SOURCE_DB: ${{ inputs.source-db }}
           DEST_DB: ${{ inputs.dest-db }}
         run: |
-          set -o pipefail
           ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --list-auth"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
           cd scripts/firebase-migrate
-          node migrate-saira.mjs $ARGS 2>&1 | tee /tmp/migrate.log
+          # stdout to a FILE is synchronous in Node — piping to tee lets
+          # process.exit() drop the tail of the log (observed in run 1).
+          node migrate-saira.mjs $ARGS > /tmp/migrate.log 2>&1
+          code=$?
+          cat /tmp/migrate.log
+          exit $code
 
       - name: Emit findings as annotations
         if: always()
