@@ -21,9 +21,26 @@ object SairaAiClient {
 
     private val geminiProvider = GeminiAiProvider()
 
+    /** Firestore-managed Gemini key pool (hundreds of keys, hot-swappable). */
+    private val keyPool: GeminiKeyPool? by lazy {
+        runCatching {
+            GeminiKeyPool(FirebaseApp.getInstance().applicationContext)
+        }.getOrNull()
+    }
+
+    /**
+     * Primary: pooled direct-REST Gemini (rotates through every key in
+     * settings/aiKeyPool) with the Firebase AI Logic provider as the
+     * in-provider fallback — with zero keys provisioned it behaves exactly
+     * like the old wiring.
+     */
+    private val pooledProvider: AiProvider by lazy {
+        keyPool?.let { PooledGeminiProvider(it, geminiProvider) } ?: geminiProvider
+    }
+
     private val router: AiRouter by lazy {
         AiRouter(
-            primary = geminiProvider,
+            primary = pooledProvider,
             fallback = { currentBackupProvider() },
             cooldowns = AiCooldownStore(),
             // Never let a raw AI exception reach the UI: when every provider is
@@ -43,6 +60,10 @@ object SairaAiClient {
             }
             runCatching {
                 geminiProvider.warmUp(SairaPrompts.chatSystemInstruction)
+            }
+            // Pre-fetch the key pool so the first reply does not pay the read.
+            runCatching {
+                withTimeoutOrNull(8_000L) { keyPool?.availableKeys() }
             }
             runCatching {
                 withTimeoutOrNull(8_000L) {

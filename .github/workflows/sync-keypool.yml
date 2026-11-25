@@ -1,0 +1,69 @@
+# Pushes the Gemini API key pool into Firestore `settings/aiKeyPool`.
+#
+# Secrets:
+#   AI_KEY_POOL         — API keys, one per line (raw or base64).
+#   FIREBASE_ADMIN_KEY  — service account for the app's Firestore DB
+#                         (same secret the migrate pipeline uses).
+#
+# The app reads the document at runtime (GeminiKeyPool.kt) and rotates through
+# every key — add/remove keys by updating the secret and re-running this
+# workflow; no APK rebuild needed.
+name: Sync Gemini key pool
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Write settings/aiKeyPool
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: python3 -m pip install --quiet google-auth
+
+      - name: Decode secrets (raw or base64 accepted)
+        env:
+          POOL_RAW: ${{ secrets.AI_KEY_POOL }}
+          ADMIN_RAW: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, re, sys
+
+          def decode(name):
+              raw = os.environ.get(name) or ""
+              if not raw.strip():
+                  print(f"::error::SECRET {name} is empty or missing")
+                  sys.exit(1)
+              if raw.lstrip().startswith("{"):
+                  return raw
+              try:
+                  return base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+              except Exception as exc:
+                  print(f"::error::SECRET {name} not decodable: {exc}")
+                  sys.exit(1)
+
+          pool = decode("POOL_RAW")
+          admin = decode("ADMIN_RAW")
+          json.loads(admin)  # must be valid service-account JSON
+          open("/tmp/pool.txt", "w", encoding="utf-8").write(pool)
+          open("/tmp/admin.json", "w", encoding="utf-8").write(admin)
+          lines = [l for l in pool.splitlines() if l.strip() and not l.strip().startswith("#")]
+          print(f"decoded pool lines={len(lines)} admin=ok")
+          PY
+
+      - name: Write pool to Firestore
+        run: |
+          set -euo pipefail
+          timeout 300s python3 .github/scripts/sync_keypool.py \
+            --key /tmp/admin.json \
+            --pool /tmp/pool.txt
+
+      - name: Cleanup secrets from runner
+        if: always()
+        run: rm -f /tmp/pool.txt /tmp/admin.json
