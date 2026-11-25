@@ -1,140 +1,129 @@
 #!/usr/bin/env python3
-"""Probe the Gemini key pool against the live REST API (read-only, CI runner).
+"""Probe the Gemini key pool exactly like the app does (CI runner, read-only).
 
-For up to N keys from the AI_KEY_POOL secret: send one tiny generateContent
-request and classify the HTTP answer. Output is public-safe: keys are masked
-(first 8 + last 6) and only status/error-class is reported.
-
-Classes:
-  OK              200 + candidates        -> key works
-  QUOTA           429 / RESOURCE_EXHAUSTED -> valid key, out of quota
-  INVALID_KEY     API_KEY_INVALID / bad request naming the key
-  MODEL           404 / NOT_FOUND (model)  -> key accepted, model name wrong
-  HTTP_x          anything else (printed with short body snippet)
+Replicates PooledGeminiProvider's request (system_instruction + contents +
+generationConfig maxOutputTokens=1024) for several models, against
+generateContent and streamGenerateContent?alt=sse. Reports per-model:
+class counts, whether real text came back, finishReason, latency.
+Keys are never printed (index only).
 """
 import base64
 import json
 import re
-import sys
+import time
 import urllib.error
 import urllib.request
 
-MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
-MAX_KEYS = 6
+MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+]
+BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+TRIES_PER_MODEL = 6
+SYSTEM = "You are Saira, a friendly Bengali/English assistant inside the Chatbox app. Keep answers short."
 
 
 def notice(msg: str) -> None:
-    clean = str(msg).replace("%", "%25").replace("\r", "%0D").replace("\n", " ")
-    print(f"::notice title=KeyProbe::{clean}")
+    clean = str(msg).replace("%", "%25").replace("\r", "%0D").replace("\n", " ;; ")
+    print(f"::notice title=SUMMARY::{clean}")
     print(msg)
 
 
-def mask(key: str) -> str:
-    return f"{key[:8]}…{key[-6:]}" if len(key) > 16 else "(short)"
+def body() -> bytes:
+    return json.dumps({
+        "system_instruction": {"parts": [{"text": SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+    }).encode()
 
 
-def classify(status: int, body: str, model: str) -> tuple[str, str]:
-    low = body.lower()
-    if status == 200:
-        if '"candidates"' in body:
-            return "OK", ""
-        return "EMPTY200", body[:160]
-    if status == 429 or "resource_exhausted" in low or "resource exhausted" in low or "quota" in low:
-        return "QUOTA", ""
-    if "api_key_invalid" in low or "api key not valid" in low or "api_key_not_valid" in low:
-        return "INVALID_KEY", ""
-    if status == 404 or "not found" in low or "is not found" in low:
-        return "MODEL", body[:160]
-    if status == 400 and "key" in low:
-        return "INVALID_KEY", body[:160]
-    return f"HTTP_{status}", body[:160]
+def text_of(obj: dict) -> tuple[str, str]:
+    cands = obj.get("candidates") or []
+    if not cands:
+        return "", "NO_CANDIDATES"
+    c = cands[0]
+    parts = (c.get("content") or {}).get("parts") or []
+    txt = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    return txt.strip(), c.get("finishReason", "")
 
 
-def probe(key: str, model: str) -> tuple[str, str]:
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={key}"
-    )
-    payload = json.dumps(
-        {
-            "contents": [
-                {"role": "user", "parts": [{"text": "Reply with OK only."}]}
-            ],
-            "generationConfig": {"maxOutputTokens": 8},
-        }
-    ).encode()
-    req = urllib.request.Request(url, data=payload, method="POST")
+def classify(status: int, raw: str) -> str:
+    low = raw.lower()
+    if status == 429 or "resource_exhausted" in low or "quota" in low:
+        return "QUOTA"
+    if "api_key_invalid" in low or "api key not valid" in low:
+        return "INVALID_KEY"
+    if status == 404:
+        return "MODEL404"
+    return f"HTTP_{status}"
+
+
+def call(url: str, timeout: int = 25):
+    req = urllib.request.Request(url, data=body(), method="POST")
     req.add_header("Content-Type", "application/json")
+    t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            return classify(resp.status, resp.read().decode(errors="replace"), model)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")
-        return classify(exc.code, body, model)
-    except Exception as exc:  # noqa: BLE001
-        return "NET", f"{type(exc).__name__}: {exc}"[:160]
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode(errors="replace"), time.time() - t0
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode(errors="replace"), time.time() - t0
+    except Exception as e:  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}", time.time() - t0
+
+
+def probe_generate(key: str, model: str) -> str:
+    st, raw, dt = call(f"{BASE}/{model}:generateContent?key={key}")
+    if st == 200:
+        try:
+            txt, fin = text_of(json.loads(raw))
+        except Exception:  # noqa: BLE001
+            return f"BADJSON {dt:.1f}s"
+        return (f"OK len={len(txt)} fin={fin} {dt:.1f}s" if txt
+                else f"NOTEXT fin={fin} {dt:.1f}s snip={raw[:140]}")
+    if st == 0:
+        return f"NET {dt:.1f}s {raw[:60]}"
+    return f"{classify(st, raw)} {dt:.1f}s {raw[:100] if st not in (429,) else ''}"
+
+
+def probe_sse(key: str, model: str) -> str:
+    st, raw, dt = call(f"{BASE}/{model}:streamGenerateContent?alt=sse&key={key}", 30)
+    if st != 200:
+        return f"SSE_{classify(st, raw) if st else 'NET'} {dt:.1f}s"
+    chunks, got = 0, 0
+    for line in raw.splitlines():
+        if not line.startswith("data:"):
+            continue
+        chunks += 1
+        try:
+            txt, _ = text_of(json.loads(line[5:].strip()))
+            got += len(txt)
+        except Exception:  # noqa: BLE001
+            pass
+    return f"SSE chunks={chunks} textlen={got} {dt:.1f}s"
 
 
 def main() -> None:
-    raw = ""
-    for name in ("AI_KEY_POOL",):
-        raw = __import__("os").environ.get(name) or ""
-        if raw.strip():
-            break
-    if not raw.strip():
-        notice("no AI_KEY_POOL secret available")
-        sys.exit(1)
-    if not raw.lstrip().startswith("AQ.") and not raw.lstrip().startswith("AIza"):
-        try:
-            raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
-        except Exception:
-            pass
-    keys: list[str] = []
-    seen: set[str] = set()
-    for line in raw.splitlines():
-        k = line.strip()
-        if not k or k.startswith("#"):
-            continue
-        for part in re.findall(r"AQ\.[A-Za-z0-9_\-]+|[A-Za-z0-9_\-]{35,}", k):
-            if part not in seen:
-                seen.add(part)
-                keys.append(part)
-    if not keys:
-        notice("pool decoded but zero keys")
-        sys.exit(1)
-
-    results = []
-    ok = quota = bad = other = 0
-    for idx, key in enumerate(keys[:MAX_KEYS]):
-        model = MODELS[0]
-        cls, detail = probe(key, model)
-        if cls == "MODEL":
-            cls2, detail2 = probe(key, MODELS[1])
-            if cls2 != "MODEL":
-                cls, detail = cls2, detail2
-            else:
-                cls = f"MODEL({cls}|{cls2})"
-        if cls == "OK":
-            ok += 1
-        elif cls == "QUOTA":
-            quota += 1
-        elif cls in ("INVALID_KEY",) or cls.startswith("INVALID"):
-            bad += 1
-        else:
-            other += 1
-        line = f"key{idx + 1} {mask(key)} -> {cls}"
-        if detail:
-            line += f" | {detail}"
-        results.append(line)
-        if cls == "OK":
-            # a working key proves the pipeline; stop to keep the log short
-            break
-
-    summary = (
-        f"probe n={min(len(keys), MAX_KEYS)}/{len(keys)} ok={ok} quota={quota} "
-        f"invalid={bad} other={other} :: " + " ;; ".join(results)
-    )
-    notice(summary)
+    raw = open("/tmp/pool.txt", encoding="utf-8").read()
+    if not re.search(r"AQ\.|AIza", raw):
+        raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+    keys = [k.strip() for k in raw.splitlines() if k.strip() and not k.startswith("#")]
+    lines = [f"keys={len(keys)}"]
+    offset = 0
+    for model in MODELS:
+        results = []
+        sse = "-"
+        for i in range(TRIES_PER_MODEL):
+            idx = (offset + i) % len(keys)
+            r = probe_generate(keys[idx], model)
+            results.append(f"k{idx + 1}:{r}")
+            if r.startswith("OK") and sse == "-":
+                sse = probe_sse(keys[idx], model)
+        offset += TRIES_PER_MODEL
+        ok = sum(1 for r in results if ":OK" in r)
+        lines.append(f"[{model}] ok={ok}/{len(results)} sse={sse} :: " + " | ".join(results))
+    notice("\n".join(lines))
 
 
 if __name__ == "__main__":
