@@ -66,8 +66,14 @@ class GeminiKeyPool(context: Context?) {
         val now = System.currentTimeMillis()
         val cached = cachedKeys
         if (cached != null && (now - loadedAtMs) < CACHE_TTL_MS) return cached
-        val fresh = runCatching { fetchFromFirestore() }.getOrNull()
+        val freshResult = runCatching { fetchFromFirestore() }
+        freshResult.exceptionOrNull()?.let {
+            Log.w(TAG, "Key pool read failed", it)
+            AiDiagnostics.report("keyPoolRead", it)
+        }
+        val fresh = freshResult.getOrNull()
         if (fresh != null) {
+            AiDiagnostics.lastKeyCount = fresh.size
             cachedKeys = fresh
             loadedAtMs = now
             return fresh

@@ -44,7 +44,7 @@ service cloud.firestore {
 
     function conversationActive(conversationId) {
       return member(conversationId)
-        && get(/databases/$(database)/documents/conversations/$(conversationId)).data.status == 'active'
+        && get(/databases/$(database)/documents/conversations/$(conversationId)).data.status in ['pending', 'active']
         && pairUnblocked(get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants);
     }
 

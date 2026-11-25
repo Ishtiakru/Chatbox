@@ -25,7 +25,10 @@ class AiRouter(
     private val now: () -> Long = System::currentTimeMillis,
     private val cooldownMs: Long = DEFAULT_COOLDOWN_MS,
     private val neverThrow: Boolean = false,
-    private val safetyNet: (Throwable?) -> String = { AiSafeResponses.forError(it) }
+    private val safetyNet: (Throwable?) -> String = {
+        AiDiagnostics.report("safetyNet", it)
+        AiSafeResponses.forError(it)
+    }
 ) {
 
     fun cooldownRemainingMs(providerId: String): Long =

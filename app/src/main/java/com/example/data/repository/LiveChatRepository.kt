@@ -427,6 +427,59 @@ class LiveChatRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Resolves a 6-digit Chatbox ID or a phone number to the real account
+     * (uid + current display name + real short ID). Returns null when no
+     * account is linked to the identifier.
+     */
+    suspend fun lookupPeerByIdentifier(rawIdentifier: String): UserProfile? {
+        val trimmed = rawIdentifier.trim()
+        val compact = trimmed.removePrefix("#").replace(Regex("\\s+"), "")
+        if (ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compact)) {
+            return lookupPeerByShortId(compact)
+        }
+        if (!Regex("^[\\d+\\-\\s()]{7,24}$").matches(trimmed)) return null
+        return try {
+            var peerUid = ""
+            for (candidate in buildPhoneLookupCandidates(trimmed)) {
+                val snap = db.collection("phoneDirectory").document(candidate).get(Source.SERVER).await()
+                if (snap.exists()) {
+                    peerUid = snap.getString("uid").orEmpty()
+                    break
+                }
+            }
+            if (!ChatboxConstants.VALID_ID_REGEX.matches(peerUid)) return null
+            fetchPeerProfile(peerUid)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** One-shot read of profiles/{uid}; null when missing or unreadable. */
+    suspend fun fetchPeerProfile(peerUid: String): UserProfile? {
+        if (!ChatboxConstants.VALID_ID_REGEX.matches(peerUid)) return null
+        return try {
+            val snap = db.collection("profiles").document(peerUid).get(Source.SERVER).await()
+            if (!snap.exists()) return null
+            UserProfile(
+                uid = peerUid,
+                displayName = snap.getString("displayName")?.takeIf { it.isNotBlank() } ?: "Chatbox User",
+                shortId = snap.getString("shortId").orEmpty(),
+                about = snap.getString("about").orEmpty()
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Pre-allocates a message document id so the sender can de-duplicate the echo. */
+    fun newMessageId(conversationId: String): String =
+        db.collection("conversations").document(conversationId).collection("messages").document().id
+
     suspend fun startOrOpenConversation(currentUid: String, rawIdentifier: String): Result<String> {
         val trimmed = rawIdentifier.trim()
         if (trimmed.isEmpty()) {
@@ -524,7 +577,8 @@ class LiveChatRepository(private val context: Context) {
         rawBody: String,
         imageUrl: String? = null,
         audioUrl: String? = null,
-        audioDurationMs: Long? = null
+        audioDurationMs: Long? = null,
+        messageId: String? = null
     ): Result<Unit> {
         val body = rawBody.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
         val cleanImage = imageUrl?.trim()?.takeIf { it.isNotEmpty() }
@@ -550,10 +604,13 @@ class LiveChatRepository(private val context: Context) {
 
         val path = "conversations/$conversationId/messages"
         return try {
-            db.collection("conversations").document(conversationId)
+            val messages = db.collection("conversations").document(conversationId)
                 .collection("messages")
-                .add(payload)
-                .await()
+            if (messageId.isNullOrBlank()) {
+                messages.add(payload).await()
+            } else {
+                messages.document(messageId).set(payload).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e

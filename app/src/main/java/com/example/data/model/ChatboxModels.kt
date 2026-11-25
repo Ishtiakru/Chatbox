@@ -113,7 +113,11 @@ data class ChatboxThread(
     val e2eeVerified: Boolean = false,
     val historyLocked: Boolean = false,
     val historyUnlocked: Boolean = false,
-    val quickReaction: String = ""
+    val quickReaction: String = "",
+    /** Real Firebase uid of the peer (blank = local-only thread). */
+    val peerUid: String = "",
+    /** Firestore conversations/{id} this thread is synced with (blank = local-only). */
+    val conversationId: String = ""
 )
 
 @Serializable
