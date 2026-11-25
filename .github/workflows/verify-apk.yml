@@ -21,18 +21,25 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release download "$TAG" -R "${{ github.repository }}" -p "*.apk" -O app.apk
-          if ! unzip -l app.apk | grep -q "assets/saira_pool.dat"; then
-            echo "::notice title=SUMMARY::tag=$TAG bundled_asset=MISSING"; exit 0
-          fi
-          unzip -p app.apk assets/saira_pool.dat > pool.dat
-          python3 - <<'PY'
+          mkdir -p apks
+          gh release download "$TAG" -R "${{ github.repository }}" -p "*.apk" -D apks
+          BT=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
+          for f in apks/*.apk; do
+            name=$(basename "$f")
+            listener=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "$f" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
+            if ! unzip -l "$f" | grep -q "assets/saira_pool.dat"; then
+              echo "::notice title=SUMMARY::$name bundled_asset=MISSING listener=$listener"; continue
+            fi
+            unzip -p "$f" assets/saira_pool.dat > pool.dat
+            NAME="$name" LISTENER="$listener" python3 - <<'PY'
           import base64, os
           d = base64.b64decode(open("pool.dat").read().strip())
           m = b"chatbox-saira-pool"
           keys = bytes(b ^ m[i % len(m)] for i, b in enumerate(d)).decode().splitlines()
           lens = sorted({len(k) for k in keys})
           pre = sorted({k[:3] for k in keys})
-          print(f"::notice title=SUMMARY::tag={os.environ['TAG']} bundled_asset=present keys={len(keys)} lens={lens} prefixes={pre}")
+          print(f"::notice title=SUMMARY::{os.environ['NAME']} bundled_asset=present keys={len(keys)} lens={lens} prefixes={pre} listener={os.environ['LISTENER']}")
           PY
-          rm -f pool.dat app.apk
+            rm -f pool.dat
+          done
+          rm -rf apks
