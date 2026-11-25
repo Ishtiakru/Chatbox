@@ -46,20 +46,35 @@ class PooledGeminiProvider(
         }
         var model = GeminiAiProvider.DEFAULT_MODEL
         var attempts = 0
+        var transientFailures = 0
+        val startedAt = System.currentTimeMillis()
         for (key in keys) {
             if (attempts >= MAX_KEY_ATTEMPTS) break
+            if (System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break
             attempts++
             val outcome = try {
                 tryKey(key, model, systemInstruction, history, prompt)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                Attempt.Other(e)
+                Attempt.Transient
             }
             when (outcome) {
                 is Attempt.Ok -> return@withContext outcome.text
                 is Attempt.Quota -> pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
                 is Attempt.DeadKey -> pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
+                is Attempt.Transient -> {
+                    // 5xx / hang / timeout: model-side capacity, not a bad key —
+                    // rotate to the next key immediately, and after a couple of
+                    // failures switch to the lighter model (usually less loaded).
+                    transientFailures++
+                    if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
+                        model != GeminiAiProvider.FALLBACK_MODEL
+                    ) {
+                        model = GeminiAiProvider.FALLBACK_MODEL
+                        Log.w(TAG, "Model '$model' under load; retrying pool on '$model'")
+                    }
+                }
                 is Attempt.ModelGone -> {
                     model = GeminiAiProvider.FALLBACK_MODEL
                     val retry = try {
@@ -100,8 +115,11 @@ class PooledGeminiProvider(
         var model = GeminiAiProvider.DEFAULT_MODEL
         var attempts = 0
         var handled = false
+        var transientFailures = 0
+        val startedAt = System.currentTimeMillis()
         for (key in keys) {
             if (attempts >= MAX_KEY_ATTEMPTS) break
+            if (System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break
             attempts++
             try {
                 withContext(Dispatchers.IO) {
@@ -119,6 +137,20 @@ class PooledGeminiProvider(
                 pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
             } catch (e: ModelGoneException) {
                 model = GeminiAiProvider.FALLBACK_MODEL
+            } catch (e: KeyTransientException) {
+                transientFailures++
+                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
+                    model != GeminiAiProvider.FALLBACK_MODEL
+                ) {
+                    model = GeminiAiProvider.FALLBACK_MODEL
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                transientFailures++
+                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
+                    model != GeminiAiProvider.FALLBACK_MODEL
+                ) {
+                    model = GeminiAiProvider.FALLBACK_MODEL
+                }
             } catch (e: Throwable) {
                 Log.w(TAG, "SSE attempt failed non-quota; delegating stream to Firebase AI", e)
                 break
@@ -136,12 +168,14 @@ class PooledGeminiProvider(
         object Quota : Attempt
         object DeadKey : Attempt
         object ModelGone : Attempt
+        object Transient : Attempt
         data class Other(val error: Throwable) : Attempt
     }
 
     private class KeyQuotaException : Exception("quota")
     private class KeyDeadException : Exception("invalid api key")
     private class ModelGoneException : Exception("model not found")
+    private class KeyTransientException : Exception("transient upstream")
 
     private fun requestJson(
         systemInstruction: String,
@@ -232,6 +266,7 @@ class PooledGeminiProvider(
                 (status == 403 && lower.contains("perm")) -> Attempt.DeadKey
             status == 404 || lower.contains("model not found") ||
                 lower.contains("is not found") -> Attempt.ModelGone
+            status >= 500 -> Attempt.Transient
             status in 400..499 -> Attempt.Other(RuntimeException("HTTP $status: ${raw.take(300)}"))
             status == 0 -> Attempt.Other(RuntimeException(raw.take(300)))
             else -> null
@@ -243,6 +278,7 @@ class PooledGeminiProvider(
             is Attempt.Quota -> KeyQuotaException()
             is Attempt.DeadKey -> KeyDeadException()
             is Attempt.ModelGone -> ModelGoneException()
+            is Attempt.Transient -> KeyTransientException()
             else -> RuntimeException("HTTP $status: ${raw.take(300)}")
         }
     }
@@ -261,7 +297,7 @@ class PooledGeminiProvider(
     }.getOrNull()
 
     private fun post(url: String, body: String): Pair<Int, String> {
-        val conn = open(url, body)
+        val conn = open(url, body, GENERATE_READ_TIMEOUT_MS)
         return try {
             val code = conn.responseCode
             val text = if (code in 200..299) {
@@ -275,11 +311,11 @@ class PooledGeminiProvider(
         }
     }
 
-    private fun open(url: String, body: String): HttpURLConnection {
+    private fun open(url: String, body: String, readTimeoutMs: Int = STREAM_READ_TIMEOUT_MS): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.connectTimeout = 5_000
-        conn.readTimeout = 30_000
+        conn.readTimeout = readTimeoutMs
         conn.doOutput = true
         conn.setRequestProperty("Content-Type", "application/json")
         conn.outputStream.use { it.write(body.toByteArray()) }
@@ -291,5 +327,9 @@ class PooledGeminiProvider(
         const val ID = "gemini-pool"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         private const val MAX_KEY_ATTEMPTS = 10
+        private const val POOL_BUDGET_MS = 20_000L
+        private const val MODEL_SWITCH_AFTER_TRANSIENTS = 2
+        private const val GENERATE_READ_TIMEOUT_MS = 12_000
+        private const val STREAM_READ_TIMEOUT_MS = 30_000
     }
 }
