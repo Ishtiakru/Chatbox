@@ -37,6 +37,14 @@ jobs:
           openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out /tmp/ephemeral.pem 2>/dev/null
           openssl pkey -in /tmp/ephemeral.pem -pubout -out /tmp/ephemeral.pub
           echo "::notice title=PUBKEY::$(base64 -w0 /tmp/ephemeral.pub)"
+          mkdir -p /tmp/pubout && cp /tmp/ephemeral.pub /tmp/pubout/ephemeral.pub
+
+      - name: Publish public key (not secret)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ephemeral-pubkey
+          path: /tmp/pubout/ephemeral.pub
+          retention-days: 1
 
       - name: Wait for encrypted keys
         env:
