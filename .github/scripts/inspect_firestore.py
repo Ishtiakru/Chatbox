@@ -27,6 +27,17 @@ def emit(msg: str) -> None:
     print(msg)
 
 
+def doc_name(doc) -> str:
+    """ListDocuments returns Document objects (dicts with a `name` field)."""
+    if isinstance(doc, dict):
+        return str(doc.get("name", ""))
+    return str(doc)
+
+
+def doc_id(doc) -> str:
+    return doc_name(doc).split("/")[-1]
+
+
 def http(method: str, url: str, body: dict | None = None) -> tuple[int, dict | str]:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
@@ -105,9 +116,9 @@ def _main() -> int:
         if not docs:
             emit(f"DB {db_id}: users collection exists but has NO documents")
             continue
-        emit(f"DB {db_id}: users has documents (sample: {[d.split('/')[-1] for d in docs]})")
+        emit(f"DB {db_id}: users has documents (sample: {[doc_id(d) for d in docs]})")
 
-        first_doc = docs[0].split("/documents/")[-1]
+        first_doc = doc_name(docs[0]).split("/documents/", 1)[-1]
         status, subs = http(
             "POST",
             f"{db_base}/documents/{first_doc}:listCollectionIds",
@@ -125,7 +136,7 @@ def _main() -> int:
                     sdocs = sess.get("documents", [])
                     emit(
                         f"DB {db_id}: sairaSessions EXISTS with "
-                        f"{len(sdocs)}+ docs (sample: {[d.split('/')[-1] for d in sdocs]})"
+                        f"{len(sdocs)}+ docs (sample: {[doc_id(d) for d in sdocs]})"
                     )
                 else:
                     emit(f"DB {db_id}: sairaSessions listing status={status} body={sess}")
