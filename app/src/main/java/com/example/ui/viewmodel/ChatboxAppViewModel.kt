@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ChatboxCatalog
 import com.example.data.ai.AiChatMessage
+import com.example.data.ai.AiSafeResponses
 import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
@@ -1124,7 +1125,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 val aiAttempt = try {
                     withTimeoutOrNull(20_000L) {
                         aiCompleter(SairaPrompts.autoReplySystemInstruction, history, prompt)
-                    }?.trim().orEmpty()
+                    }?.trim().orEmpty().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -1193,7 +1194,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 try {
                     withTimeoutOrNull(20_000L) {
                         aiCompleter(SairaPrompts.chatSystemInstruction, history, prompt)
-                    }?.trim().orEmpty()
+                    }?.trim().orEmpty().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {

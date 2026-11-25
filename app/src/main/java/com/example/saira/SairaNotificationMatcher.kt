@@ -59,13 +59,15 @@ object SairaNotificationMatcher {
         val cleanText = incomingText?.trim().orEmpty()
         if (cleanSender.isEmpty() || cleanText.isEmpty()) return null
 
-        val matchedRule = rules.firstOrNull { rule ->
-            rule.enabled &&
-                rule.contactName.isNotBlank() &&
-                rule.taughtReplyGuidance.isNotBlank() &&
-                (rule.platform == SairaPlatform.ANY || rule.platform == platform) &&
-                namesMatch(rule.contactName, cleanSender)
-        } ?: return null
+        val matchedRule = rules
+            .sortedBy { if (isEveryoneRule(it.contactName)) 1 else 0 }
+            .firstOrNull { rule ->
+                rule.enabled &&
+                    rule.contactName.isNotBlank() &&
+                    rule.taughtReplyGuidance.isNotBlank() &&
+                    (rule.platform == SairaPlatform.ANY || rule.platform == platform) &&
+                    namesMatch(rule.contactName, cleanSender)
+            } ?: return null
 
         val wantsLocation = matchedRule.allowLocationShare &&
             liveLocationEnabled &&
@@ -91,7 +93,7 @@ object SairaNotificationMatcher {
     ): SairaNotificationRule? {
         val cleanSender = cleanContactTitle(contactName)
         if (cleanSender.isEmpty()) return null
-        return rules.firstOrNull { rule ->
+        return rules.sortedBy { if (isEveryoneRule(it.contactName)) 1 else 0 }.firstOrNull { rule ->
             rule.enabled &&
                 rule.contactName.isNotBlank() &&
                 rule.taughtReplyGuidance.isNotBlank() &&
@@ -193,11 +195,31 @@ object SairaNotificationMatcher {
         val target = stripBidiMarks(ruleContact).trim().lowercase()
         val incoming = cleanContactTitle(notificationSender).trim().lowercase()
         if (target.isEmpty() || incoming.isEmpty()) return false
+        if (isEveryoneRule(target)) return true
+        if (containsNameTokens(incoming, target)) return true
         return incoming == target ||
             incoming.startsWith("$target:") ||
             incoming.endsWith(": $target") ||
             incoming.startsWith("$target (") ||
             incoming.startsWith("$target ·")
+    }
+
+    private val EVERYONE_NAMES = setOf("*", "all", "everyone", "anyone", "সবাই", "সবার জন্য", "সকলে", "sobai")
+
+    /** A rule whose contact is "সবাই" / "everyone" / "*" answers every 1:1 sender. */
+    fun isEveryoneRule(ruleContact: String): Boolean =
+        stripBidiMarks(ruleContact).trim().lowercase() in EVERYONE_NAMES
+
+    /** "Sajib" matches "Sajib Ahmed" / "Md Sajib" (whole words, in order). */
+    private fun containsNameTokens(incoming: String, target: String): Boolean {
+        val t = target.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val i = incoming.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (t.isEmpty() || i.size < t.size) return false
+        if (t.size == 1 && t[0].length < 3) return false
+        for (start in 0..(i.size - t.size)) {
+            if ((t.indices).all { i[start + it] == t[it] }) return true
+        }
+        return false
     }
 
     private fun stripBidiMarks(raw: String?): String =

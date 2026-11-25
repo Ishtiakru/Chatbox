@@ -30,6 +30,17 @@ object AiSafeResponses {
         return pool[(rotation.getAndIncrement() and Int.MAX_VALUE) % pool.size]
     }
 
+    /**
+     * True when [text] is one of the "Saira can't answer right now" fallbacks.
+     * Auto-replies to real contacts must never send these; use the owner's
+     * taught text instead.
+     */
+    fun isSafetyMessage(text: String?): Boolean {
+        val clean = text?.trim().orEmpty()
+        if (clean.isEmpty()) return false
+        return clean in LIMIT_REACHED || clean in GENERIC || clean == APP_CHECK_UNAVAILABLE
+    }
+
     const val APP_CHECK_UNAVAILABLE =
         "Saira এর সিকিউরিটি টোকেন (App Check) মেয়াদ শেষ হয়ে গেছে। অ্যাপটি বন্ধ করে আবার খুলুন অথবা কিছুক্ষণ পর চেষ্টা করুন।"
 }

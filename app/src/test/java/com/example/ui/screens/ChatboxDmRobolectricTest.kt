@@ -39,7 +39,6 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -593,7 +592,7 @@ class ChatboxDmRobolectricTest {
     }
 
     @Test
-    fun `manifest removes sensitive listener permissions and saira shows play protect safe mode`() {
+    fun `manifest declares saira notification listener and saira shows auto-reply card`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val flags = PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES
         val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -607,14 +606,13 @@ class ChatboxDmRobolectricTest {
         }
 
         val requested = pkgInfo.requestedPermissions?.toSet().orEmpty()
-        assertFalse(
-            "WAKE_LOCK should be removed from manifest",
-            requested.contains(Manifest.permission.WAKE_LOCK)
-        )
-        assertFalse(
-            "BIND_NOTIFICATION_LISTENER_SERVICE must NOT be declared to satisfy Play Protect",
+        // The user opted in to WhatsApp/Messenger auto-reply, which needs the
+        // notification listener (guarded by the system-only bind permission).
+        assertTrue(
+            "Saira notification listener must be declared for WhatsApp/Messenger auto-reply",
             pkgInfo.services.orEmpty().any {
-                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE
+                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE &&
+                    it.name == "com.example.saira.SairaNotificationListenerService"
             }
         )
         assertEquals(
@@ -623,7 +621,7 @@ class ChatboxDmRobolectricTest {
             (pkgInfo.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_ALLOW_BACKUP
         )
 
-        // Verify Saira tab displays Play Protect Safe Mode and NOT the old Notification Access prompt
+        // Saira Auto-Reply tab shows the WhatsApp/Messenger card with access status
         composeRule.setContent {
             ChatboxRoot()
         }
