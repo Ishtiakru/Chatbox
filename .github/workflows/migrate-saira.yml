@@ -88,7 +88,6 @@ jobs:
           COLLECTIONS: ${{ inputs.collections }}
         run: |
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB} collections=${COLLECTIONS}"
-          echo "::error::PREFLIGHT sha=$(git rev-parse --short HEAD)"
           ARGS="--source-key scripts/firebase-migrate/source.json --dest-key scripts/firebase-migrate/dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --collections ${COLLECTIONS}"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           timeout 300s python3 .github/scripts/migrate_firestore.py $ARGS

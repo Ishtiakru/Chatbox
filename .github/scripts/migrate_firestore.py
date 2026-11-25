@@ -146,7 +146,7 @@ def migrate_collection(
             migrate_collection(
                 src, dst, f"{rel}/{sub}", execute, stats
             )
-    emit(f"count {col_path}: {stats['docs'] - before}")
+    stats.setdefault("paths", {})[col_path] = stats["docs"] - before
 
 
 def main() -> int:
@@ -160,8 +160,6 @@ def main() -> int:
     args = ap.parse_args()
 
     execute = args.execute
-    emit(f"MIGRATE mode={'EXECUTE' if execute else 'DRY RUN'}")
-    emit(f"source-db={args.source_db} dest-db={args.dest_db}")
 
     try:
         skey = load_key(args.source_key)
@@ -171,7 +169,6 @@ def main() -> int:
         return 1
 
     sp, dp = skey.get("project_id"), dkey.get("project_id")
-    emit(f"source-project={sp} dest-project={dp}")
     src = Client(skey, sp, args.source_db)
     dst = Client(dkey, dp, args.dest_db)
 
@@ -203,8 +200,12 @@ def main() -> int:
             emit(f"TOTALS docs_scanned={stats['docs']} writes={stats['writes']}")
             return 1
 
-    emit(f"TOTALS docs_scanned={stats['docs']} writes={stats['writes']}")
-    emit("MIGRATION_DONE" if execute else "DRY_RUN_DONE")
+    # GitHub caps annotations at 10 per step — one compact summary line.
+    emit(
+        f"SUMMARY mode={'EXECUTE' if execute else 'DRY'} "
+        f"paths={json.dumps(stats.get('paths', {}), sort_keys=True)} "
+        f"docs_scanned={stats['docs']} writes={stats['writes']} done=1"
+    )
     return 0
 
 
