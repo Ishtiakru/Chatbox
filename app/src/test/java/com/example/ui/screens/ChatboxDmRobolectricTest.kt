@@ -592,7 +592,7 @@ class ChatboxDmRobolectricTest {
     }
 
     @Test
-    fun `manifest declares saira notification listener and saira shows auto-reply card`() {
+    fun `standard manifest has no notification listener and saira explains full edition`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val flags = PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES
         val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -606,14 +606,18 @@ class ChatboxDmRobolectricTest {
         }
 
         val requested = pkgInfo.requestedPermissions?.toSet().orEmpty()
-        // The user opted in to WhatsApp/Messenger auto-reply, which needs the
-        // notification listener (guarded by the system-only bind permission).
+        // Standard edition must NOT declare the notification listener: Play
+        // Protect's enhanced fraud protection hard-blocks such sideloaded APKs.
+        // (The listener only ships in the separate "-full" APK.)
         assertTrue(
-            "Saira notification listener must be declared for WhatsApp/Messenger auto-reply",
-            pkgInfo.services.orEmpty().any {
-                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE &&
-                    it.name == "com.example.saira.SairaNotificationListenerService"
+            "Standard APK must not declare BIND_NOTIFICATION_LISTENER_SERVICE",
+            pkgInfo.services.orEmpty().none {
+                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE
             }
+        )
+        assertTrue(
+            "WAKE_LOCK only belongs to the full edition",
+            !requested.contains(Manifest.permission.WAKE_LOCK)
         )
         assertEquals(
             "allowBackup must be false",
@@ -632,8 +636,7 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_play_protect_status").performScrollTo().assertIsDisplayed()
-        composeRule.onAllNodesWithText("Notification Access অনুমতি প্রয়োজন", substring = true)
-            .assertCountEquals(0)
+        composeRule.onNodeWithTag("saira_full_edition_button").performScrollTo().assertIsDisplayed()
     }
 
     @Test

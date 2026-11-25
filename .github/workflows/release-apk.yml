@@ -214,6 +214,28 @@ jobs:
             exit 1
           fi
           cp "$APK_SOURCE" "chatbox-v${CLEAN_VER}.apk"
+
+          # Full edition: same app + WhatsApp/Messenger auto-reply listener.
+          rm -rf app/build/outputs/apk/release
+          gradle :app:assembleRelease --no-daemon -Pchatbox.autoReply=true \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+          FULL_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$FULL_SOURCE" ]; then
+            echo "ERROR: Built full APK not found."
+            exit 1
+          fi
+          cp "$FULL_SOURCE" "chatbox-v${CLEAN_VER}-full.apk"
+          BT=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
+          FULL_HAS=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "chatbox-v${CLEAN_VER}-full.apk" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
+          STD_HAS=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "chatbox-v${CLEAN_VER}.apk" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
+          echo "::notice::listener in full=$FULL_HAS standard=$STD_HAS"
+          if [ "$FULL_HAS" = "0" ] || [ "$STD_HAS" != "0" ]; then
+            echo "::error::APK edition manifest check failed (full=$FULL_HAS standard=$STD_HAS)"
+            exit 1
+          fi
           BUILD_TOOLS_DIR=$(ls -1 "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)
           APKSIGNER_OUT=$("${ANDROID_HOME}/build-tools/${BUILD_TOOLS_DIR}/apksigner" verify --print-certs "chatbox-v${CLEAN_VER}.apk")
           echo "$APKSIGNER_OUT"

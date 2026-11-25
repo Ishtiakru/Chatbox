@@ -957,6 +957,7 @@ private fun AutoReplyAndBackupTab(
     var locationPermGranted by remember {
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
     }
+    val listenerAvailable = remember { SairaNotificationListenerService.isListenerAvailable(context) }
     var notifAccessGranted by remember {
         mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
     }
@@ -1108,7 +1109,7 @@ private fun AutoReplyAndBackupTab(
                         checked = notifAutoReplyEnabled,
                         onCheckedChange = { enabled ->
                             onChangeNotifAutoReply(enabled)
-                            if (enabled && !notifAccessGranted) {
+                            if (enabled && listenerAvailable && !notifAccessGranted) {
                                 SairaNotificationListenerService.openNotificationAccessSettings(context)
                             }
                         },
@@ -1118,6 +1119,27 @@ private fun AutoReplyAndBackupTab(
 
                 HorizontalDivider(color = colors.border)
 
+                if (!listenerAvailable) {
+                    NoticeBanner(
+                        text = "এই সাধারণ Chatbox-এ WhatsApp/Messenger অটো-রিপ্লাই নেই (Play Protect এটা block করে)। এর জন্য Release পাতা থেকে \"-full.apk\" লেখা Chatbox install করুন। install করার আগে Play Store → Profile → Play Protect → ⚙️ → \"Scan apps with Play Protect\" বন্ধ করে নিন।",
+                        isError = true
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(SairaNotificationListenerService.FULL_EDITION_URL)
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        },
+                        modifier = Modifier.testTag("saira_full_edition_button")
+                    ) {
+                        Text("Full সংস্করণ ডাউনলোড পাতা খুলুন")
+                    }
+                } else {
                 PermissionStatusRow(
                     granted = notifAccessGranted,
                     grantedText = "Notification Access চালু আছে",
@@ -1158,6 +1180,7 @@ private fun AutoReplyAndBackupTab(
                     },
                     isError = !ready
                 )
+                }
             }
         }
 

@@ -61,6 +61,11 @@ android {
         }
     }
 
+    // Full edition (WhatsApp/Messenger auto-reply): ./gradlew assembleRelease -Pchatbox.autoReply=true
+    if (project.findProperty("chatbox.autoReply")?.toString() == "true") {
+        sourceSets.getByName("release").manifest.srcFile("src/autoreply/AndroidManifest.xml")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21

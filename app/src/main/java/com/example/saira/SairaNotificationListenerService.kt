@@ -639,6 +639,21 @@ class SairaNotificationListenerService : NotificationListenerService() {
             runCatching { context.startActivity(intent) }
         }
 
+        const val FULL_EDITION_URL = "https://github.com/Ishtiakru/Chatbox/releases/latest"
+
+        /**
+         * True only in the "full" APK, where the listener is declared in the
+         * manifest. The standard APK leaves it out so Play Protect lets it install.
+         */
+        fun isListenerAvailable(context: Context): Boolean = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getServiceInfo(
+                ComponentName(context, SairaNotificationListenerService::class.java),
+                0
+            )
+            true
+        }.getOrDefault(false)
+
         /** Asks Android to (re)connect the listener — some phones drop it after updates. */
         fun ensureBound(context: Context) {
             runCatching {
