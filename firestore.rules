@@ -570,18 +570,20 @@ service cloud.firestore {
 
     // Last Saira failure per user (AiDiagnostics.kt) so the maintainer can see
     // why a device fell back to the friendly safety-net message.
-    match /aiDiagnostics/{uid} {
-      allow get: if isSignedIn() && request.auth.uid == uid;
-      allow create, update: if isSignedIn()
-        && request.auth.uid == uid
-        && incoming().keys().hasOnly(['stage', 'errorClass', 'message', 'keyCount', 'appVersion', 'updatedAt'])
+    match /aiDiagnostics/{docId} {
+      allow get, list, delete: if false;
+      allow create, update: if (
+          (request.auth != null && request.auth.uid == docId)
+          || docId.matches('^dev_[a-f0-9]{24}$')
+        )
+        && incoming().keys().hasOnly(['stage', 'errorClass', 'message', 'keyCount', 'signedIn', 'appVersion', 'updatedAt'])
         && incoming().stage is string && incoming().stage.size() <= 40
         && incoming().errorClass is string && incoming().errorClass.size() <= 120
         && incoming().message is string && incoming().message.size() <= 600
         && incoming().keyCount is int
+        && incoming().signedIn is bool
         && incoming().appVersion is string && incoming().appVersion.size() <= 40
         && incoming().updatedAt == request.time;
-      allow list, delete: if false;
     }
 
     match /settings/{appearance} {

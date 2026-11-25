@@ -29,25 +29,35 @@ object AiDiagnostics {
     @Volatile
     private var lastWriteAt = 0L
 
+    private fun installId(ctx: android.content.Context): String {
+        val prefs = ctx.getSharedPreferences("chatbox_ai_diag", android.content.Context.MODE_PRIVATE)
+        prefs.getString("installId", null)?.let { return it }
+        val id = "dev_" + java.util.UUID.randomUUID().toString().replace("-", "").take(24)
+        prefs.edit().putString("installId", id).apply()
+        return id
+    }
+
     fun report(stage: String, error: Throwable?) {
         val now = System.currentTimeMillis()
         if (now - lastWriteAt < MIN_INTERVAL_MS) return
         lastWriteAt = now
         scope.launch {
             runCatching {
-                val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@runCatching
                 val ctx = FirebaseApp.getInstance().applicationContext
+                val authUid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
+                val docId = authUid ?: installId(ctx)
                 val root = generateSequence(error) { it.cause }.take(4).toList()
                 val classes = root.joinToString(" <- ") { it.javaClass.simpleName }.ifBlank { "none" }
                 val msg = root.joinToString(" | ") { it.message.orEmpty() }.take(600)
                 FirebaseProviders.firestore(ctx)
-                    .collection("aiDiagnostics").document(uid)
+                    .collection("aiDiagnostics").document(docId)
                     .set(
                         mapOf(
                             "stage" to stage.take(40),
                             "errorClass" to classes.take(120),
                             "message" to msg,
                             "keyCount" to lastKeyCount,
+                            "signedIn" to (authUid != null),
                             "appVersion" to BuildConfig.VERSION_NAME.take(40),
                             "updatedAt" to FieldValue.serverTimestamp()
                         )

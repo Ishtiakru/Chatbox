@@ -167,6 +167,33 @@ jobs:
           echo "key_pass=$KEY_PASS" >> "$GITHUB_OUTPUT"
           keytool -list -v -keystore "$STORE_PATH" -alias "$KEY_ALIAS" -storepass "$STORE_PASS" | grep -E "SHA1:|SHA256:"
 
+      - name: Bundle Saira key pool into APK assets (never committed)
+        env:
+          POOL_RAW: ${{ secrets.AI_KEY_POOL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, re
+          raw = os.environ.get("POOL_RAW") or ""
+          if not raw.strip():
+              print("::warning::AI_KEY_POOL secret empty - APK ships without bundled keys")
+              raise SystemExit(0)
+          text = raw
+          if not re.search(r"AQ\.|AIza", raw):
+              text = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+          keys = []
+          for line in text.splitlines():
+              k = line.strip()
+              if k and not k.startswith("#") and k not in keys:
+                  keys.append(k)
+          mask = b"chatbox-saira-pool"
+          plain = "\n".join(keys).encode()
+          enc = bytes(b ^ mask[i % len(mask)] for i, b in enumerate(plain))
+          os.makedirs("app/src/main/assets", exist_ok=True)
+          open("app/src/main/assets/saira_pool.dat", "w").write(base64.b64encode(enc).decode())
+          print(f"bundled keys={len(keys)}")
+          PY
+
       - name: Build & sign Native Android Release APK
         env:
           CLEAN_VER: ${{ steps.meta.outputs.version }}

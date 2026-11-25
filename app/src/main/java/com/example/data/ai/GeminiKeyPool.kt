@@ -72,14 +72,38 @@ class GeminiKeyPool(context: Context?) {
             AiDiagnostics.report("keyPoolRead", it)
         }
         val fresh = freshResult.getOrNull()
-        if (fresh != null) {
+        if (fresh != null && fresh.isNotEmpty()) {
             AiDiagnostics.lastKeyCount = fresh.size
             cachedKeys = fresh
             loadedAtMs = now
             return fresh
         }
-        // Network/rules hiccup: keep serving the last known pool.
-        return cached ?: emptyList()
+        // Firestore unreadable (signed-out user, rules, offline): keep serving the
+        // last known pool, else the pool bundled into the APK at release time.
+        if (!cached.isNullOrEmpty()) return cached
+        val bundled = bundledKeys()
+        if (bundled.isNotEmpty()) {
+            AiDiagnostics.lastKeyCount = bundled.size
+            cachedKeys = bundled
+            loadedAtMs = now - CACHE_TTL_MS + BUNDLED_RETRY_MS
+        }
+        return bundled
+    }
+
+    @Volatile
+    private var bundledCache: List<String>? = null
+
+    /** Keys baked into assets/ by release-apk.yml (XOR + base64, never in git). */
+    private fun bundledKeys(): List<String> {
+        bundledCache?.let { return it }
+        val ctx = appContext ?: return emptyList()
+        val keys = runCatching {
+            val encoded = ctx.assets.open(BUNDLED_ASSET).bufferedReader().use { it.readText() }.trim()
+            BundledKeyCodec.decode(encoded)
+        }.getOrElse { emptyList() }
+        if (keys.isNotEmpty()) Log.i(TAG, "Using ${keys.size} bundled Gemini key(s)")
+        bundledCache = keys
+        return keys
     }
 
     private suspend fun fetchFromFirestore(): List<String>? {
@@ -121,6 +145,8 @@ class GeminiKeyPool(context: Context?) {
         const val DOC_ID = "aiKeyPool"
         private const val PREFS_NAME = "chatbox_gemini_key_cooldowns"
         private const val CACHE_TTL_MS = 5 * 60_000L
+        private const val BUNDLED_RETRY_MS = 60_000L
+        const val BUNDLED_ASSET = "saira_pool.dat"
 
         /** Quota (429 / daily-limit) errors: skip the key for a while. */
         const val QUOTA_COOLDOWN_MS = 10 * 60_000L
@@ -146,5 +172,24 @@ object KeyRotation {
         val size = available.size
         val start = ((cursor % size) + size) % size
         return available.drop(start) + available.take(start)
+    }
+}
+
+/** Light obfuscation for the APK-bundled pool (not encryption — deters casual grep). */
+object BundledKeyCodec {
+    private val MASK = "chatbox-saira-pool".toByteArray()
+
+    fun decode(encoded: String): List<String> {
+        if (encoded.isBlank()) return emptyList()
+        val raw = java.util.Base64.getDecoder().decode(encoded.replace(Regex("\\s+"), ""))
+        val plain = ByteArray(raw.size) { i -> (raw[i].toInt() xor MASK[i % MASK.size].toInt()).toByte() }
+        return String(plain, Charsets.UTF_8).lines().map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }.distinct()
+    }
+
+    fun encode(keys: List<String>): String {
+        val plain = keys.joinToString("\n").toByteArray(Charsets.UTF_8)
+        val out = ByteArray(plain.size) { i -> (plain[i].toInt() xor MASK[i % MASK.size].toInt()).toByte() }
+        return java.util.Base64.getEncoder().encodeToString(out)
     }
 }
