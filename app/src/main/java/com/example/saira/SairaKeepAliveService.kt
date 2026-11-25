@@ -51,7 +51,13 @@ class SairaKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        goForeground()
+        // Only (re)enter foreground when needed: first start, or to add the location
+        // type once permission exists. Re-calling from background could drop it.
+        if (!inForeground || (!hasLocationType && SairaLocationHelper.hasLocationPermission(this) &&
+                intent?.getBooleanExtra(EXTRA_FROM_FOREGROUND, false) == true)
+        ) {
+            goForeground()
+        }
         if (SairaNotificationListenerService.isNotificationAccessGranted(this)) {
             SairaNotificationListenerService.ensureBound(this)
         }
@@ -59,9 +65,12 @@ class SairaKeepAliveService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Recents swipe: make sure we come straight back.
+        // Recents swipe: the service keeps running (stopWithTask=false); just make
+        // sure the listener is still bound.
         super.onTaskRemoved(rootIntent)
-        runCatching { start(applicationContext) }
+        if (SairaNotificationListenerService.isNotificationAccessGranted(this)) {
+            SairaNotificationListenerService.ensureBound(this)
+        }
     }
 
     override fun onDestroy() {
@@ -69,21 +78,46 @@ class SairaKeepAliveService : Service() {
         super.onDestroy()
     }
 
+    private var inForeground = false
+    private var hasLocationType = false
+
     private fun goForeground() {
         val notification = buildNotification(this)
-        runCatching {
+        val wantLocation = SairaLocationHelper.hasLocationPermission(this)
+        // Location type gives replies live location while the screen is off.
+        // Only allowed when started from the foreground; else fall back.
+        if (wantLocation && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            }
+            if (runCatching { startForeground(NOTIFICATION_ID, notification, type) }.isSuccess) {
+                inForeground = true
+                hasLocationType = true
+                return
+            }
+        }
+        val ok = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        }.onFailure { stopSelf() }
+        }.isSuccess
+        if (ok) {
+            inForeground = true
+            hasLocationType = false
+        } else if (!inForeground) {
+            stopSelf()
+        }
     }
 
     companion object {
         private const val CHANNEL_ID = "saira_auto_reply_keepalive"
         private const val NOTIFICATION_ID = 4107
         private const val REBIND_INTERVAL_MS = 10 * 60 * 1000L
+        private const val EXTRA_FROM_FOREGROUND = "from_foreground"
 
         /** True only in the full edition, where the service is declared in the manifest. */
         fun isAvailable(context: Context): Boolean = runCatching {
@@ -94,9 +128,10 @@ class SairaKeepAliveService : Service() {
             true
         }.getOrDefault(false)
 
-        fun start(context: Context) {
+        fun start(context: Context, fromForeground: Boolean = false) {
             if (!isAvailable(context)) return
             val intent = Intent(context, SairaKeepAliveService::class.java)
+                .putExtra(EXTRA_FROM_FOREGROUND, fromForeground)
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -112,7 +147,7 @@ class SairaKeepAliveService : Service() {
         }
 
         /** Starts or stops the service according to the saved toggle + permission. */
-        fun sync(context: Context) {
+        fun sync(context: Context, fromForeground: Boolean = false) {
             val app = context.applicationContext
             if (!isAvailable(app)) return
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -120,7 +155,7 @@ class SairaKeepAliveService : Service() {
                     AppPreferencesRepository(app).sairaNotifReplyEnabled.first()
                 }.getOrDefault(false)
                 val granted = SairaNotificationListenerService.isNotificationAccessGranted(app)
-                if (enabled && granted) start(app) else stop(app)
+                if (enabled && granted) start(app, fromForeground) else stop(app)
             }
         }
 

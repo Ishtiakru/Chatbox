@@ -215,7 +215,7 @@ object SairaNotificationMatcher {
         platform = SairaPlatform.ANY,
         taughtReplyGuidance = DEFAULT_EVERYONE_TEXT,
         enabled = true,
-        allowLocationShare = false,
+        allowLocationShare = true,
         useAiReply = true
     )
 

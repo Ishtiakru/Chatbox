@@ -1134,7 +1134,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             (peerIdForLocation != null && peerIdForLocation in allowedPeers)
         val locationPermitted = wantsLocation && liveLocEnabled && hasLocPerm && peerExplicitlyAllowedLoc
         val locationSnapshot = if (locationPermitted) {
-            SairaLocationHelper.getBestAvailableLocation(app)
+            SairaLocationHelper.getFreshLocation(app)
         } else {
             null
         }
