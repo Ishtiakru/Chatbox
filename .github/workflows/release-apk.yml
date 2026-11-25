@@ -261,7 +261,19 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Chatbox ${{ steps.meta.outputs.tag }}
-          files: |
-            chatbox-v*.apk
-            chatbox-full.apk
+          files: chatbox-v*.apk
           generate_release_notes: true
+
+      - name: Upload stable-name full APK (chatbox-full.apk)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" chatbox-full.apk --clobber -R "${{ github.repository }}"; then
+              echo "uploaded chatbox-full.apk"; exit 0
+            fi
+            sleep $((i * 10))
+          done
+          echo "::warning::could not upload chatbox-full.apk"
