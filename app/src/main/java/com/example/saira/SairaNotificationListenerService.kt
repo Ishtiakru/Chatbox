@@ -262,7 +262,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 val isContinuation = historySnapshot.isNotEmpty()
 
                 val locationSnapshot = if (match.shouldAttachLocation) {
-                    SairaLocationHelper.getBestAvailableLocation(applicationContext)
+                    SairaLocationHelper.getFreshLocation(applicationContext)
                 } else {
                     null
                 }
@@ -323,10 +323,23 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     )
                 }
 
-                val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
+                val replyToSend = if (locationSnapshot != null && !finalReply.contains("maps.google.com")) {
+                    "$finalReply\n${locationSnapshot.toShareText()}"
+                } else {
+                    finalReply
+                }
+                val locationNote = when {
+                    !SairaTimeGreeting.isLocationRequest(normalizedIncoming) -> ""
+                    !locationEnabled -> " (লোকেশন চেয়েছিল, কিন্তু লাইভ লোকেশন সুইচ বন্ধ)"
+                    !hasLocPerm -> " (লোকেশন চেয়েছিল, কিন্তু Location অনুমতি নেই)"
+                    !match.rule.allowLocationShare -> " (লোকেশন চেয়েছিল, কিন্তু এই ব্যক্তির জন্য Location বন্ধ)"
+                    locationSnapshot == null -> " (লোকেশন চেয়েছিল, ফোনের Location/GPS বন্ধ থাকায় পাওয়া যায়নি)"
+                    else -> " + লোকেশন ✓"
+                }
+                val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, replyToSend)
                 recordStatus(
                     applicationContext,
-                    if (sentOk) "${match.platform.label} · ${match.normalizedSender}: সায়রা উত্তর পাঠিয়েছে ✓"
+                    if (sentOk) "${match.platform.label} · ${match.normalizedSender}: সায়রা উত্তর পাঠিয়েছে ✓$locationNote"
                     else "${match.platform.label} · ${match.normalizedSender}: উত্তর পাঠানো যায়নি (WhatsApp নোটিফিকেশন বন্ধ হয়ে গেছে)"
                 )
                 if (sentOk) {
@@ -334,12 +347,12 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     lastContactStates[contactKey] = ContactReplyState(
                         lastFingerprint = fingerprint,
                         lastIncomingText = normalizedIncoming,
-                        lastSentReply = finalReply,
+                        lastSentReply = replyToSend,
                         repliedAtMs = sentAtMs
                     )
 
                     historyDeque.addLast(AiChatMessage("user", normalizedIncoming.take(300)))
-                    historyDeque.addLast(AiChatMessage("model", finalReply.take(400)))
+                    historyDeque.addLast(AiChatMessage("model", replyToSend.take(400)))
                     while (historyDeque.size > MAX_HISTORY_MESSAGES) {
                         historyDeque.removeFirst()
                     }
@@ -350,7 +363,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                             contactName = match.normalizedSender,
                             platformLabel = match.platform.label,
                             incomingPreview = normalizedIncoming.take(120),
-                            sentReply = finalReply.take(280),
+                            sentReply = replyToSend.take(280),
                             includedLocation = locationSnapshot != null,
                             timestampMs = sentAtMs
                         )

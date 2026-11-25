@@ -65,4 +65,25 @@ class SairaMatcherExtrasTest {
         val reply = SairaNotificationMatcher.buildFirstBoxReply("Any Random Person", m!!.rule, null, hourOfDay = 21)
         assertTrue(reply.contains(SairaNotificationMatcher.DEFAULT_EVERYONE_TEXT))
     }
+
+    @Test
+    fun `default rule shares location only when master switch and permission are on`() {
+        val rule = SairaNotificationMatcher.defaultEveryoneRule()
+        fun m(master: Boolean, perm: Boolean, text: String) = SairaNotificationMatcher.match(
+            notifAutoReplyEnabled = true,
+            liveLocationEnabled = master,
+            locationPermissionGranted = perm,
+            packageName = "com.whatsapp",
+            senderTitle = "Rahim",
+            incomingText = text,
+            isGroupSummary = false,
+            rules = listOf(rule)
+        )
+        assertTrue(m(true, true, "bhai tumi kothay aso?")!!.shouldAttachLocation)
+        assertTrue(m(true, true, "loc dao")!!.shouldAttachLocation)
+        assertTrue(m(true, true, "ঠিকানা টা দাও")!!.shouldAttachLocation)
+        assertTrue(!m(false, true, "kothay aso")!!.shouldAttachLocation)
+        assertTrue(!m(true, false, "kothay aso")!!.shouldAttachLocation)
+        assertTrue(!m(true, true, "kemon acho")!!.shouldAttachLocation)
+    }
 }

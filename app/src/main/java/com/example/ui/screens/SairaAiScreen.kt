@@ -990,15 +990,24 @@ private fun AutoReplyAndBackupTab(
     }
 
     val locationPermLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        locationPermGranted = granted
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        locationPermGranted = result.values.any { it } || SairaLocationHelper.hasLocationPermission(context)
+        if (locationPermGranted) {
+            // Re-enter foreground with the location type so screen-off replies get live location.
+            com.example.saira.SairaKeepAliveService.sync(context, fromForeground = true)
+        }
+    }
+    val requestLocationPermission = {
+        locationPermLauncher.launch(
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        )
     }
 
     var contactDraft by remember { mutableStateOf("") }
     var platformDraft by remember { mutableStateOf(SairaPlatform.ANY) }
     var guidanceDraft by remember { mutableStateOf("") }
-    var allowLocationDraft by remember { mutableStateOf(false) }
+    var allowLocationDraft by remember { mutableStateOf(true) }
     var useAiReplyDraft by remember { mutableStateOf(true) }
 
     var testSenderDraft by remember { mutableStateOf("Sazzad Jony") }
@@ -1259,14 +1268,17 @@ private fun AutoReplyAndBackupTab(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("লাইভ লোকেশন শেয়ারিং", style = MaterialTheme.typography.titleSmall, color = colors.ink)
                         Text(
-                            "আপনার অনুমতি এবং নির্ধারিত ব্যক্তির ক্ষেত্রেই কেবল লোকেশন বা কাস্টম বার্তা পাঠানো হবে।",
+                            "চালু করলে কেউ WhatsApp/Messenger/Chatbox-এ লোকেশন চাইলে (যেমন \"কোথায় আছো\", \"location দাও\") সায়রা আপনার লাইভ লোকেশনের Google Maps লিংক পাঠাবে। কোনো ব্যক্তির জন্য বন্ধ রাখতে নিচের তালিকায় তার \"Location\" বন্ধ করুন।",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkMuted
                         )
                     }
                     Switch(
                         checked = liveLocationEnabled,
-                        onCheckedChange = onChangeLiveLocation,
+                        onCheckedChange = { enabled ->
+                            onChangeLiveLocation(enabled)
+                            if (enabled && !locationPermGranted) requestLocationPermission()
+                        },
                         modifier = Modifier.testTag("saira_live_location_switch")
                     )
                 }
@@ -1295,7 +1307,7 @@ private fun AutoReplyAndBackupTab(
                     }
                     if (!locationPermGranted) {
                         OutlinedButton(
-                            onClick = { locationPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
+                            onClick = { requestLocationPermission() },
                             modifier = Modifier.testTag("saira_location_permission_button")
                         ) {
                             Text("লোকেশন অনুমতি দিন")
@@ -1398,7 +1410,7 @@ private fun AutoReplyAndBackupTab(
                         onSaveRules(next)
                         contactDraft = ""
                         guidanceDraft = ""
-                        allowLocationDraft = false
+                        allowLocationDraft = true
                         useAiReplyDraft = true
                     },
                     modifier = Modifier

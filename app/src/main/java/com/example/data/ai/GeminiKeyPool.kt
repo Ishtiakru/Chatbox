@@ -6,6 +6,7 @@ import android.util.Log
 import com.example.data.repository.FirebaseProviders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -35,6 +36,7 @@ class GeminiKeyPool(context: Context?) {
     }
 
     private val cursor = AtomicInteger(0)
+    private val refreshScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var cachedKeys: List<String>? = null
@@ -66,7 +68,25 @@ class GeminiKeyPool(context: Context?) {
         val now = System.currentTimeMillis()
         val cached = cachedKeys
         if (cached != null && (now - loadedAtMs) < CACHE_TTL_MS) return cached
-        val freshResult = runCatching { fetchFromFirestore() }
+        // Never make a reply wait on Firestore: serve the stale/bundled pool
+        // immediately and refresh in the background.
+        val instant = cached?.takeIf { it.isNotEmpty() } ?: bundledKeys().takeIf { it.isNotEmpty() }
+        if (instant != null) {
+            if (cachedKeys == null) cachedKeys = instant
+            loadedAtMs = now
+            refreshScope.launch {
+                val fresh = runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(15_000L) { fetchFromFirestore() }
+                }.getOrNull()
+                if (!fresh.isNullOrEmpty()) {
+                    AiDiagnostics.lastKeyCount = fresh.size
+                    cachedKeys = fresh
+                    loadedAtMs = System.currentTimeMillis()
+                }
+            }
+            return instant
+        }
+        val freshResult = runCatching { kotlinx.coroutines.withTimeoutOrNull(5_000L) { fetchFromFirestore() } }
         freshResult.exceptionOrNull()?.let {
             Log.w(TAG, "Key pool read failed", it)
             AiDiagnostics.report("keyPoolRead", it)

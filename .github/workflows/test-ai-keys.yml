@@ -4,6 +4,11 @@ name: Test AI keys
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: keys | latency
+        required: false
+        default: keys
 
 jobs:
   probe:
@@ -41,7 +46,11 @@ jobs:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
         run: |
           set -euo pipefail
-          timeout 900s python3 .github/scripts/test_ai_keys.py
+          if [ "${{ inputs.mode }}" = "latency" ]; then
+            timeout 900s python3 .github/scripts/latency_probe.py
+          else
+            timeout 900s python3 .github/scripts/test_ai_keys.py
+          fi
 
       - name: Cleanup
         if: always()
