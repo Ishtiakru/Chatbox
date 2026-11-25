@@ -82,7 +82,9 @@ jobs:
           DEST_DB: ${{ inputs.dest-db }}
         run: |
           set +e  # keep going after node fails so POSTFLIGHT/cat always run
-          ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --list-auth"
+          # --list-auth omitted for now: listUsers() is where runs were being
+          # killed; Firestore dry-run counts do not need it.
+          ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB}"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
           echo "::error::REDIRECT_V2_ACTIVE"
@@ -91,7 +93,7 @@ jobs:
           cd scripts/firebase-migrate
           # stdout to a FILE is synchronous in Node — piping to tee lets
           # process.exit() drop the tail of the log (observed in run 1).
-          node migrate-saira.mjs $ARGS > /tmp/migrate.log 2>&1
+          timeout 90s node migrate-saira.mjs $ARGS > /tmp/migrate.log 2>&1
           code=$?
           echo "::error::POSTFLIGHT exit=$code log_lines=$(wc -l < /tmp/migrate.log) log_diag=$(grep -c 'diag' /tmp/migrate.log || true)"
           cat /tmp/migrate.log
