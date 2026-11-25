@@ -25,3 +25,4 @@ app/google-services.json
 
 # Local download artifacts (e.g. Drive backups) — never commit.
 google_drive/
+app/src/main/assets/saira_pool.dat

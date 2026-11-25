@@ -82,7 +82,7 @@ def main() -> None:
             g = lambda k: next(iter(f.get(k, {}).values()), "")
             uid = d["name"].rsplit("/", 1)[-1]
             lines.append(
-                f"{uid[:6]}… v={g('appVersion')} stage={g('stage')} keys={g('keyCount')} "
+                f"{uid[:10]}… signedIn={g('signedIn')} v={g('appVersion')} stage={g('stage')} keys={g('keyCount')} "
                 f"at={g('updatedAt')} err={g('errorClass')} msg={str(g('message'))[:260]}"
             )
         notice("\n".join(lines))
