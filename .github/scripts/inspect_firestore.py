@@ -8,6 +8,7 @@ with `gh run view` even when raw log download is unavailable.
 import json
 import os
 import sys
+import traceback
 import urllib.error
 import urllib.request
 
@@ -47,7 +48,7 @@ def http(method: str, url: str, body: dict | None = None) -> tuple[int, dict | s
         return 0, str(exc)[:300]
 
 
-def main() -> int:
+def _main() -> int:
     global TOKEN
     if not os.path.exists(KEY_FILE):
         emit("KEY_MISSING: /tmp/firebase-key.json not written")
@@ -142,6 +143,20 @@ def main() -> int:
 
     emit("INSPECTION_DONE")
     return 0
+
+
+def main() -> int:
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(
+                encoding="utf-8", errors="replace", line_buffering=True
+            )
+        return _main()
+    except BaseException as exc:  # noqa: BLE001 — surface every failure as an annotation
+        emit(f"CRASH: {type(exc).__name__}: {str(exc)[:400]}")
+        tail = traceback.format_exc().strip().splitlines()
+        emit("CRASH_TAIL: " + " >> ".join(tail[-5:])[:900])
+        return 1
 
 
 if __name__ == "__main__":
