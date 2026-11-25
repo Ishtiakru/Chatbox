@@ -85,11 +85,14 @@ jobs:
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
           echo "::error::REDIRECT_V2_ACTIVE"
+          echo "::error::PREFLIGHT sha=$(git rev-parse --short HEAD) diag_in_script=$(grep -c 'diag' scripts/firebase-migrate/migrate-saira.mjs || true)"
+          sed -n '164,172p' scripts/firebase-migrate/migrate-saira.mjs | while IFS= read -r l; do echo "::error::PREFLIGHT $l"; done
           cd scripts/firebase-migrate
           # stdout to a FILE is synchronous in Node — piping to tee lets
           # process.exit() drop the tail of the log (observed in run 1).
           node migrate-saira.mjs $ARGS > /tmp/migrate.log 2>&1
           code=$?
+          echo "::error::POSTFLIGHT exit=$code log_lines=$(wc -l < /tmp/migrate.log) log_diag=$(grep -c 'diag' /tmp/migrate.log || true)"
           cat /tmp/migrate.log
           exit $code
 
