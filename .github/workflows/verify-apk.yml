@@ -1,0 +1,38 @@
+# Downloads a published release APK and checks the bundled Saira key pool
+# (count / format only — keys are never printed).
+name: Verify release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v1.0.0.74
+        required: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Inspect APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" -R "${{ github.repository }}" -p "*.apk" -O app.apk
+          if ! unzip -l app.apk | grep -q "assets/saira_pool.dat"; then
+            echo "::notice title=SUMMARY::tag=$TAG bundled_asset=MISSING"; exit 0
+          fi
+          unzip -p app.apk assets/saira_pool.dat > pool.dat
+          python3 - <<'PY'
+          import base64, os
+          d = base64.b64decode(open("pool.dat").read().strip())
+          m = b"chatbox-saira-pool"
+          keys = bytes(b ^ m[i % len(m)] for i, b in enumerate(d)).decode().splitlines()
+          lens = sorted({len(k) for k in keys})
+          pre = sorted({k[:3] for k in keys})
+          print(f"::notice title=SUMMARY::tag={os.environ['TAG']} bundled_asset=present keys={len(keys)} lens={lens} prefixes={pre}")
+          PY
+          rm -f pool.dat app.apk
