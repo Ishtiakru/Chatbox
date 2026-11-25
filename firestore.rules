@@ -560,6 +560,30 @@ service cloud.firestore {
       allow list, delete: if false;
     }
 
+    // Gemini API key pool (GeminiKeyPool.kt). Written only by the CI service
+    // account (sync-keypool.yml, bypasses rules); any signed-in app user may
+    // read it so Saira can rotate through the pool.
+    match /settings/aiKeyPool {
+      allow get: if isSignedIn();
+      allow list, create, update, delete: if false;
+    }
+
+    // Last Saira failure per user (AiDiagnostics.kt) so the maintainer can see
+    // why a device fell back to the friendly safety-net message.
+    match /aiDiagnostics/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == uid
+        && incoming().keys().hasOnly(['stage', 'errorClass', 'message', 'keyCount', 'appVersion', 'updatedAt'])
+        && incoming().stage is string && incoming().stage.size() <= 40
+        && incoming().errorClass is string && incoming().errorClass.size() <= 120
+        && incoming().message is string && incoming().message.size() <= 600
+        && incoming().keyCount is int
+        && incoming().appVersion is string && incoming().appVersion.size() <= 40
+        && incoming().updatedAt == request.time;
+      allow list, delete: if false;
+    }
+
     match /settings/{appearance} {
       allow get: if isSignedIn() && appearance in ['sparkTheme', 'sparkMenu'];
       allow create, update: if appearance in ['sparkTheme', 'sparkMenu']
