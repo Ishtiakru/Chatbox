@@ -274,4 +274,45 @@ class SairaAutoReplyViewModelRobolectricTest {
         val mayaMessagesAfter = vm.chatboxMessages.value["test_maya"].orEmpty()
         assertFalse(mayaMessagesAfter.drop(mayaBefore).any { it.senderName == "Saira" })
     }
+
+    @Test
+    fun `incoming message auto reply answers once owner is silent and never answers another saira`() {
+        val vm = ChatboxAppViewModel(app)
+        vm.autoReplyWaitMs = 60L
+        vm.continuationDebounceMs = 30L
+        vm.clockHourProvider = { 19 }
+        vm.onlineOverride = false
+        runSuspendAndAwait {
+            vm.prefs.saveChatboxThreads(
+                listOf(
+                    ChatboxThread(id = "test_rafi", name = "Rafi Khan", shortId = "778899", style = AvatarStyle.PEACH, online = true),
+                    ChatboxThread(id = "test_bot", name = "Bot Friend", shortId = "667788", style = AvatarStyle.LAVENDER, online = true)
+                )
+            )
+        }
+        vm.setOneMinAutoReplyEnabled(true)
+        vm.clearSairaAutoReplyLogs()
+        awaitCondition {
+            vm.oneMinAutoReplyEnabled.value &&
+                vm.chatboxThreads.value.any { it.id == "test_rafi" } &&
+                vm.chatboxThreads.value.any { it.id == "test_bot" }
+        }
+
+        // Friend writes, owner stays silent -> Saira answers for the owner
+        vm.simulateIncomingChatboxMessage("test_rafi", "Kemon acho?", triggerAutoReplyAfterWait = true)
+        awaitCondition {
+            vm.chatboxMessages.value["test_rafi"]?.any { it.senderName == "Saira" } == true
+        }
+
+        // A message written by the other side's Saira must never trigger a reply (no bot loop)
+        val botBefore = vm.chatboxMessages.value["test_bot"].orEmpty().size
+        vm.simulateIncomingChatboxMessage(
+            "test_bot",
+            ChatboxAppViewModel.SAIRA_LIVE_PREFIX + "Hello, owner is busy.",
+            triggerAutoReplyAfterWait = true
+        )
+        awaitCondition { vm.chatboxMessages.value["test_bot"].orEmpty().size >= botBefore + 1 }
+        pumpLooper(250)
+        assertFalse(vm.chatboxMessages.value["test_bot"].orEmpty().any { it.senderName == "Saira" })
+    }
 }

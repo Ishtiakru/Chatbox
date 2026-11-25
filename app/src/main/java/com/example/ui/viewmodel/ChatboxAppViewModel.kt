@@ -817,6 +817,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 trimmed.isNotEmpty() &&
                 thread != null &&
                 !thread.isGroup &&
+                thread.conversationId.isBlank() &&
                 oneMinAutoReplyEnabled.value &&
                 threadId !in chatboxBlockedThreads.value &&
                 threadId !in dmMutedPeers.value
@@ -956,51 +957,106 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 prefs.saveChatboxMessages(map)
             }
             if (!triggerAutoReplyAfterWait) return@launch
+            scheduleIncomingAutoReply(thread, incomingMsg.id, trimmed)
+        }
+    }
+
+    /**
+     * Someone messaged the owner on [thread]. Wait [autoReplyWaitMs]; if the
+     * owner still hasn't answered, Saira replies on the owner's behalf. For live
+     * (Firestore) chats the reply is really SENT, so the other person gets it.
+     */
+    private fun scheduleIncomingAutoReply(thread: ChatboxThread, incomingMsgId: String, incomingText: String) {
+        val threadId = thread.id
+        if (threadId == "saira" || thread.isGroup) return
+        if (incomingText.startsWith(SAIRA_LIVE_PREFIX)) return // never answer another Saira (bot loop)
+        if (threadId in chatboxBlockedThreads.value || threadId in dmMutedPeers.value) return
+        pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
+
+        val job = viewModelScope.launch {
+            val rules = prefs.sairaNotificationRules.first()
+            val matchedRule = SairaNotificationMatcher.findInAppRule(thread.name, SairaPlatform.ANY, rules)
+            val shouldRun = matchedRule != null || prefs.sairaChatboxOneMinEnabled.first()
+            if (!shouldRun) return@launch
+
+            val engagedAt = sairaAbsenceEngagedThreads[threadId]
+            val isContinuation = engagedAt != null &&
+                (System.currentTimeMillis() - engagedAt) <= ACTIVE_SAIRA_WINDOW_MS
+            delay(if (isContinuation) continuationDebounceMs else autoReplyWaitMs)
+
             if (threadId in chatboxBlockedThreads.value || threadId in dmMutedPeers.value) return@launch
+            val currentMessages = prefs.chatboxMessages.first()[threadId].orEmpty()
+            val latest = currentMessages.lastOrNull() ?: return@launch
+            // Owner already replied manually in time -> do not auto-reply!
+            if (latest.id != incomingMsgId || latest.from == "me") return@launch
 
-            val job = viewModelScope.launch {
-                val rules = prefs.sairaNotificationRules.first()
-                val matchedRule = SairaNotificationMatcher.findInAppRule(thread.name, SairaPlatform.ANY, rules)
-                val shouldRun = matchedRule != null || prefs.sairaChatboxOneMinEnabled.first()
-                if (!shouldRun) return@launch
+            val ownerName = ownProfile.value?.displayName?.ifBlank { null }
+                ?: localUserProfile.value.displayName
+            val result = evaluateAutoReplyInternal(
+                senderName = thread.name,
+                platform = SairaPlatform.ANY,
+                incomingText = incomingText,
+                peerNameForAbsence = ownerName,
+                peerIdForLocation = threadId,
+                isChatboxAbsence = false,
+                forceContinuation = isContinuation,
+                recentMessagesForHistory = currentMessages.map {
+                    if (it.text.startsWith(SAIRA_LIVE_PREFIX)) it.copy(text = it.text.removePrefix(SAIRA_LIVE_PREFIX)) else it
+                }
+            )
+            if (!result.replied || result.replyText.isBlank()) return@launch
 
-                delay(autoReplyWaitMs)
-
-                if (threadId in chatboxBlockedThreads.value || threadId in dmMutedPeers.value) return@launch
-                val currentMessages = prefs.chatboxMessages.first()[threadId].orEmpty()
-                val latest = currentMessages.lastOrNull() ?: return@launch
-                // Owner already replied manually in time -> do not auto-reply!
-                if (latest.id != incomingMsg.id || latest.from == "me") return@launch
-
-                val result = evaluateAutoReplyInternal(
-                    senderName = thread.name,
-                    platform = SairaPlatform.ANY,
-                    incomingText = trimmed,
-                    peerNameForAbsence = ownProfile.value?.displayName ?: localUserProfile.value.displayName,
-                    peerIdForLocation = threadId,
-                    isChatboxAbsence = false,
-                    forceContinuation = false,
-                    recentMessagesForHistory = currentMessages
-                )
-                if (!result.replied || result.replyText.isBlank()) return@launch
-
+            val freshThread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: thread
+            val myUid = currentUser.value?.uid
+            if (freshThread.conversationId.isNotBlank() && myUid != null) {
+                if (!sendSairaLiveReply(freshThread, myUid, result.replyText)) return@launch
+            } else {
                 val replyTimeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
                 appendSairaMessageToThread(threadId, result.replyText, replyTimeStr)
-                prefs.appendAutoReplyLog(
-                    SairaAutoReplyLog(
-                        id = "log_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
-                        contactName = thread.name,
-                        platformLabel = result.platformLabel,
-                        incomingPreview = trimmed.take(120),
-                        sentReply = result.replyText.take(280),
-                        includedLocation = result.includedLocation,
-                        timestampMs = System.currentTimeMillis()
-                    )
-                )
-                pendingIncomingAutoReplyJobs.remove(threadId)
             }
-            pendingIncomingAutoReplyJobs[threadId] = job
+            sairaAbsenceEngagedThreads[threadId] = System.currentTimeMillis()
+            prefs.appendAutoReplyLog(
+                SairaAutoReplyLog(
+                    id = "log_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+                    contactName = thread.name,
+                    platformLabel = if (result.matchedRuleContact != null) "Chatbox · Rule" else "Chatbox 10s",
+                    incomingPreview = incomingText.take(120),
+                    sentReply = result.replyText.take(280),
+                    includedLocation = result.includedLocation,
+                    timestampMs = System.currentTimeMillis()
+                )
+            )
+            pendingIncomingAutoReplyJobs.remove(threadId)
         }
+        pendingIncomingAutoReplyJobs[threadId] = job
+    }
+
+    /** Sends Saira's reply as a real Firestore message from the owner's account. */
+    private suspend fun sendSairaLiveReply(thread: ChatboxThread, myUid: String, replyText: String): Boolean {
+        val conversationId = thread.conversationId
+        val body = (SAIRA_LIVE_PREFIX + replyText.trim()).take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
+        val messageId = runCatching { liveChatRepo.newMessageId(conversationId) }.getOrNull() ?: return false
+        val localMsg = ChatboxMessage(
+            id = "live_$messageId",
+            from = "me",
+            senderName = "Saira",
+            text = body,
+            time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
+            kind = ChatboxMessageKind.TEXT
+        )
+        chatboxMessagesMutex.withLock {
+            val map = prefs.chatboxMessages.first().toMutableMap()
+            map[thread.id] = map[thread.id].orEmpty() + localMsg
+            prefs.saveChatboxMessages(map)
+        }
+        val sent = liveChatRepo.sendLiveMessage(
+            conversationId = conversationId,
+            senderId = myUid,
+            rawBody = body,
+            messageId = messageId
+        )
+        if (sent.isFailure) Log.w(LIVE_TAG, "Saira live auto-reply failed", sent.exceptionOrNull())
+        return sent.isSuccess
     }
 
     /**
@@ -1880,6 +1936,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         val thread = prefs.chatboxThreads.first().firstOrNull { it.conversationId == conversationId } ?: return
         val fmt = SimpleDateFormat("hh:mm a", Locale.getDefault())
         var incomingNew = 0
+        var freshIncoming: ChatboxMessage? = null
+        val freshCutoff = System.currentTimeMillis() - LIVE_AUTO_REPLY_FRESH_MS
         chatboxMessagesMutex.withLock {
             val map = prefs.chatboxMessages.first().toMutableMap()
             val current = map[thread.id].orEmpty()
@@ -1907,6 +1965,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 }
             if (additions.isEmpty()) return@withLock
             incomingNew = additions.count { it.from == "them" }
+            val freshIds = items
+                .filter { m -> m.senderId != uid && (m.sentAt?.toDate()?.time ?: System.currentTimeMillis()) >= freshCutoff }
+                .mapTo(HashSet()) { "live_${it.id}" }
+            freshIncoming = additions.lastOrNull()?.takeIf { it.from == "them" && it.id in freshIds }
             map[thread.id] = current + additions
             prefs.saveChatboxMessages(map)
         }
@@ -1915,6 +1977,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             pendingAbsenceJobs.remove(thread.id)?.cancel()
             if (_activeThreadId.value != thread.id) {
                 updateThread(thread.id) { it.copy(unreadCount = it.unreadCount + incomingNew) }
+            }
+        }
+        freshIncoming?.let { msg ->
+            if (msg.kind == ChatboxMessageKind.TEXT && msg.text.isNotBlank()) {
+                scheduleIncomingAutoReply(thread, msg.id, msg.text)
             }
         }
     }
@@ -1963,6 +2030,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     companion object {
         private const val LIVE_TAG = "ChatboxLiveSync"
         const val DEFAULT_AUTO_REPLY_WAIT_MS = 10_000L
+        /** Marks Saira-written live messages so the other side's Saira never answers them. */
+        const val SAIRA_LIVE_PREFIX = "🤖 Saira: "
+        private const val LIVE_AUTO_REPLY_FRESH_MS = 120_000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
         private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
     }
