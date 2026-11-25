@@ -26,8 +26,7 @@ object AiDiagnostics {
     @Volatile
     var lastKeyCount: Int = -1
 
-    @Volatile
-    private var lastWriteAt = 0L
+    private val lastWriteAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private fun installId(ctx: android.content.Context): String {
         val prefs = ctx.getSharedPreferences("chatbox_ai_diag", android.content.Context.MODE_PRIVATE)
@@ -39,8 +38,8 @@ object AiDiagnostics {
 
     fun report(stage: String, error: Throwable?) {
         val now = System.currentTimeMillis()
-        if (now - lastWriteAt < MIN_INTERVAL_MS) return
-        lastWriteAt = now
+        if (now - (lastWriteAt[stage] ?: 0L) < MIN_INTERVAL_MS) return
+        lastWriteAt[stage] = now
         scope.launch {
             runCatching {
                 val ctx = FirebaseApp.getInstance().applicationContext

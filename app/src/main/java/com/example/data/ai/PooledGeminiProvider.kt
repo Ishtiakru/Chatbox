@@ -92,10 +92,13 @@ class PooledGeminiProvider(
                     }
                 }
                 is Attempt.Other -> {
-                    // Not a per-key problem (DNS, TLS, malformed reply…):
-                    // stop burning keys and let the Firebase provider try.
-                    Log.w(TAG, "REST attempt failed non-quota; delegating to Firebase AI", outcome.error)
-                    break
+                    // Unexpected reply (empty candidates, 4xx…): try the next key /
+                    // model instead of abandoning the whole pool.
+                    Log.w(TAG, "REST attempt failed; rotating key", outcome.error)
+                    transientFailures++
+                    if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) {
+                        model = GeminiAiProvider.FALLBACK_MODEL
+                    }
                 }
             }
         }
@@ -115,6 +118,7 @@ class PooledGeminiProvider(
         var model = GeminiAiProvider.DEFAULT_MODEL
         var attempts = 0
         var handled = false
+        var lastStreamError: Throwable? = null
         var transientFailures = 0
         val startedAt = System.currentTimeMillis()
         for (key in keys) {
@@ -152,11 +156,16 @@ class PooledGeminiProvider(
                     model = GeminiAiProvider.FALLBACK_MODEL
                 }
             } catch (e: Throwable) {
-                Log.w(TAG, "SSE attempt failed non-quota; delegating stream to Firebase AI", e)
-                break
+                Log.w(TAG, "SSE attempt failed; rotating key", e)
+                lastStreamError = e
+                transientFailures++
+                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) {
+                    model = GeminiAiProvider.FALLBACK_MODEL
+                }
             }
         }
         if (!handled) {
+            if (lastStreamError != null) AiDiagnostics.report("poolStream", lastStreamError)
             delegate.stream(systemInstruction, history, prompt).collect { send(it) }
         }
     }
@@ -327,9 +336,9 @@ class PooledGeminiProvider(
         const val ID = "gemini-pool"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         private const val MAX_KEY_ATTEMPTS = 10
-        private const val POOL_BUDGET_MS = 20_000L
+        private const val POOL_BUDGET_MS = 30_000L
         private const val MODEL_SWITCH_AFTER_TRANSIENTS = 2
         private const val GENERATE_READ_TIMEOUT_MS = 12_000
-        private const val STREAM_READ_TIMEOUT_MS = 30_000
+        private const val STREAM_READ_TIMEOUT_MS = 15_000
     }
 }
