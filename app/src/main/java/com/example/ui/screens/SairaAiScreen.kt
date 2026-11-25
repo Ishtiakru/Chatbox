@@ -960,6 +960,7 @@ private fun AutoReplyAndBackupTab(
     }
     val listenerAvailable = remember { SairaNotificationListenerService.isListenerAvailable(context) }
     var setupAttempts by remember { mutableIntStateOf(0) }
+    var lastAutoReplyStatus by remember { mutableStateOf(SairaNotificationListenerService.lastStatus(context)) }
     var notifAccessGranted by remember {
         mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
     }
@@ -973,6 +974,7 @@ private fun AutoReplyAndBackupTab(
                 locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
                 notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
                 batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
+                lastAutoReplyStatus = SairaNotificationListenerService.lastStatus(context)
                 if (notifAccessGranted) {
                     SairaNotificationListenerService.ensureBound(context)
                     // Just granted during setup -> one system "Allow" dialog for reliable background replies.
@@ -1186,6 +1188,14 @@ private fun AutoReplyAndBackupTab(
                             ) {
                                 Text("স্ক্রিন বন্ধ থাকলেও দ্রুত উত্তরের জন্য এখানে চাপুন → Allow")
                             }
+                        }
+                        if (lastAutoReplyStatus.isNotBlank()) {
+                            Text(
+                                text = "শেষ অবস্থা: $lastAutoReplyStatus",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.inkMuted,
+                                modifier = Modifier.testTag("saira_autoreply_last_status")
+                            )
                         }
                         if (SairaNotificationListenerService.hasOemAutostartScreen()) {
                             TextButton(
