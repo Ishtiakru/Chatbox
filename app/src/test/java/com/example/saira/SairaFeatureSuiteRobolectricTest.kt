@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Looper
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -151,22 +152,16 @@ class SairaFeatureSuiteRobolectricTest {
         composeRule.waitForIdle()
         awaitCondition { vm.sairaRules.value.any { it.contactName == "Rahima" } }
 
-        // Test auto-reply right in the Live Tester card
-        composeRule.onNodeWithTag("saira_test_sender_input").performScrollTo().performTextClearance()
-        composeRule.onNodeWithTag("saira_test_sender_input").performTextInput("Rahima")
-        composeRule.onNodeWithTag("saira_test_message_input").performScrollTo().performTextClearance()
-        composeRule.onNodeWithTag("saira_test_message_input").performTextInput("Ki koro?")
-        composeRule.onNodeWithTag("saira_test_run_button").performScrollTo().performClick()
+        // The manual "test auto-reply" card was removed from the UI; the
+        // auto-reply engine itself must still answer taught contacts.
+        composeRule.onAllNodesWithTag("saira_test_autoreply_card").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("saira_test_run_button").assertCountEquals(0)
+        val engineResult = runBlocking {
+            vm.testAutoReply("Rahima", SairaPlatform.ANY, "Ki koro?", recordLog = true)
+        }
+        assertTrue("Expected an auto-reply", engineResult.replied && engineResult.replyText.isNotBlank())
+        awaitCondition { vm.sairaAutoReplyLogs.value.isNotEmpty() }
         composeRule.waitForIdle()
-
-        composeRule.waitUntil(timeoutMillis = 3_000) {
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(60, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithTag("saira_test_result_banner").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag("saira_test_result_banner").performScrollTo().assertIsDisplayed()
-        composeRule.onAllNodesWithText("একটু পর কল দেব", substring = true).fetchSemanticsNodes().let {
-            assertTrue("Expected taught rule reply in result/log", it.isNotEmpty())
-        }
 
         // Clear logs button works
         composeRule.onNodeWithTag("saira_clear_logs_button").performScrollTo().performClick()
@@ -221,7 +216,8 @@ class SairaFeatureSuiteRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("saira_test_autoreply_card").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("saira_play_protect_status").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithTag("saira_test_autoreply_card").assertCountEquals(0)
 
         // Back to Chatbox tab
         composeRule.onNodeWithTag("nav_chatbox").performClick()
