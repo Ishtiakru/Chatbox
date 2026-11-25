@@ -103,6 +103,7 @@ import com.example.data.repository.SairaSessionRepository
 import com.google.firebase.Timestamp
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaLocationHelper
+import com.example.saira.SairaNotificationListenerService
 import com.example.saira.SairaNotificationMatcher
 import com.example.saira.SairaNotificationRule
 import com.example.saira.SairaPlatform
@@ -956,11 +957,20 @@ private fun AutoReplyAndBackupTab(
     var locationPermGranted by remember {
         mutableStateOf(SairaLocationHelper.hasLocationPermission(context))
     }
+    var notifAccessGranted by remember {
+        mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
+    }
+    var batteryUnrestricted by remember {
+        mutableStateOf(SairaNotificationListenerService.isBatteryOptimizationIgnored(context))
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 locationPermGranted = SairaLocationHelper.hasLocationPermission(context)
+                notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
+                batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
+                if (notifAccessGranted) SairaNotificationListenerService.ensureBound(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1065,33 +1075,89 @@ private fun AutoReplyAndBackupTab(
             }
         }
 
-        // 2. Play Protect Safe Mode (no external notification interception)
+        // 2. WhatsApp / Messenger auto-reply (Notification Access)
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.surface),
             border = BorderStroke(1.dp, colors.border),
             modifier = Modifier.testTag("saira_play_protect_status")
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = ChatboxUpdateGreen)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Play Protect সুরক্ষিত মোড চালু আছে",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.ink
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = ChatboxPrimary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "WhatsApp ও Messenger অটো-রিপ্লাই",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.ink
+                        )
+                        Text(
+                            text = "নিচে যাদের নাম সেট করবেন, তারা WhatsApp/Messenger-এ মেসেজ দিলে ১০ সেকেন্ডের মধ্যে আপনি উত্তর না দিলে সায়রা আপনার হয়ে উত্তর দেবে। সবার জন্য চাইলে নাম হিসেবে \"সবাই\" লিখুন।",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.inkMuted
+                        )
+                    }
+                    Switch(
+                        checked = notifAutoReplyEnabled,
+                        onCheckedChange = { enabled ->
+                            onChangeNotifAutoReply(enabled)
+                            if (enabled && !notifAccessGranted) {
+                                SairaNotificationListenerService.openNotificationAccessSettings(context)
+                            }
+                        },
+                        modifier = Modifier.testTag("saira_notif_reply_switch")
                     )
+                }
+
+                HorizontalDivider(color = colors.border)
+
+                PermissionStatusRow(
+                    granted = notifAccessGranted,
+                    grantedText = "Notification Access চালু আছে",
+                    missingText = "Notification Access বন্ধ (এটা ছাড়া কাজ করবে না)",
+                    actionText = "চালু করুন",
+                    actionTag = "saira_notif_access_button",
+                    onAction = { SairaNotificationListenerService.openNotificationAccessSettings(context) }
+                )
+                if (!notifAccessGranted) {
                     Text(
-                        text = "ডিভাইসের নিরাপত্তার জন্য বাহ্যিক Notification Access অনুমতি সরানো হয়েছে। Chatbox-এর ভেতরের ১০-সেকেন্ড অটো-রিপ্লাই, নিয়ম ও AI সবসময় নিরাপদভাবে কাজ করবে।",
+                        text = "তালিকায় \"Chatbox\" চালু করুন। যদি চালু করা না যায় (\"Restricted setting\" দেখায়), তাহলে নিচের \"App info\" চাপুন → উপরের ⋮ মেনু → \"Allow restricted settings\" → তারপর আবার \"চালু করুন\" চাপুন।",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted
                     )
+                    OutlinedButton(
+                        onClick = { SairaNotificationListenerService.openAppDetailsSettings(context) },
+                        modifier = Modifier.testTag("saira_app_info_button")
+                    ) {
+                        Text("App info খুলুন")
+                    }
                 }
+                PermissionStatusRow(
+                    granted = batteryUnrestricted,
+                    grantedText = "Battery restriction বন্ধ আছে",
+                    missingText = "Battery optimization চালু (স্ক্রিন বন্ধ থাকলে রিপ্লাই দেরি হতে পারে)",
+                    actionText = "ঠিক করুন",
+                    actionTag = "saira_battery_button",
+                    onAction = { SairaNotificationListenerService.openBatteryOptimizationSettings(context) }
+                )
+                val activeRules = rules.count { it.enabled && it.contactName.isNotBlank() && it.taughtReplyGuidance.isNotBlank() }
+                val ready = notifAutoReplyEnabled && notifAccessGranted && activeRules > 0
+                NoticeBanner(
+                    text = when {
+                        ready -> "✅ চালু আছে: $activeRules জন ব্যক্তির জন্য সায়রা WhatsApp/Messenger-এ উত্তর দেবে।"
+                        !notifAccessGranted -> "এখনো কাজ করবে না: Notification Access চালু করুন।"
+                        !notifAutoReplyEnabled -> "এখনো কাজ করবে না: উপরের সুইচ চালু করুন।"
+                        else -> "এখনো কাজ করবে না: নিচে অন্তত একজন ব্যক্তি ও তার ১ম মেসেজ সেট করুন।"
+                    },
+                    isError = !ready
+                )
             }
         }
 
@@ -1174,7 +1240,7 @@ private fun AutoReplyAndBackupTab(
                 OutlinedTextField(
                     value = contactDraft,
                     onValueChange = { contactDraft = it.take(80) },
-                    label = { Text("ব্যক্তির নাম (যেমন: সজীব বা Rahima)") },
+                    label = { Text("নাম — WhatsApp/Messenger-এ যেভাবে সেভ আছে (সবার জন্য: সবাই)") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1678,6 +1744,40 @@ private fun DebugAppCheckTokenDialog(
                         Text("Apply Token")
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionStatusRow(
+    granted: Boolean,
+    grantedText: String,
+    missingText: String,
+    actionText: String,
+    actionTag: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = if (granted) Icons.Rounded.CheckCircle else Icons.Rounded.Close,
+            contentDescription = null,
+            tint = if (granted) ChatboxUpdateGreen else ChatboxErrorInk,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = if (granted) grantedText else missingText,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (granted) ChatboxUpdateGreen else ChatboxErrorInk,
+            modifier = Modifier.weight(1f)
+        )
+        if (!granted) {
+            OutlinedButton(onClick = onAction, modifier = Modifier.testTag(actionTag)) {
+                Text(actionText)
             }
         }
     }

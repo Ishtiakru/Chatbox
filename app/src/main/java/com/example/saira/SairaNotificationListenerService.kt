@@ -15,6 +15,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.example.data.ai.AiChatMessage
+import com.example.data.ai.AiSafeResponses
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
 import com.example.data.repository.AppPreferencesRepository
@@ -341,7 +342,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     history = history,
                     prompt = prompt
                 ).trim()
-                if (response.isNotEmpty()) return response
+                if (response.isNotEmpty() && !AiSafeResponses.isSafetyMessage(response)) return response
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -633,6 +634,22 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
         fun openNotificationAccessSettings(context: Context) {
             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { context.startActivity(intent) }
+        }
+
+        /** Asks Android to (re)connect the listener — some phones drop it after updates. */
+        fun ensureBound(context: Context) {
+            runCatching {
+                requestRebind(ComponentName(context, SairaNotificationListenerService::class.java))
+            }
+        }
+
+        /** App info page — where "Allow restricted settings" lives on Android 13+. */
+        fun openAppDetailsSettings(context: Context) {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             runCatching { context.startActivity(intent) }
