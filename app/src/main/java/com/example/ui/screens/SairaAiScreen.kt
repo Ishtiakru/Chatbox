@@ -1187,6 +1187,14 @@ private fun AutoReplyAndBackupTab(
                                 Text("স্ক্রিন বন্ধ থাকলেও দ্রুত উত্তরের জন্য এখানে চাপুন → Allow")
                             }
                         }
+                        if (SairaNotificationListenerService.hasOemAutostartScreen()) {
+                            TextButton(
+                                onClick = { SairaNotificationListenerService.openOemAutostartSettings(context) },
+                                modifier = Modifier.testTag("saira_autostart_button")
+                            ) {
+                                Text("সব app clear করলেও চালু রাখতে: এখানে চাপুন → Chatbox-এর Autostart চালু করুন")
+                            }
+                        }
                     } else {
                         val needsRestrictedStep = !notifAccessGranted && setupAttempts >= 1 &&
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU

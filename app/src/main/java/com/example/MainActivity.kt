@@ -26,4 +26,11 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         configureAppCheck(this, intent)
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Full edition: (re)start the auto-reply keep-alive while we're in the foreground
+        // (always allowed), so it survives recents-clear + screen off afterwards.
+        com.example.saira.SairaKeepAliveService.sync(this)
+    }
 }
