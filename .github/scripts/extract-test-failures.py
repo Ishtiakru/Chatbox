@@ -17,7 +17,13 @@ for path in glob.glob("app/build/test-results/**/*.xml", recursive=True):
         for child in case:
             if child.tag in ("failure", "error"):
                 msg = (child.get("message") or str(child.text or "")).strip().replace("\n", " ")
+                trace = [
+                    ln.strip() for ln in str(child.text or "").splitlines()
+                    if ("Exception" in ln or "Error" in ln or "Caused by" in ln
+                        or "at com.example" in ln)
+                ]
+                key = " || ".join(dict.fromkeys(trace))[:900]
                 rows.append(
-                    f"{case.get('classname')} > {case.get('name')}: {msg[:400]}"
+                    f"{case.get('classname')} > {case.get('name')}: {msg[:300]} || TRACE {key}"
                 )
 print("\n".join(rows[:40]) if rows else "NO_FAILURE_ROWS_FOUND")

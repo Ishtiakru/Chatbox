@@ -4,6 +4,7 @@ import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import androidx.core.graphics.scale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,7 @@ import com.example.data.model.ChatboxThread
 import com.example.data.model.CoreAppTab
 import com.example.data.model.LocalSairaExchange
 import com.example.data.model.LocalSairaSessionData
+import com.example.data.model.LiveMessage
 import com.example.data.model.LocalUserProfile
 import com.example.data.model.ScheduledCallEntry
 import com.example.data.model.SparkAppearance
@@ -49,6 +51,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -242,6 +246,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val pendingIncomingAutoReplyJobs = ConcurrentHashMap<String, Job>()
     private val sairaAbsenceEngagedThreads = ConcurrentHashMap<String, Long>()
 
+    // Live (Firestore) DM sync state — declared before init{} (init reads it).
+    private var liveConversationsJob: Job? = null
+    private val liveMessageJobs = ConcurrentHashMap<String, Job>()
+    private val liveAcceptedConversations: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     internal var autoReplyWaitMs: Long = DEFAULT_AUTO_REPLY_WAIT_MS
     internal var continuationDebounceMs: Long = DEFAULT_CONTINUATION_WAIT_MS
     internal var aiCompleter: suspend (String, List<AiChatMessage>, String) -> String = { sys, hist, prompt ->
@@ -258,6 +267,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             currentUser.collect { user ->
                 if (user == null) {
                     lastLoadedUid = null
+                    stopLiveSync()
                     _isAdmin.value = false
                     _ownProfile.value = null
                     _showProfileDialog.value = false
@@ -269,6 +279,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 } else if (lastLoadedUid != user.uid) {
                     lastLoadedUid = user.uid
                     refreshUserBootState(user)
+                    startLiveSync(user.uid)
                 }
             }
         }
@@ -672,8 +683,18 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
         val senderDisplayName = ownProfile.value?.displayName?.ifBlank { null }
             ?: localUserProfile.value.displayName
+        val liveThread = chatboxThreads.value.firstOrNull { it.id == threadId }
+        val liveUid = currentUser.value?.uid
+        val liveConversationId = liveThread?.conversationId.orEmpty()
+        val liveMessageId = if (
+            liveConversationId.isNotBlank() && liveUid != null &&
+            kind == ChatboxMessageKind.TEXT && trimmed.isNotEmpty()
+        ) {
+            runCatching { liveChatRepo.newMessageId(liveConversationId) }.getOrNull()
+        } else null
         val userMsg = ChatboxMessage(
-            id = "msg_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
+            id = liveMessageId?.let { "live_$it" }
+                ?: "msg_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
             from = "me",
             senderName = senderDisplayName,
             text = trimmed,
@@ -693,6 +714,22 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 map[threadId] = updatedList
                 prefs.saveChatboxMessages(map)
                 updatedList
+            }
+
+            if (liveMessageId != null && liveUid != null) {
+                val sent = liveChatRepo.sendLiveMessage(
+                    conversationId = liveConversationId,
+                    senderId = liveUid,
+                    rawBody = trimmed,
+                    messageId = liveMessageId
+                )
+                if (sent.isFailure) {
+                    Log.w(LIVE_TAG, "live send failed", sent.exceptionOrNull())
+                    appendSystemNotice(
+                        threadId,
+                        "মেসেজটি পাঠানো যায়নি। ইন্টারনেট চেক করে আবার পাঠান।"
+                    )
+                }
             }
 
             if (threadId == "saira" && trimmed.isNotEmpty()) {
@@ -1275,23 +1312,14 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 _pendingCreatedThreads.value = _pendingCreatedThreads.value.filterNot { it.id == newId }
             }
-            if (isSixDigitId && cleanNameInput.isEmpty() && currentUser.value != null && isOnline.value) {
-                val peerProfile = liveChatRepo.lookupPeerByShortId(resolvedIdentifier)
-                if (peerProfile != null && peerProfile.displayName.isNotBlank()) {
-                    val peerInitials = peerProfile.displayName
-                        .split(" ")
-                        .filter { it.isNotBlank() }
-                        .take(2)
-                        .joinToString("") { it.take(1).uppercase() }
-                        .ifEmpty { peerProfile.displayName.take(2).uppercase() }
-                    updateThread(newId) { existingThread ->
-                        existingThread.copy(
-                            name = peerProfile.displayName,
-                            avatarLabel = peerInitials,
-                            workBio = peerProfile.about.ifBlank { existingThread.workBio }
-                        )
-                    }
-                }
+            val me = currentUser.value
+            if ((isSixDigitId || isPhone) && me != null && isOnline.value) {
+                linkThreadToRealPeer(
+                    threadId = newId,
+                    identifier = resolvedIdentifier,
+                    keepCustomName = cleanNameInput.isNotEmpty(),
+                    myUid = me.uid
+                )
             }
         }
         return newId
@@ -1545,6 +1573,217 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch { prefs.saveLocalSairaSessions(updated) }
     }
 
+    // ---- Live (Firestore) DM sync ------------------------------------------
+    // Local threads are bridged to conversations/{id} so messages actually
+    // reach the other Chatbox user, and their messages arrive here.
+
+    private fun stopLiveSync() {
+        liveConversationsJob?.cancel()
+        liveConversationsJob = null
+        liveMessageJobs.values.forEach { it.cancel() }
+        liveMessageJobs.clear()
+        liveAcceptedConversations.clear()
+    }
+
+    private fun startLiveSync(uid: String) {
+        stopLiveSync()
+        liveConversationsJob = viewModelScope.launch {
+            relinkLocalOnlyThreads(uid)
+            while (isActive) {
+                try {
+                    liveChatRepo.observeUserConversations(uid).collect { conversations ->
+                        for (conv in conversations) {
+                            if (conv.status == "closed") continue
+                            val peerUid = conv.participants.firstOrNull { it != uid } ?: continue
+                            if (conv.status == "pending" && conv.createdBy != uid &&
+                                liveAcceptedConversations.add(conv.id)
+                            ) {
+                                liveChatRepo.updateConversationStatus(conv.id, "active")
+                            }
+                            runCatching { ensureLiveThread(conv.id, peerUid) }
+                                .onFailure { Log.w(LIVE_TAG, "ensureLiveThread failed", it) }
+                            if (!liveMessageJobs.containsKey(conv.id)) {
+                                liveMessageJobs[conv.id] = launch { syncLiveMessages(uid, conv.id) }
+                            }
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(LIVE_TAG, "conversation sync failed; retrying", e)
+                }
+                delay(15_000L)
+            }
+        }
+    }
+
+    /** Older searches created local-only "Chatbox Friend (…)" threads; link them now. */
+    private suspend fun relinkLocalOnlyThreads(uid: String) {
+        val candidates = prefs.chatboxThreads.first().filter { t ->
+            t.id != "saira" && !t.isGroup && t.conversationId.isBlank() &&
+                t.name.startsWith("Chatbox Friend") &&
+                (t.phoneNumber.isNotBlank() || ChatboxConstants.VALID_SHORT_ID_REGEX.matches(t.shortId))
+        }
+        for (t in candidates) {
+            val identifier = t.phoneNumber.ifBlank { t.shortId }
+            runCatching { linkThreadToRealPeer(t.id, identifier, keepCustomName = false, myUid = uid) }
+                .onFailure { Log.w(LIVE_TAG, "relink failed", it) }
+        }
+    }
+
+    private suspend fun linkThreadToRealPeer(
+        threadId: String,
+        identifier: String,
+        keepCustomName: Boolean,
+        myUid: String
+    ) {
+        val peer = liveChatRepo.lookupPeerByIdentifier(identifier) ?: return
+        if (peer.uid == myUid) return
+        updateThreadNow(threadId) { t ->
+            val name = if (keepCustomName) t.name else peer.displayName
+            t.copy(
+                name = name,
+                avatarLabel = initialsOf(name),
+                shortId = peer.shortId.ifBlank { t.shortId },
+                workBio = peer.about.ifBlank { "Chatbox member · ID ${peer.shortId.ifBlank { t.shortId }}" },
+                peerUid = peer.uid
+            )
+        }
+        val conversationId = liveChatRepo.startOrOpenConversation(myUid, peer.uid).getOrNull() ?: return
+        val duplicate = prefs.chatboxThreads.first()
+            .firstOrNull { it.conversationId == conversationId && it.id != threadId }
+        if (duplicate != null) {
+            chatboxThreadsMutex.withLock {
+                prefs.saveChatboxThreads(prefs.chatboxThreads.first().filterNot { it.id == threadId })
+            }
+            if (_activeThreadId.value == threadId) _activeThreadId.value = duplicate.id
+        } else {
+            updateThreadNow(threadId) { it.copy(conversationId = conversationId) }
+        }
+    }
+
+    private suspend fun ensureLiveThread(conversationId: String, peerUid: String) {
+        val stored = prefs.chatboxThreads.first()
+        if (stored.any { it.conversationId == conversationId }) return
+        stored.firstOrNull { !it.isGroup && it.peerUid == peerUid }?.let { existing ->
+            updateThreadNow(existing.id) { it.copy(conversationId = conversationId) }
+            return
+        }
+        val profile = liveChatRepo.fetchPeerProfile(peerUid)
+        val name = profile?.displayName ?: "Chatbox User"
+        val shortId = profile?.shortId.orEmpty()
+        val thread = ChatboxThread(
+            id = "live_$conversationId",
+            name = name,
+            shortId = shortId,
+            role = "Active now",
+            connectionLabel = "You're connected on Chatbox",
+            locationText = "On Chatbox",
+            workBio = profile?.about?.ifBlank { null } ?: "Chatbox member · ID $shortId",
+            avatarLabel = initialsOf(name),
+            style = AvatarStyle.entries[Random.nextInt(AvatarStyle.entries.size)],
+            online = true,
+            readReceiptsEnabled = true,
+            peerUid = peerUid,
+            conversationId = conversationId
+        )
+        chatboxThreadsMutex.withLock {
+            val current = prefs.chatboxThreads.first()
+            if (current.none { it.conversationId == conversationId || it.id == thread.id ||
+                    (!it.isGroup && it.peerUid == peerUid) }
+            ) {
+                prefs.saveChatboxThreads(listOf(thread) + current)
+            }
+        }
+    }
+
+    private suspend fun syncLiveMessages(uid: String, conversationId: String) {
+        while (currentCoroutineContext().isActive) {
+            try {
+                liveChatRepo.observeConversationMessages(conversationId, 200L).collect { (items, _) ->
+                    mergeLiveMessages(uid, conversationId, items)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(LIVE_TAG, "message sync failed for $conversationId; retrying", e)
+            }
+            delay(20_000L)
+        }
+    }
+
+    private suspend fun mergeLiveMessages(uid: String, conversationId: String, items: List<LiveMessage>) {
+        val thread = prefs.chatboxThreads.first().firstOrNull { it.conversationId == conversationId } ?: return
+        val fmt = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        var incomingNew = 0
+        chatboxMessagesMutex.withLock {
+            val map = prefs.chatboxMessages.first().toMutableMap()
+            val current = map[thread.id].orEmpty()
+            val known = current.mapTo(HashSet()) { it.id }
+            val additions = items
+                .filter { it.id.isNotBlank() && "live_${it.id}" !in known }
+                .mapNotNull { m ->
+                    val text = m.body.ifBlank {
+                        when {
+                            !m.imageUrl.isNullOrBlank() -> "📷 Photo"
+                            !m.audioUrl.isNullOrBlank() -> "🎤 Voice message"
+                            else -> ""
+                        }
+                    }
+                    if (text.isBlank()) return@mapNotNull null
+                    val mine = m.senderId == uid
+                    ChatboxMessage(
+                        id = "live_${m.id}",
+                        from = if (mine) "me" else "them",
+                        senderName = if (mine) "" else thread.name,
+                        text = text,
+                        time = fmt.format(m.sentAt?.toDate() ?: Date()),
+                        kind = ChatboxMessageKind.TEXT
+                    )
+                }
+            if (additions.isEmpty()) return@withLock
+            incomingNew = additions.count { it.from == "them" }
+            map[thread.id] = current + additions
+            prefs.saveChatboxMessages(map)
+        }
+        if (incomingNew > 0) {
+            // The real person answered — drop any simulated absence auto-reply.
+            pendingAbsenceJobs.remove(thread.id)?.cancel()
+            if (_activeThreadId.value != thread.id) {
+                updateThread(thread.id) { it.copy(unreadCount = it.unreadCount + incomingNew) }
+            }
+        }
+    }
+
+    private suspend fun appendSystemNotice(threadId: String, text: String) {
+        val notice = ChatboxMessage(
+            id = "sys_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}",
+            from = "system",
+            text = text,
+            time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+        )
+        chatboxMessagesMutex.withLock {
+            val map = prefs.chatboxMessages.first().toMutableMap()
+            map[threadId] = map[threadId].orEmpty() + notice
+            prefs.saveChatboxMessages(map)
+        }
+    }
+
+    private suspend fun updateThreadNow(threadId: String, transform: (ChatboxThread) -> ChatboxThread) {
+        _pendingCreatedThreads.value = _pendingCreatedThreads.value.map {
+            if (it.id == threadId) transform(it) else it
+        }
+        chatboxThreadsMutex.withLock {
+            val list = prefs.chatboxThreads.first().map { if (it.id == threadId) transform(it) else it }
+            prefs.saveChatboxThreads(list)
+        }
+    }
+
+    private fun initialsOf(name: String): String =
+        name.split(" ").filter { it.isNotBlank() }.take(2)
+            .joinToString("") { it.take(1).uppercase() }
+            .ifEmpty { name.take(2).uppercase() }
+
     private fun updateThread(threadId: String, transform: (ChatboxThread) -> ChatboxThread) {
         _pendingCreatedThreads.value = _pendingCreatedThreads.value.map {
             if (it.id == threadId) transform(it) else it
@@ -1558,6 +1797,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     companion object {
+        private const val LIVE_TAG = "ChatboxLiveSync"
         const val DEFAULT_AUTO_REPLY_WAIT_MS = 10_000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
         private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
