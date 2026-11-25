@@ -96,6 +96,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
             ""
         }
 
+        recordStatus(this, "${platform?.label ?: "Message"} · $cleanSender: মেসেজ পেয়েছি, অপেক্ষা করছি…")
+
         // Keep CPU awake while the screen is off during the 10s wait, AI reply call, and RemoteInput dispatch
         val wakeLock = acquirePartialWakeLock(PENDING_WAKE_LOCK_TIMEOUT_MS)
 
@@ -115,7 +117,9 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 }
                 delay(targetDelayMs)
                 pendingReplyJobs.remove(sbnKey)
-                processNotification(target)
+                // Never let one stuck reply (network/location) block later messages.
+                val finished = withTimeoutOrNull(PROCESS_TIMEOUT_MS) { processNotification(target); true }
+                if (finished == null) recordStatus(applicationContext, "$cleanSender: উত্তর দিতে বেশি সময় লাগছিল — বাতিল, পরের মেসেজে আবার চেষ্টা করবে")
             } finally {
                 releaseWakeLock(wakeLock)
             }
@@ -133,6 +137,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
         pendingReplyJobs.remove(sbnKey)?.let { entry ->
             entry.job.cancel()
             releaseWakeLock(entry.wakeLock)
+            recordStatus(this, "আপনি নিজে মেসেজটি খুলেছেন/উত্তর দিয়েছেন — সায়রা উত্তর দেয়নি")
         }
     }
 
@@ -174,8 +179,15 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 notificationWhenMs = notification.`when`,
                 lastSentReply = prevStateHint?.lastSentReply,
                 senderNameHint = preliminarySender
-            ) ?: return
+            ) ?: run {
+                recordStatus(applicationContext, "$preliminarySender: নতুন মেসেজ নেই (শেষটা আপনার) — বাদ")
+                return
+            }
             if (isIgnoredSystemStatusText(payload.text)) return
+            if (!notifEnabled) {
+                recordStatus(applicationContext, "$preliminarySender: অটো-রিপ্লাই সুইচ বন্ধ — বাদ")
+                return
+            }
 
             val match = SairaNotificationMatcher.match(
                 notifAutoReplyEnabled = notifEnabled,
@@ -186,7 +198,10 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 incomingText = payload.text,
                 isGroupSummary = isGroupSummary,
                 rules = rules
-            ) ?: return
+            ) ?: run {
+                recordStatus(applicationContext, "$preliminarySender: আপনার সেট করা নামের সাথে মেলেনি — বাদ")
+                return
+            }
 
             val contactKey = "${match.platform.name}::${match.normalizedSender.lowercase()}"
             val mutex = contactMutexes.getOrPut(contactKey) { Mutex() }
@@ -280,7 +295,10 @@ class SairaNotificationListenerService : NotificationListenerService() {
                             hourOfDay = hour,
                             isContinuation = true
                         )
-                        requestAiAutoReplyWithRetry(historySnapshot, prompt)
+                        // Hard cap: a slow/blocked AI call must never hold this contact's lock.
+                        withTimeoutOrNull(AI_REPLY_TIMEOUT_MS) {
+                            requestAiAutoReplyWithRetry(historySnapshot, prompt)
+                        }.orEmpty()
                     } else {
                         ""
                     }
@@ -306,6 +324,11 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 }
 
                 val sentOk = dispatchRemoteInputReply(replyAction.action, replyAction.remoteInputs, finalReply)
+                recordStatus(
+                    applicationContext,
+                    if (sentOk) "${match.platform.label} · ${match.normalizedSender}: সায়রা উত্তর পাঠিয়েছে ✓"
+                    else "${match.platform.label} · ${match.normalizedSender}: উত্তর পাঠানো যায়নি (WhatsApp নোটিফিকেশন বন্ধ হয়ে গেছে)"
+                )
                 if (sentOk) {
                     val sentAtMs = System.currentTimeMillis()
                     lastContactStates[contactKey] = ContactReplyState(
@@ -606,6 +629,23 @@ class SairaNotificationListenerService : NotificationListenerService() {
         private const val CONTINUATION_DEBOUNCE_MS = 1_500L
         private const val ACTIVE_CONVERSATION_WINDOW_MS = 15 * 60_000L
         private const val MIN_REPLY_GAP_MS = 1_000L
+        private const val AI_REPLY_TIMEOUT_MS = 12_000L
+        private const val PROCESS_TIMEOUT_MS = 40_000L
+        private const val STATUS_PREFS = "saira_autoreply_status"
+        private const val STATUS_KEY = "last"
+
+        /** Last auto-reply event, shown on the Auto-Reply card for quick diagnosis. */
+        fun recordStatus(context: Context, text: String) {
+            runCatching {
+                val time = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.US).format(java.util.Date())
+                context.getSharedPreferences(STATUS_PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(STATUS_KEY, "$time — $text").apply()
+            }
+        }
+
+        fun lastStatus(context: Context): String = runCatching {
+            context.getSharedPreferences(STATUS_PREFS, Context.MODE_PRIVATE).getString(STATUS_KEY, null)
+        }.getOrNull().orEmpty()
         private const val DUPLICATE_TEXT_WINDOW_MS = 6_000L
         private const val ECHO_SUPPRESS_WINDOW_MS = 30_000L
         private const val MAX_HISTORY_TURNS = 7
