@@ -84,6 +84,7 @@ jobs:
           ARGS="--source-key ./source.json --dest-key ./dest.json --source-db ${SOURCE_DB} --dest-db ${DEST_DB} --list-auth"
           if [ "$MODE" = "execute" ]; then ARGS="$ARGS --execute"; fi
           echo "::error::START mode=${MODE} source-db=${SOURCE_DB} dest-db=${DEST_DB}"
+          echo "::error::REDIRECT_V2_ACTIVE"
           cd scripts/firebase-migrate
           # stdout to a FILE is synchronous in Node — piping to tee lets
           # process.exit() drop the tail of the log (observed in run 1).

@@ -32,6 +32,20 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { readFileSync, existsSync } from 'node:fs';
 
+// Diagnostics: stdout is redirected to a FILE in CI (synchronous writes),
+// so these hooks always land in the log — even on abrupt termination.
+process.on('exit', (code) => {
+  try { process.stdout.write(`[diag] exit hook code=${code}\n`); } catch {}
+});
+process.on('uncaughtException', (e) => {
+  try { process.stdout.write(`[diag] uncaughtException: ${e && e.stack ? e.stack : e}\n`); } catch {}
+  process.exitCode = 1;
+});
+process.on('unhandledRejection', (e) => {
+  try { process.stdout.write(`[diag] unhandledRejection: ${e && e.stack ? e.stack : e}\n`); } catch {}
+  process.exitCode = 1;
+});
+
 // Chatbox uses a NAMED Firestore database (see
 // app/src/main/res/values/firebase_applet_config.xml). The destination
 // project must have a database with this exact ID, otherwise the app
@@ -149,16 +163,21 @@ async function main() {
   console.log(`Dest project:   ${destApp.options.projectId}`);
 
   if (args['list-auth']) {
+    console.log('[diag] listing SOURCE auth…');
     await listAuthUsers(sourceApp, 'SOURCE');
+    console.log('[diag] SOURCE auth done; listing DESTINATION auth…');
     await listAuthUsers(destApp, 'DESTINATION');
+    console.log('[diag] DESTINATION auth done');
   }
 
   const sourceDb = getDb(sourceApp, sourceDbId);
   const destDb = getDb(destApp, destDbId);
 
   // Sanity check: destination database must exist.
+  console.log('[diag] dest DB sanity check…');
   try {
     await destDb.listCollections();
+    console.log('[diag] dest DB OK');
   } catch (e) {
     console.error(`\nERROR: cannot access destination database "${destDbId}": ${e.message}`);
     console.error('Create it first in Firebase Console -> Firestore Database ->');
