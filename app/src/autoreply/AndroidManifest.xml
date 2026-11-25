@@ -9,8 +9,35 @@
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
+        <!-- Keeps the process alive + online in Doze so replies still go out after
+             recents are cleared and the screen is off. -->
+        <service
+            android:name="com.example.saira.SairaKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the user-enabled WhatsApp/Messenger auto-reply assistant running so it can answer incoming messages while the screen is off." />
+        </service>
+
+        <receiver
+            android:name="com.example.saira.SairaBootReceiver"
+            android:directBootAware="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.example.saira.SairaNotificationListenerService"
             android:exported="true"

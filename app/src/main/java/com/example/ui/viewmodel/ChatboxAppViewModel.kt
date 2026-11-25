@@ -696,7 +696,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setNotifAutoReplyEnabled(enabled: Boolean) {
-        viewModelScope.launch { prefs.setSairaNotifReplyEnabled(enabled) }
+        viewModelScope.launch {
+            prefs.setSairaNotifReplyEnabled(enabled)
+            com.example.saira.SairaKeepAliveService.sync(getApplication())
+        }
     }
 
     fun setLiveLocationEnabled(enabled: Boolean) {

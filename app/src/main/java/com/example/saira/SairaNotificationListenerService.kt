@@ -58,6 +58,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         configureAppCheck(applicationContext, null)
+        SairaKeepAliveService.sync(applicationContext)
         serviceScope.launch {
             SairaAiClient.warmUp()
         }
@@ -710,6 +711,47 @@ class SairaNotificationListenerService : NotificationListenerService() {
             }
             if (runCatching { context.startActivity(request) }.isSuccess) return
             openBatteryOptimizationSettings(context)
+        }
+
+        /** OEMs (Xiaomi, Oppo, Vivo, Realme, Huawei…) kill cleared apps unless "Autostart" is allowed. */
+        fun hasOemAutostartScreen(): Boolean = oemAutostartComponents().isNotEmpty()
+
+        fun openOemAutostartSettings(context: Context) {
+            for (component in oemAutostartComponents()) {
+                val intent = Intent().apply {
+                    this.component = component
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (runCatching { context.startActivity(intent) }.isSuccess) return
+            }
+            openAppDetailsSettings(context)
+        }
+
+        private fun oemAutostartComponents(): List<ComponentName> {
+            val brand = (Build.MANUFACTURER + " " + Build.BRAND).lowercase()
+            return when {
+                listOf("xiaomi", "redmi", "poco").any { it in brand } -> listOf(
+                    ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                )
+                listOf("oppo", "realme", "oneplus").any { it in brand } -> listOf(
+                    ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+                    ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+                    ComponentName("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"),
+                    ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity")
+                )
+                "vivo" in brand || "iqoo" in brand -> listOf(
+                    ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+                    ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager")
+                )
+                "huawei" in brand || "honor" in brand -> listOf(
+                    ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+                    ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
+                )
+                "infinix" in brand || "tecno" in brand || "itel" in brand -> listOf(
+                    ComponentName("com.transsion.phonemaster", "com.cyin.himgr.autostart.AutoStartActivity")
+                )
+                else -> emptyList()
+            }
         }
 
         /** App info page — where "Allow restricted settings" lives on Android 13+. */
