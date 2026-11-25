@@ -173,6 +173,9 @@ data class LocalUserProfile(
     val phoneNumber: String = ""
 )
 
+/** Saira chats stay visible for 12 hours, then disappear automatically. */
+const val SAIRA_CHAT_RETENTION_MS: Long = 12L * 60L * 60L * 1000L
+
 @Serializable
 data class LocalSairaSessionData(
     val id: String,
