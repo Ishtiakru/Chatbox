@@ -1,0 +1,41 @@
+name: Inspect Firestore (manual)
+
+# One-off inspection of Firestore databases/collections for the canonical
+# Firebase project. Cannot run in the agent sandbox (Google APIs blocked),
+# so it runs here with the FIREBASE_ADMIN_KEY repository secret.
+# Findings are emitted as annotations, readable via `gh run view`.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/scripts/inspect_firestore.py'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python3 -m pip install --quiet google-auth requests
+
+      - name: Inspect Firestore
+        env:
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          if [ -z "$FIREBASE_ADMIN_KEY" ]; then
+            echo "::error::FIREBASE_ADMIN_KEY secret not set yet - skipping (waiting for user to add it in repo Settings > Secrets)."
+            exit 0
+          fi
+          printf '%s' "$FIREBASE_ADMIN_KEY" > /tmp/firebase-key.json
+          python3 .github/scripts/inspect_firestore.py
