@@ -10,6 +10,7 @@ on:
   push:
     paths:
       - '.github/scripts/inspect_firestore.py'
+      - '.github/workflows/inspect-firestore.yml'
 
 permissions:
   contents: read
@@ -28,6 +29,26 @@ jobs:
 
       - name: Install dependencies
         run: python3 -m pip install --quiet google-auth requests
+
+      - name: Verify GOOGLE_SERVICES_JSON project (content never printed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::SECRET_CHECK GOOGLE_SERVICES_JSON is MISSING"
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > /tmp/gs.json
+          python3 -c "
+          import json
+          try:
+              d = json.load(open('/tmp/gs.json'))
+              pid = d.get('project_info', {}).get('project_id', 'UNKNOWN')
+              pkgs = [c.get('client_info', {}).get('android_client_info', {}).get('package_name', '?') for c in d.get('client', [])]
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON project_id={pid} packages={pkgs} expected=gen-lang-client-0251556445')
+          except Exception as e:
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON is INVALID JSON: {e}')
+          "
 
       - name: Inspect Firestore
         env:
