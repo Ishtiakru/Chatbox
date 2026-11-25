@@ -55,7 +55,11 @@ jobs:
           if [ -f "app/google-services.json" ]; then
             echo "Using app/google-services.json from repository."
           elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            GS_TRIMMED=$(printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '\n\r ')
+            case "$GS_TRIMMED" in
+              \{*) printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json ;;
+              *) printf '%s' "$GS_TRIMMED" | base64 -d > app/google-services.json ;;
+            esac
             echo "Restored app/google-services.json from GOOGLE_SERVICES_JSON secret."
           elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 -d > app/google-services.json
