@@ -15,6 +15,7 @@ Chatbox-এর Firebase-এ **দুইটা project** আছে, একই pac
 | **Firestore Database ID** | `ai-studio-android-chatbox-f5f16960-82e9-4756-8ee4-5c3fe55bdd70` |
 | **Storage Bucket** | `gen-lang-client-0251556445.firebasestorage.app` |
 | **Release SHA-1** | `e2:f4:a8:6c:4d:29:f3:83:7f:40:16:40:20:53:c8:2c:93:32:58:2a` |
+| **Firebase console account** | `ishtiakahmedru@gmail.com` (project owner/support email — এই Gmail দিয়ে Firebase Console-এ ঢুকলেই `0251556445` প্রজেক্ট দেখা যায়; `sojibsheikhuk@gmail.com` হলো app-এর owner allowlist — আলাদা বিষয়) |
 
 - Repo-র reference copy: `public/assets/aistudio/google-services__*.json`
   (তিনটাই এই project-এর)

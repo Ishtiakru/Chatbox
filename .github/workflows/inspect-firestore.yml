@@ -1,0 +1,68 @@
+name: Inspect Firestore (manual)
+
+# One-off inspection of Firestore databases/collections for the canonical
+# Firebase project. Cannot run in the agent sandbox (Google APIs blocked),
+# so it runs here with the FIREBASE_ADMIN_KEY repository secret.
+# Findings are emitted as annotations, readable via `gh run view`.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/scripts/inspect_firestore.py'
+      - '.github/workflows/inspect-firestore.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python3 -m pip install --quiet google-auth requests
+
+      - name: Verify GOOGLE_SERVICES_JSON project (content never printed)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::SECRET_CHECK GOOGLE_SERVICES_JSON is MISSING"
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > /tmp/gs.txt
+          python3 -c "
+          import base64, json, re
+          raw = open('/tmp/gs.txt').read().strip()
+          try:
+              if raw.startswith('{'):
+                  data, fmt = raw, 'raw-json'
+              else:
+                  data = base64.b64decode(re.sub(r'\s+', '', raw)).decode()
+                  fmt = 'base64'
+              d = json.loads(data)
+              pid = d.get('project_info', {}).get('project_id', 'UNKNOWN')
+              pkgs = [c.get('client_info', {}).get('android_client_info', {}).get('package_name', '?') for c in d.get('client', [])]
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON format={fmt} project_id={pid} packages={pkgs} expected=gen-lang-client-0251556445')
+          except Exception as e:
+              print(f'::error::SECRET_CHECK GOOGLE_SERVICES_JSON INVALID (neither clean JSON nor base64): {e}')
+          "
+
+      - name: Inspect Firestore
+        env:
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          if [ -z "$FIREBASE_ADMIN_KEY" ]; then
+            echo "::error::FIREBASE_ADMIN_KEY secret not set yet - skipping (waiting for user to add it in repo Settings > Secrets)."
+            exit 0
+          fi
+          printf '%s' "$FIREBASE_ADMIN_KEY" > /tmp/firebase-key.json
+          python3 .github/scripts/inspect_firestore.py
