@@ -29,6 +29,12 @@ jobs:
             listener=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump xmltree "$f" --file AndroidManifest.xml | grep -c "BIND_NOTIFICATION_LISTENER_SERVICE" || true)
             perms=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump permissions "$f" | grep -oE "name='[^']+'" | sed "s/name=//; s/'//g" | grep -v "^com.aistudio" | tr '\n' ' ')
             echo "::notice title=PERMS::$name $perms"
+            size=$(stat -c %s "$f"); sha=$(sha256sum "$f" | cut -c1-16)
+            zipok=$(unzip -tq "$f" >/dev/null 2>&1 && echo ok || echo BROKEN)
+            sigok=$("${ANDROID_HOME}/build-tools/${BT}/apksigner" verify -v "$f" 2>&1 | grep -E "Verified using v[0-9]|DOES NOT VERIFY|ERROR" | tr '\n' ';' || true)
+            cert=$("${ANDROID_HOME}/build-tools/${BT}/apksigner" verify --print-certs "$f" 2>/dev/null | grep -m1 "SHA-256" | awk '{print $NF}' | cut -c1-16 || true)
+            badging=$("${ANDROID_HOME}/build-tools/${BT}/aapt2" dump badging "$f" 2>&1 | grep -E "^package:|sdkVersion|targetSdk|native-code" | tr '\n' ' ' || true)
+            echo "::notice title=INTEGRITY::$name size=$size sha=$sha zip=$zipok cert=$cert sig=$sigok $badging"
             if ! unzip -l "$f" | grep -q "assets/saira_pool.dat"; then
               echo "::notice title=SUMMARY::$name bundled_asset=MISSING listener=$listener"; continue
             fi
