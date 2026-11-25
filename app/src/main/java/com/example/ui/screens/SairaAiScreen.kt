@@ -97,6 +97,7 @@ import com.example.data.ai.SairaPrompts
 import com.example.data.model.AiExchange
 import com.example.data.model.ChatboxThread
 import com.example.data.model.LocalSairaSessionData
+import com.example.data.model.SAIRA_CHAT_RETENTION_MS
 import com.example.data.model.SairaChatSession
 import com.example.data.repository.SairaSessionRepository
 import com.google.firebase.Timestamp
@@ -196,6 +197,27 @@ fun SairaAiScreen(
     var showDebugTokenDialog by remember { mutableStateOf(false) }
     var isRefreshingToken by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
+    // Resume the last Saira chat (kept for 12 hours) when the user comes back
+    // to this tab or reopens the app.
+    var restoreDone by remember { mutableStateOf(false) }
+    LaunchedEffect(localSessions) {
+        if (restoreDone) return@LaunchedEffect
+        if (exchanges.isNotEmpty() || isBusy) {
+            restoreDone = true
+            return@LaunchedEffect
+        }
+        val cutoff = System.currentTimeMillis() - SAIRA_CHAT_RETENTION_MS
+        val latest = localSessions
+            .filter { it.updatedAtMs >= cutoff && it.exchanges.isNotEmpty() }
+            .maxByOrNull { it.updatedAtMs }
+            ?: return@LaunchedEffect
+        sessionId = latest.id
+        sessionIsNew = false
+        exchanges = latest.exchanges.map {
+            AiExchange(id = it.id, question = it.question, answer = it.answer, isStreaming = false)
+        }
+        restoreDone = true
+    }
 
     val cloudSessions by remember(currentUserId) {
         if (currentUserId.isNotBlank()) sessionRepo.observeSessions(currentUserId)
@@ -203,8 +225,9 @@ fun SairaAiScreen(
     }.collectAsState(initial = emptyList())
 
     val savedSessions = remember(currentUserId, cloudSessions, localSessions) {
+        val cutoff = System.currentTimeMillis() - SAIRA_CHAT_RETENTION_MS
         if (currentUserId.isNotBlank()) {
-            cloudSessions
+            cloudSessions.filter { (it.updatedAt?.toDate()?.time ?: System.currentTimeMillis()) >= cutoff }
         } else {
             localSessions.map { s ->
                 SairaChatSession(
@@ -229,6 +252,7 @@ fun SairaAiScreen(
     }
 
     fun startNewThread(carryContext: String = "") {
+        restoreDone = true
         activeJob?.cancel()
         activeJob = null
         sessionId = "saira_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
@@ -240,6 +264,7 @@ fun SairaAiScreen(
     }
 
     fun openSavedSession(session: SairaChatSession) {
+        restoreDone = true
         activeJob?.cancel()
         showHistoryDialog = false
         isBusy = false
@@ -264,6 +289,7 @@ fun SairaAiScreen(
     fun sendPrompt(rawQuestion: String) {
         val question = rawQuestion.trim()
         if (isBusy || question.isEmpty() || question.length > 2000) return
+        restoreDone = true
 
         if (!isOnline) {
             errorMessage = "অফলাইন · Saira AI-এর সাথে চ্যাট করতে ইন্টারনেট সংযোগ চালু করুন।"
@@ -352,9 +378,10 @@ fun SairaAiScreen(
                             answer = finalAnswer,
                             sequence = prevExchanges.size
                         )
-                    } else {
-                        onSaveLocalExchange(activeSessionId, title, question, finalAnswer)
                     }
+                    // Always keep a local copy so the chat survives leaving the
+                    // Saira tab / closing the app (visible for 12 hours).
+                    onSaveLocalExchange(activeSessionId, title, question, finalAnswer)
                 } else {
                     exchanges = exchanges.filterNot { it.id == exId }
                     if (draft.isEmpty()) draft = question

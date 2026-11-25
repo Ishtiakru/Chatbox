@@ -13,6 +13,7 @@ import com.example.data.model.ChatboxMessage
 import com.example.data.model.ChatboxReportEntry
 import com.example.data.model.ChatboxThread
 import com.example.data.model.LocalSairaSessionData
+import com.example.data.model.SAIRA_CHAT_RETENTION_MS
 import com.example.data.model.LocalUserProfile
 import com.example.data.model.ScheduledCallEntry
 import com.example.data.model.WorldLanguages
@@ -257,7 +258,9 @@ class AppPreferencesRepository(private val context: Context) {
         context.appDataStore.data.map { prefs ->
             val raw = prefs[localSairaSessionsKey] ?: return@map emptyList()
             try {
+                val cutoff = System.currentTimeMillis() - SAIRA_CHAT_RETENTION_MS
                 json.decodeFromString<List<LocalSairaSessionData>>(raw)
+                    .filter { it.updatedAtMs >= cutoff }
                     .sortedByDescending { it.updatedAtMs }
             } catch (_: Exception) {
                 emptyList()
@@ -500,7 +503,8 @@ class AppPreferencesRepository(private val context: Context) {
     }
 
     suspend fun saveLocalSairaSessions(sessions: List<LocalSairaSessionData>) {
-        val encoded = json.encodeToString(sessions.take(50))
+        val cutoff = System.currentTimeMillis() - SAIRA_CHAT_RETENTION_MS
+        val encoded = json.encodeToString(sessions.filter { it.updatedAtMs >= cutoff }.take(50))
         context.appDataStore.edit { prefs ->
             prefs[localSairaSessionsKey] = encoded
         }
