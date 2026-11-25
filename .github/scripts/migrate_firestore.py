@@ -58,14 +58,16 @@ class Client:
         self.db_root = f"https://firestore.googleapis.com/v1/projects/{project}/databases"
 
     def http(self, method: str, url: str, body: dict | None = None):
-        if not self.creds.valid:
-            self.creds.refresh(urllib.request.Request("https://oauth2.googleapis.com/token"))
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Authorization", f"Bearer {self.creds.token}")
-        if data:
-            req.add_header("Content-Type", "application/json")
         try:
+            if not self.creds.valid:
+                self.creds.refresh(
+                    urllib.request.Request("https://oauth2.googleapis.com/token")
+                )
+            req = urllib.request.Request(url, data=data, method=method)
+            req.add_header("Authorization", f"Bearer {self.creds.token}")
+            if data:
+                req.add_header("Content-Type", "application/json")
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.status, json.loads(resp.read().decode() or "{}")
         except urllib.error.HTTPError as exc:
@@ -75,7 +77,7 @@ class Client:
             except Exception:
                 return exc.code, payload
         except Exception as exc:  # noqa: BLE001
-            return 0, str(exc)[:400]
+            return 0, f"{type(exc).__name__}: {exc}"[:400]
 
     def list_databases(self):
         status, body = self.http("GET", self.db_root)
@@ -206,4 +208,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 — surface every failure
+        import traceback
+
+        emit(f"CRASH: {type(exc).__name__}: {str(exc)[:400]}")
+        tail = traceback.format_exc().strip().splitlines()
+        emit("CRASH_TAIL: " + " >> ".join(tail[-5:])[:900])
+        sys.exit(1)
