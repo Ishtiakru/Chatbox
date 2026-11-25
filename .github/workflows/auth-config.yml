@@ -9,7 +9,7 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, enable-phone]
+        options: [inspect, enable-phone, sha]
 
 jobs:
   auth:
@@ -31,10 +31,32 @@ jobs:
           json.loads(txt)
           open("/tmp/admin.json", "w").write(txt)
           PY
+      - name: Release signing fingerprints
+        id: fp
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/ks.jks
+            KS=/tmp/ks.jks; PASS="$ANDROID_KEYSTORE_PASSWORD"; ALIAS="$ANDROID_KEY_ALIAS"
+          else
+            KS=release.keystore
+            PASS=$(grep '^storePassword=' keystore.properties | cut -d'=' -f2-)
+            ALIAS=$(grep '^keyAlias=' keystore.properties | cut -d'=' -f2-)
+          fi
+          OUT=$(keytool -list -v -keystore "$KS" -alias "$ALIAS" -storepass "$PASS")
+          echo "sha1=$(echo "$OUT" | grep -m1 'SHA1:' | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(echo "$OUT" | grep -m1 'SHA256:' | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          rm -f /tmp/ks.jks
+
       - name: Run
         run: |
           timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
-            --mode "${{ inputs.mode }}" --test-number "+8801000000000" --test-code "123456"
+            --mode "${{ inputs.mode }}" --test-number "+8801000000000" --test-code "123456" \
+            --sha1 "${{ steps.fp.outputs.sha1 }}" --sha256 "${{ steps.fp.outputs.sha256 }}"
       - name: Cleanup
         if: always()
         run: rm -f /tmp/admin.json

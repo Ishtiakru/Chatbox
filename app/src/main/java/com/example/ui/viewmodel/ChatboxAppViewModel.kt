@@ -324,6 +324,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 status == AdminAuthStatus.UNCLAIMED_OWNER
             _isAdmin.value = adminAllowed
         }
+        if (phoneSignInInProgress) return // completePhoneSignIn() writes the profile itself
         viewModelScope.launch {
             liveChatRepo.ensureOwnProfile(user.uid, user.displayName)
                 .onSuccess { profile -> _ownProfile.value = profile }
@@ -451,6 +452,76 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         return result
+    }
+
+    // ---- Mobile number + SMS code (Firebase Phone Auth) -------------------
+
+    @Volatile
+    private var phoneSignInInProgress = false
+
+    suspend fun sendPhoneLoginCode(
+        activityContext: android.content.Context,
+        rawPhone: String,
+        displayName: String,
+        resendToken: com.google.firebase.auth.PhoneAuthProvider.ForceResendingToken?
+    ): com.example.data.repository.PhoneCodeResult {
+        val e164 = com.example.data.repository.PhoneNumbers.toE164(rawPhone)
+            ?: return com.example.data.repository.PhoneCodeResult.Failure(
+                "সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678"
+            )
+        phoneSignInInProgress = true
+        val result = authRepo.sendPhoneCode(activityContext, e164, resendToken)
+        when (result) {
+            is com.example.data.repository.PhoneCodeResult.SignedIn -> completePhoneSignIn(result.user, displayName)
+            is com.example.data.repository.PhoneCodeResult.Failure -> phoneSignInInProgress = false
+            is com.example.data.repository.PhoneCodeResult.CodeSent -> Unit
+        }
+        return result
+    }
+
+    suspend fun verifyPhoneLoginCode(
+        verificationId: String,
+        code: String,
+        displayName: String
+    ): com.example.data.repository.AuthResult {
+        phoneSignInInProgress = true
+        val result = authRepo.verifyPhoneCode(verificationId, code)
+        if (result is com.example.data.repository.AuthResult.Success) {
+            completePhoneSignIn(result.user, displayName)
+        } else {
+            phoneSignInInProgress = false
+        }
+        return result
+    }
+
+    private suspend fun completePhoneSignIn(user: FirebaseUser, rawName: String) {
+        try {
+            val phone = user.phoneNumber.orEmpty()
+            val typedName = rawName.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
+            val localName = localUserProfile.value.displayName.takeIf { it.isNotBlank() && it != "Chatbox User" }
+            prefs.setHasCompletedLogin(true)
+            val base = liveChatRepo.ensureOwnProfile(user.uid, typedName.ifEmpty { localName }).getOrNull()
+            val existingName = base?.displayName?.takeIf { it.isNotBlank() && it != "Chatbox User" }
+            val finalName = typedName.ifEmpty { existingName ?: localName ?: "Chatbox User" }
+            authRepo.updateDisplayName(finalName)
+            syncLocalProfileFromAccount(nameInput = finalName, identifier = phone)
+            liveChatRepo.saveOwnWhatsAppProfile(
+                uid = user.uid,
+                currentShortId = base?.shortId.orEmpty(),
+                displayName = finalName,
+                about = base?.about ?: LiveChatRepository.DEFAULT_ABOUT_TEXT,
+                phoneNumber = phone,
+                previousPhoneNumber = ""
+            ).onSuccess { (profile, _) ->
+                _ownProfile.value = profile
+                prefs.saveLocalUserProfile(localUserProfile.value.copy(shortId = profile.shortId))
+            }.onFailure { e ->
+                Log.w(LIVE_TAG, "phone profile save failed", e)
+                if (base != null) _ownProfile.value = base
+            }
+        } finally {
+            phoneSignInInProgress = false
+        }
     }
 
     private suspend fun syncLocalProfileFromAccount(nameInput: String?, identifier: String) {
