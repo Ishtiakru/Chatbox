@@ -246,6 +246,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val pendingIncomingAutoReplyJobs = ConcurrentHashMap<String, Job>()
     private val sairaAbsenceEngagedThreads = ConcurrentHashMap<String, Long>()
 
+    // Live (Firestore) DM sync state — declared before init{} (init reads it).
+    private var liveConversationsJob: Job? = null
+    private val liveMessageJobs = ConcurrentHashMap<String, Job>()
+    private val liveAcceptedConversations: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     internal var autoReplyWaitMs: Long = DEFAULT_AUTO_REPLY_WAIT_MS
     internal var continuationDebounceMs: Long = DEFAULT_CONTINUATION_WAIT_MS
     internal var aiCompleter: suspend (String, List<AiChatMessage>, String) -> String = { sys, hist, prompt ->
@@ -1571,10 +1576,6 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     // ---- Live (Firestore) DM sync ------------------------------------------
     // Local threads are bridged to conversations/{id} so messages actually
     // reach the other Chatbox user, and their messages arrive here.
-
-    private var liveConversationsJob: Job? = null
-    private val liveMessageJobs = ConcurrentHashMap<String, Job>()
-    private val liveAcceptedConversations = ConcurrentHashMap.newKeySet<String>()
 
     private fun stopLiveSync() {
         liveConversationsJob?.cancel()
