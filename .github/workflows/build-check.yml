@@ -119,9 +119,7 @@ jobs:
           done
           D=$(ls app/hang-dump.txt hang-dump.txt 2>/dev/null | head -1)
           if [ -n "$D" ] && [ "$status" -ne 0 ]; then
-            sed 's/^ *at //' "$D" | cut -c1-160 | head -n 60 | while IFS= read -r line; do
-              echo "::notice::HANG ${line}"
-            done
+            echo "::notice::HANG $(sed 's/^ *at //' "$D" | grep -E 'com\.example|runBlocking|THREAD|Firebase|firestore|DataStore' | cut -c1-140 | head -n 25 | tr '\n' '|')"
           fi
           if [ "$status" -ne 0 ]; then
             echo "::group::Failure highlights"
