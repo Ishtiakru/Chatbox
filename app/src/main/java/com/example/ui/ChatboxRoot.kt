@@ -342,7 +342,9 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                 onSearchPeer = viewModel::searchPeer,
                                 onOpenPeer = viewModel::openChatWithPeer,
-                                onRequestLogin = viewModel::requestLogin
+                                onRequestLogin = viewModel::requestLogin,
+                                sairaAutoReplyOn = oneMinAutoReplyEnabled,
+                                onSairaAutoReplyChange = viewModel::setOneMinAutoReplyEnabled
                             )
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,

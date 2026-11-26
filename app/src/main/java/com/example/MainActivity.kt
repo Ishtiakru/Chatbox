@@ -31,10 +31,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.example.util.AppPresence.onAppVisible()
         // Full edition: (re)start the auto-reply keep-alive while we're in the foreground
         // (always allowed), so it survives recents-clear + screen off afterwards.
         com.example.saira.SairaKeepAliveService.sync(this, fromForeground = true)
         // Keep a recent location fix cached for screen-off auto-replies.
         lifecycleScope.launch { com.example.saira.SairaLocationHelper.refreshCache(applicationContext) }
+    }
+
+    override fun onPause() {
+        com.example.util.AppPresence.onAppHidden()
+        super.onPause()
     }
 }
