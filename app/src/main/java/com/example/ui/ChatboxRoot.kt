@@ -233,7 +233,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         if (currentUser != null && gmailRequired) {
             com.example.ui.screens.GmailRequiredDialog(
                 needsPassword = remember(currentUser) { viewModel.currentAccountNeedsPassword() },
-                onLinkGmail = viewModel::linkGmail
+                onLinkGmail = viewModel::linkGmail,
+                onSaveTypedGmail = viewModel::saveTypedGmail
             )
         }
 

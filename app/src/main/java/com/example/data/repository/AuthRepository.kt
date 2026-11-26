@@ -236,16 +236,37 @@ class AuthRepository(private val context: Context) {
         val serverClientId = context.getString(R.string.default_web_client_id)
         val credentialManager = CredentialManager.create(uiContext)
         runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+        // 1) Google's full "Sign in with Google" screen: lists every Gmail on the
+        //    device and lets the user add one. This is what worked for the original
+        //    Google login, so it goes first.
+        // 2) If that is unavailable on the device, the Gmail bottom-sheet picker.
         val result = try {
+            credentialManager.getCredential(
+                uiContext,
+                GetCredentialRequest.Builder()
+                    .addCredentialOption(GetSignInWithGoogleOption.Builder(serverClientId).build())
+                    .build()
+            )
+        } catch (e: GetCredentialCancellationException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (first: Exception) {
+            Log.w(TAG, "Sign in with Google screen failed; trying the Gmail picker", first)
+            com.example.data.ai.AiDiagnostics.report("gmail_pick_1", first)
             val option = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setAutoSelectEnabled(false)
                 .setServerClientId(serverClientId)
                 .build()
-            credentialManager.getCredential(uiContext, GetCredentialRequest.Builder().addCredentialOption(option).build())
-        } catch (e: NoCredentialException) {
-            val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
-            credentialManager.getCredential(uiContext, GetCredentialRequest.Builder().addCredentialOption(signInOption).build())
+            try {
+                credentialManager.getCredential(uiContext, GetCredentialRequest.Builder().addCredentialOption(option).build())
+            } catch (second: GetCredentialCancellationException) {
+                throw second
+            } catch (second: Exception) {
+                second.addSuppressed(first)
+                throw second
+            }
         }
         val custom = result.credential as? CustomCredential
         if (custom == null || custom.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -253,6 +274,14 @@ class AuthRepository(private val context: Context) {
         }
         val google = GoogleIdTokenCredential.createFrom(custom.data)
         return GoogleAuthProvider.getCredential(google.idToken, null) to google.id
+    }
+
+    /** Short technical code shown under the message so a screenshot tells us the cause. */
+    private fun errorCode(e: Throwable): String {
+        val fb = (e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode
+        val cm = (e as? GetCredentialException)?.type?.substringAfterLast('.')
+        val msg = (e as? GetCredentialException)?.errorMessage?.toString() ?: e.message
+        return listOfNotNull(e.javaClass.simpleName, fb, cm, msg?.take(80)).distinct().joinToString(" · ")
     }
 
     private fun friendlyGmailError(e: Throwable): String = when {
@@ -263,8 +292,10 @@ class AuthRepository(private val context: Context) {
             (e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode == "ERROR_CREDENTIAL_ALREADY_IN_USE" ->
             "এই Gmail অন্য একটি account-এ যুক্ত আছে। অন্য Gmail বেছে নিন।"
         e is com.google.firebase.FirebaseNetworkException -> "ইন্টারনেট সংযোগ নেই। নেট চালু করে আবার চেষ্টা করুন।"
-        e is IllegalStateException && !e.message.isNullOrBlank() -> e.message!!
-        else -> "Gmail যুক্ত করা যায়নি। আবার চেষ্টা করুন।"
+        e is IllegalStateException && e.cause == null && !e.message.isNullOrBlank() -> e.message!!
+        e is GetCredentialException && (e.type.contains("PROVIDER_CONFIGURATION") || e.type.contains("UNSUPPORTED")) ->
+            "এই ডিভাইসে Google-এর Gmail তালিকা খুলছে না (Google Play services পুরনো বা নেই)। Play Store থেকে \"Google Play services\" আপডেট করুন, অথবা নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"
+        else -> "Gmail যুক্ত করা যায়নি। আবার চেষ্টা করুন, না হলে নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"
     }
 
     /** Links the chosen Gmail to the signed-in account. Returns the Gmail address. */
@@ -284,6 +315,7 @@ class AuthRepository(private val context: Context) {
         throw e
     } catch (e: Exception) {
         Log.w(TAG, "linkGmail failed", e)
+        if (e !is GetCredentialCancellationException) com.example.data.ai.AiDiagnostics.report("gmail_link", e)
         Result.failure(IllegalStateException(friendlyGmailError(e), e))
     }
 
