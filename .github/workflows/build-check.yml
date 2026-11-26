@@ -117,6 +117,11 @@ jobs:
           grep -E " STARTED$" gradle-output.txt | tail -n 3 | while IFS= read -r line; do
             echo "::notice::LAST-STARTED ${line}"
           done
+          if [ -f app/hang-dump.txt ]; then
+            grep -vE "java\.base|jdk\.internal|org\.junit|org\.gradle|sun\." app/hang-dump.txt | head -n 45 | while IFS= read -r line; do
+              echo "::notice::HANG ${line}"
+            done
+          fi
           if [ "$status" -ne 0 ]; then
             echo "::group::Failure highlights"
             grep -nE "^e: |FAILURE:|What went wrong|> Task .* FAILED|FAILED$" gradle-output.txt | tail -n 40 || true

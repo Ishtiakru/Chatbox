@@ -32,9 +32,32 @@ import java.util.concurrent.atomic.AtomicReference
 class SairaAutoReplyViewModelRobolectricTest {
 
     private lateinit var app: Application
+    private var watchdog: Thread? = null
+
+    @org.junit.After
+    fun tearDown() {
+        watchdog?.interrupt()
+    }
 
     @Before
     fun setUp() {
+        // CI hang finder: if a test runs > 75s, dump every thread's stack to a file.
+        val testThread = Thread.currentThread()
+        Thread {
+            try {
+                Thread.sleep(75_000)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            val sb = StringBuilder()
+            Thread.getAllStackTraces().forEach { (t, st) ->
+                if (t == testThread || t.name.contains("main", true) || t.name.contains("Test worker", true)) {
+                    sb.append("THREAD ").append(t.name).append(" state=").append(t.state).append('\n')
+                    st.take(40).forEach { sb.append("  at ").append(it.toString()).append('\n') }
+                }
+            }
+            runCatching { java.io.File("hang-dump.txt").writeText(sb.toString()) }
+        }.apply { isDaemon = true; name = "hang-watchdog"; start() }.also { watchdog = it }
         app = ApplicationProvider.getApplicationContext()
         if (FirebaseApp.getApps(app).isEmpty()) {
             FirebaseApp.initializeApp(app) ?: FirebaseApp.initializeApp(
