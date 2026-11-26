@@ -94,6 +94,31 @@ jobs:
           done
           echo "::error::secret never arrived"; exit 1
 
+      - name: google-services.json client check (ids only, no keys)
+        if: inputs.mode == 'inspect'
+        env:
+          GS: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GS64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          python3 - <<'PY2'
+          import base64, json, os
+          raw = os.environ.get("GS") or ""
+          if not raw.strip() and os.environ.get("GS64"):
+              raw = base64.b64decode(os.environ["GS64"]).decode()
+          if raw.strip() and not raw.lstrip().startswith("{"):
+              raw = base64.b64decode("".join(raw.split())).decode()
+          if not raw.strip():
+              print("::notice title=GSJSON::secret empty"); raise SystemExit
+          d = json.loads(raw)
+          out = [f"project={d['project_info'].get('project_id')}"]
+          for c in d.get("client", []):
+              pkg = c["client_info"]["android_client_info"]["package_name"]
+              oc = [(o.get("client_type"), o.get("client_id", "")[:28], (o.get("android_info") or {}).get("certificate_hash", "")[:12]) for o in c.get("oauth_client", [])]
+              other = [(o.get("client_type"), o.get("client_id", "")[:28]) for o in (c.get("services", {}).get("appinvite_service", {}).get("other_platform_oauth_client", []))]
+              out.append(f"{pkg} oauth={oc} other={other}")
+          print("::notice title=GSJSON::" + " ;; ".join(out))
+          PY2
+
       - name: Run
         run: |
           timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
