@@ -592,18 +592,27 @@ class LiveChatRepository(private val context: Context) {
 
             val conversationId = buildConversationId(currentUid, peerUid)
             val convRef = db.collection("conversations").document(conversationId)
-            val existing = convRef.get().await()
-            if (!existing.exists()) {
+            // Reading a chat that doesn't exist yet can be refused by the rules, so a failed
+            // read just means "create it". If creating fails because the other person already
+            // created it, a second read confirms we're a member.
+            val exists = runCatching { convRef.get(Source.SERVER).await().exists() }.getOrDefault(false)
+            if (!exists) {
                 val participants = listOf(currentUid, peerUid).sorted()
-                convRef.set(
-                    mapOf(
-                        "participants" to participants,
-                        "createdBy" to currentUid,
-                        "status" to "pending",
-                        "createdAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val created = runCatching {
+                    convRef.set(
+                        mapOf(
+                            "participants" to participants,
+                            "createdBy" to currentUid,
+                            "status" to "pending",
+                            "createdAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
+                if (created.isFailure) {
+                    val nowExists = runCatching { convRef.get(Source.SERVER).await().exists() }.getOrDefault(false)
+                    if (!nowExists) throw created.exceptionOrNull()!!
+                }
             }
             Result.success(conversationId)
         } catch (e: CancellationException) {

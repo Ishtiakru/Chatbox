@@ -152,6 +152,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _pendingCreatedThreads = MutableStateFlow<List<ChatboxThread>>(emptyList())
     private val chatboxThreadsMutex = Mutex()
+    private val attachMutex = Mutex()
 
     val chatboxThreads: StateFlow<List<ChatboxThread>> = combine(
         prefs.chatboxThreads,
@@ -927,6 +928,46 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         audioPath: String? = null,
         audioDurationMs: Long? = null
     ) {
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId }
+        val me = currentUser.value
+        if (thread != null && !thread.isGroup && thread.peerUid.isNotBlank() &&
+            thread.conversationId.isBlank() && me != null
+        ) {
+            // Real person but the server chat isn't created yet: create it first, then send,
+            // so the message really reaches them (never stays only on this phone).
+            viewModelScope.launch {
+                val ok = attachMutex.withLock {
+                    val current = chatboxThreads.value.firstOrNull { it.id == threadId }
+                    if (current != null && current.conversationId.isNotBlank()) true
+                    else runCatching { attachConversation(threadId, thread.peerUid, me.uid) }
+                        .onFailure { Log.w(LIVE_TAG, "attach before send failed", it) }.isSuccess
+                }
+                val target = prefs.chatboxThreads.first().let { list ->
+                    list.firstOrNull { it.id == threadId && it.conversationId.isNotBlank() }
+                        ?: list.firstOrNull { !it.isGroup && it.peerUid == thread.peerUid && it.conversationId.isNotBlank() }
+                }
+                if (!ok || target == null) {
+                    sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null)
+                    appendSystemNotice(threadId, "মেসেজটি পাঠানো যায়নি। ইন্টারনেট চেক করে আবার পাঠান।")
+                } else {
+                    sendChatboxMessageNow(target.id, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = target.conversationId)
+                }
+            }
+            return
+        }
+        sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null)
+    }
+
+    private fun sendChatboxMessageNow(
+        threadId: String,
+        body: String,
+        timeString: String,
+        kind: ChatboxMessageKind,
+        imageUri: String?,
+        audioPath: String?,
+        audioDurationMs: Long?,
+        conversationOverride: String?
+    ) {
         val trimmed = body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
         if (trimmed.isEmpty() && imageUri.isNullOrBlank() && audioPath.isNullOrBlank()) return
 
@@ -937,7 +978,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             ?: localUserProfile.value.displayName
         val liveThread = chatboxThreads.value.firstOrNull { it.id == threadId }
         val liveUid = currentUser.value?.uid
-        val liveConversationId = liveThread?.conversationId.orEmpty()
+        val liveConversationId = conversationOverride ?: liveThread?.conversationId.orEmpty()
         val liveMessageId = if (
             liveConversationId.isNotBlank() && liveUid != null &&
             kind == ChatboxMessageKind.TEXT && trimmed.isNotEmpty()
@@ -997,6 +1038,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 thread != null &&
                 !thread.isGroup &&
                 thread.conversationId.isBlank() &&
+                thread.peerUid.isBlank() &&
+                conversationOverride == null &&
                 oneMinAutoReplyEnabled.value &&
                 threadId !in chatboxBlockedThreads.value &&
                 threadId !in dmMutedPeers.value

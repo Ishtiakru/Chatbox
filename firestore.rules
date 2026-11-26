@@ -465,7 +465,8 @@ service cloud.firestore {
     }
 
     match /conversations/{conversationId} {
-      allow get: if isSignedIn() && isValidId(conversationId) && request.auth.uid in existing().participants;
+      allow get: if isSignedIn() && isValidId(conversationId)
+        && (resource == null || request.auth.uid in existing().participants);
       allow list: if isSignedIn() && request.auth.uid in existing().participants;
       allow create: if isSignedIn()
         && isValidId(conversationId)
