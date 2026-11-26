@@ -209,12 +209,27 @@ jobs:
           KEY_ALIAS: ${{ steps.ks.outputs.key_alias }}
           KEY_PASS: ${{ steps.ks.outputs.key_pass }}
         run: |
+          set +e
           gradle :app:assembleRelease --no-daemon \
             -Pchatbox.versionCode="$VERSION_CODE" -Pchatbox.versionName="$CLEAN_VER" \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASS"
+            -Pandroid.injected.signing.key.password="$KEY_PASS" 2>&1 | tee rel-standard.txt
+          S1=${PIPESTATUS[0]}
+          if [ "$S1" -ne 0 ]; then
+            {
+              grep -E "^e: " rel-standard.txt | head -n 15
+              grep -E "^(Error|Warning): " rel-standard.txt | head -n 20
+              awk '/What went wrong:/{f=1} f{print; n++; if(n>=20) exit}' rel-standard.txt
+            } | sed '/^[[:space:]]*$/d' | head -n 40 | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              echo "::error::REL-STD ${enc}"
+            done
+            echo "::error::standard assembleRelease exited with status $S1."
+            exit "$S1"
+          fi
+          set -e
 
           APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$APK_SOURCE" ]; then
@@ -225,12 +240,27 @@ jobs:
 
           # Full edition: same app + WhatsApp/Messenger auto-reply listener.
           rm -rf app/build/outputs/apk/release
+          set +e
           gradle :app:assembleRelease --no-daemon -Pchatbox.autoReply=true \
             -Pchatbox.versionCode="$VERSION_CODE" -Pchatbox.versionName="$CLEAN_VER" \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASS"
+            -Pandroid.injected.signing.key.password="$KEY_PASS" 2>&1 | tee rel-full.txt
+          S2=${PIPESTATUS[0]}
+          if [ "$S2" -ne 0 ]; then
+            {
+              grep -E "^e: " rel-full.txt | head -n 15
+              grep -E "^(Error|Warning): " rel-full.txt | head -n 20
+              awk '/What went wrong:/{f=1} f{print; n++; if(n>=20) exit}' rel-full.txt
+            } | sed '/^[[:space:]]*$/d' | head -n 40 | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              echo "::error::REL-FULL ${enc}"
+            done
+            echo "::error::full assembleRelease exited with status $S2."
+            exit "$S2"
+          fi
+          set -e
           FULL_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$FULL_SOURCE" ]; then
             echo "ERROR: Built full APK not found."

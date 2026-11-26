@@ -145,3 +145,51 @@ jobs:
             echo "::error::Gradle exited with status $status."
           fi
           exit "$status"
+
+      - name: Release assembly smoke (standard + full)
+        run: |
+          set +e
+          ./gradlew :app:assembleRelease --no-daemon 2>&1 | tee rel-standard.txt
+          s1=${PIPESTATUS[0]}
+          if [ "$s1" -ne 0 ]; then
+            {
+              grep -E "^e: " rel-standard.txt | head -n 15
+              grep -E "Error:" rel-standard.txt | head -n 20
+              grep -B45 "Lint found fatal" rel-standard.txt | tail -n 45
+              awk '/What went wrong:/{f=1} f{print; n++; if(n>=20) exit}' rel-standard.txt
+              grep -E "^> Task .* FAILED$" rel-standard.txt | head -n 10
+            } | sed '/^[[:space:]]*$/d' | head -n 40 | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              echo "::error::REL-STD ${enc}"
+            done
+            echo "::error::standard assembleRelease exited with status $s1."
+            exit "$s1"
+          fi
+          rm -rf app/build/outputs/apk/release
+          ./gradlew :app:assembleRelease --no-daemon -Pchatbox.autoReply=true 2>&1 | tee rel-full.txt
+          s2=${PIPESTATUS[0]}
+          if [ "$s2" -ne 0 ]; then
+            {
+              grep -E "^e: " rel-full.txt | head -n 15
+              grep -E "^(Error|Warning): " rel-full.txt | head -n 20
+              awk '/What went wrong:/{f=1} f{print; n++; if(n>=20) exit}' rel-full.txt
+              grep -E "^> Task .* FAILED$" rel-full.txt | head -n 10
+            } | sed '/^[[:space:]]*$/d' | head -n 40 | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g')
+              echo "::error::REL-FULL ${enc}"
+            done
+            echo "::error::full assembleRelease exited with status $s2."
+            exit "$s2"
+          fi
+          echo "::notice::release assembly smoke OK (standard + full)"
+
+      - name: Upload release smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-smoke-logs
+          path: |
+            rel-standard.txt
+            rel-full.txt
+          if-no-files-found: ignore
+          retention-days: 3
