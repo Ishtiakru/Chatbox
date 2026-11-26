@@ -238,6 +238,13 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         }
 
         val uid = currentUser?.uid.orEmpty()
+        // Show the linked Gmail, never the private "<number>@phone.chatbox.app" login address.
+        val visibleEmail = remember(currentUser, gmailRequired) {
+            currentUser?.let { u ->
+                u.providerData.firstOrNull { it.providerId == "google.com" }?.email
+                    ?: u.email?.takeUnless { it.endsWith("@phone.chatbox.app") }
+            }
+        }
         val effectiveDisplayName = ownProfile?.displayName
             ?: currentUser?.displayName
             ?: localUserProfile.displayName
@@ -386,7 +393,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             )
                             CoreAppTab.PROFILE -> ProfileScreen(
                                 currentUserId = uid,
-                                userEmail = currentUser?.email,
+                                userEmail = visibleEmail,
                                 fallbackDisplayName = effectiveDisplayName,
                                 ownProfile = ownProfile,
                                 localProfile = localUserProfile,
@@ -599,7 +606,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         if (showProfileDialog) {
             ProfileModalDialog(
                 uid = uid,
-                email = currentUser?.email,
+                email = visibleEmail,
                 fallbackDisplayName = effectiveDisplayName,
                 localProfile = localUserProfile,
                 isOnline = isOnline,
