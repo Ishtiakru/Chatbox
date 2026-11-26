@@ -5,17 +5,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Mobile number + password accounts sign in with a private per-number
+    // address (<digits>@phone.chatbox.app); Firebase keeps it unique per number.
+    function isPhonePasswordUser() {
+      return 'email' in request.auth.token
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('^[0-9]{7,15}@phone[.]chatbox[.]app$');
+    }
+
     function isSignedIn() {
       return request.auth != null && (
         ('email_verified' in request.auth.token && request.auth.token.email_verified == true)
         || request.auth.token.firebase.sign_in_provider == 'phone'
+        || isPhonePasswordUser()
       );
     }
 
-    // Phone-auth users may only claim their own SMS-verified number.
+    // Users may only claim their own number: the SMS-verified one, or the number
+    // their phone+password account was created with.
     function ownsPhoneKey(phoneKey) {
-      return request.auth.token.firebase.sign_in_provider != 'phone'
-        || request.auth.token.phone_number == '+' + phoneKey;
+      return ('phone_number' in request.auth.token)
+        ? request.auth.token.phone_number == '+' + phoneKey
+        : (isPhonePasswordUser()
+            ? (request.auth.token.email == phoneKey + '@phone.chatbox.app'
+               || request.auth.token.email == '88' + phoneKey + '@phone.chatbox.app')
+            : true);
     }
 
     function incoming() {

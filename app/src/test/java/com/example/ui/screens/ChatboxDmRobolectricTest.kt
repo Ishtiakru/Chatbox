@@ -674,15 +674,14 @@ class ChatboxDmRobolectricTest {
                             Result.success(Unit)
                         }
                     },
-                    onResetPassword = { id, newPwd ->
+                    onResetPassword = { _, id, newPwd ->
                         if (id.isBlank() || newPwd.length < 4) {
                             Result.failure(IllegalArgumentException("Invalid reset input"))
                         } else {
                             resetIdentifier = id
                             Result.success("Password updated. You can now log in.")
                         }
-                    },
-                    onGoogleSignIn = { com.example.data.repository.AuthResult.Cancelled }
+                    }
                 )
             }
         }
@@ -746,11 +745,9 @@ class ChatboxDmRobolectricTest {
     }
 
     @Test
-    fun `phone create account and forgot password need the SMS code before the password is saved`() {
-        var codesSent = 0
+    fun `login has no google or sms option and create account opens with any password`() {
         var created: Triple<String, String, String>? = null
         var reset: Pair<String, String>? = null
-        var cancelled = 0
 
         composeRule.setContent {
             ChatboxTheme {
@@ -764,26 +761,19 @@ class ChatboxDmRobolectricTest {
                         created = Triple(n, id, pwd)
                         Result.success(Unit)
                     },
-                    onResetPassword = { id, pwd ->
+                    onResetPassword = { _, id, pwd ->
                         reset = id to pwd
                         Result.success("ok")
-                    },
-                    onGoogleSignIn = { com.example.data.repository.AuthResult.Cancelled },
-                    onSendPhoneCode = { _, _, _, _ ->
-                        codesSent++
-                        com.example.data.repository.PhoneCodeResult.CodeSent("vid", null)
-                    },
-                    onVerifyPhoneCode = { _, code, _ ->
-                        if (code == "123456") Result.success(Unit) else Result.failure(IllegalArgumentException("ভুল কোড"))
-                    },
-                    onCancelPhoneFlow = { cancelled++ }
+                    }
                 )
             }
         }
         composeRule.waitForIdle()
 
-        // Release builds: no way to skip login.
+        // Release builds: no skip, no Google, no SMS-code option.
         composeRule.onAllNodesWithTag("login_back_button").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("login_phone_otp_button").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Continue with Google").assertCountEquals(0)
 
         // Wrong password is rejected and shown.
         composeRule.onNodeWithTag("login_identifier_input").performTextInput("01712345678")
@@ -792,53 +782,57 @@ class ChatboxDmRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("wrong").assertExists()
 
-        // Create account with a phone number -> SMS code dialog; nothing saved yet.
+        // Create account: number + any password, no SMS step, no Google button.
         composeRule.onNodeWithTag("login_create_account_button").performScrollTo().performClick()
         composeRule.waitForIdle()
+        composeRule.onAllNodesWithTag("create_account_google_button").assertCountEquals(0)
         composeRule.onNodeWithTag("create_account_name_input").performTextInput("Istiak")
         composeRule.onNodeWithTag("create_account_identifier_input").performTextInput("01712345678")
         composeRule.onNodeWithTag("create_account_password_input").performTextInput("secret99")
         composeRule.onNodeWithTag("create_account_submit_button").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("phone_otp_dialog").assertExists()
-        assertEquals(1, codesSent)
-        assertEquals(null, created)
-
-        // Wrong code -> still nothing saved.
-        composeRule.onNodeWithTag("phone_otp_code_input").performTextInput("000000")
-        composeRule.onNodeWithTag("phone_otp_submit_button").performClick()
-        composeRule.waitForIdle()
-        assertEquals(null, created)
-
-        // Right code -> password saved for that number.
-        composeRule.onNodeWithTag("phone_otp_code_input").performTextClearance()
-        composeRule.onNodeWithTag("phone_otp_code_input").performTextInput("123456")
-        composeRule.onNodeWithTag("phone_otp_submit_button").performClick()
-        composeRule.waitForIdle()
-        assertEquals(Triple("Istiak", "01712345678", "secret99"), created)
         composeRule.onAllNodesWithTag("phone_otp_dialog").assertCountEquals(0)
+        assertEquals(Triple("Istiak", "01712345678", "secret99"), created)
 
-        // Forgot password: cancelling the SMS step never changes the password.
+        // Forgot password goes straight to the Gmail check (in the ViewModel).
         composeRule.onNodeWithTag("login_forgot_password_button").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("forgot_new_password_input").performTextInput("newpass1")
         composeRule.onNodeWithTag("forgot_reset_confirm_button").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("phone_otp_dialog").assertExists()
-        composeRule.onNodeWithText("বাতিল").performClick()
-        composeRule.waitForIdle()
-        assertEquals(null, reset)
-        assertEquals(1, cancelled)
-
-        // Forgot password with the right code sets the new password.
-        composeRule.onNodeWithTag("login_forgot_password_button").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("forgot_new_password_input").performTextInput("newpass1")
-        composeRule.onNodeWithTag("forgot_reset_confirm_button").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("phone_otp_code_input").performTextInput("123456")
-        composeRule.onNodeWithTag("phone_otp_submit_button").performClick()
         composeRule.waitForIdle()
         assertEquals("01712345678" to "newpass1", reset)
+    }
+
+    @Test
+    fun `gmail popup blocks the app until a gmail is linked`() {
+        var linked = false
+        var calls = 0
+        composeRule.setContent {
+            ChatboxTheme {
+                if (!linked) {
+                    GmailRequiredDialog(
+                        needsPassword = false,
+                        onLinkGmail = { _, _ ->
+                            calls++
+                            if (calls == 1) {
+                                Result.failure(IllegalStateException("একটা Gmail বেছে নিন।"))
+                            } else {
+                                linked = true
+                                Result.success("me@gmail.com")
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        // Opened the Gmail list automatically; user dismissed it -> popup stays.
+        assertEquals(1, calls)
+        composeRule.onNodeWithTag("gmail_required_dialog").assertExists()
+        composeRule.onNodeWithText("একটা Gmail বেছে নিন।").assertExists()
+        composeRule.onNodeWithTag("gmail_required_pick_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(2, calls)
+        assertTrue(linked)
     }
 }
