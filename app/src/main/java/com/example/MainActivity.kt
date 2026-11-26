@@ -1,22 +1,38 @@
 package com.example
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.example.ui.ChatboxRoot
 import com.example.util.configureAppCheck
 
 class MainActivity : ComponentActivity() {
+
+    private val notifPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Configure Firebase App Check with launch intent before any UI, ViewModel, or Firebase call
         configureAppCheck(this, intent)
         enableEdgeToEdge()
+
+        // Android 13+: message/call notifications need the runtime POST_NOTIFICATIONS grant.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         val appViewModel = com.example.util.AppViewModels.chatbox(application)
         setContent {

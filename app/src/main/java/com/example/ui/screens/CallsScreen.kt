@@ -97,6 +97,8 @@ fun CallsScreen(
     onOpenThread: (String) -> Unit = {},
     onAddOrFindContact: (String) -> String = { "" },
     onLogCall: (threadId: String, peerName: String, isVideo: Boolean, isMissed: Boolean, durationLabel: String) -> Unit = { _, _, _, _, _ -> },
+    // 1.0.0.112: call buttons signal the peer through the global VM state.
+    onStartCall: (threadId: String, peerName: String, isVideo: Boolean) -> Unit = { _, _, _ -> },
     onToggleFavorite: (String) -> Unit = {},
     onScheduleCall: (threadId: String, peerName: String, isVideo: Boolean, scheduledForLabel: String) -> Unit = { _, _, _, _ -> },
     onRemoveScheduledCall: (String) -> Unit = {},
@@ -114,7 +116,6 @@ fun CallsScreen(
     var showFavoritesDialog by remember { mutableStateOf(false) }
 
     var addedUserPromptTarget by remember { mutableStateOf<ChatboxThread?>(null) }
-    var activeCallTarget by remember { mutableStateOf<ActiveCallTarget?>(null) }
 
     if (searchQuery.isNotEmpty()) {
         BackHandler { searchQuery = "" }
@@ -406,11 +407,7 @@ fun CallsScreen(
                                     }
                                     IconButton(
                                         onClick = {
-                                            activeCallTarget = ActiveCallTarget(
-                                                threadId = sched.threadId,
-                                                peerName = sched.peerName,
-                                                isVideo = sched.isVideo
-                                            )
+                                            onStartCall(sched.threadId, sched.peerName, sched.isVideo)
                                         }
                                     ) {
                                         Icon(
@@ -475,14 +472,14 @@ fun CallsScreen(
                                 }
                                 IconButton(
                                     onClick = {
-                                        activeCallTarget = ActiveCallTarget(contact.id, contact.name, false)
+                                        onStartCall(contact.id, contact.name, false)
                                     }
                                 ) {
                                     Icon(Icons.Rounded.Phone, contentDescription = "Audio call", tint = ChatboxPrimary)
                                 }
                                 IconButton(
                                     onClick = {
-                                        activeCallTarget = ActiveCallTarget(contact.id, contact.name, true)
+                                        onStartCall(contact.id, contact.name, true)
                                     }
                                 ) {
                                     Icon(Icons.Rounded.Videocam, contentDescription = "Video call", tint = ChatboxPrimary)
@@ -613,11 +610,7 @@ fun CallsScreen(
                                 }
                                 IconButton(
                                     onClick = {
-                                        activeCallTarget = ActiveCallTarget(
-                                            threadId = call.threadId,
-                                            peerName = call.peerName,
-                                            isVideo = call.isVideo
-                                        )
+                                        onStartCall(call.threadId, call.peerName, call.isVideo)
                                     },
                                     modifier = Modifier.testTag("call_redial_${call.id}")
                                 ) {
@@ -680,11 +673,11 @@ fun CallsScreen(
             onToggleFavorite = { onToggleFavorite(target.id) },
             onStartAudioCall = {
                 addedUserPromptTarget = null
-                activeCallTarget = ActiveCallTarget(target.id, target.name, false)
+                onStartCall(target.id, target.name, false)
             },
             onStartVideoCall = {
                 addedUserPromptTarget = null
-                activeCallTarget = ActiveCallTarget(target.id, target.name, true)
+                onStartCall(target.id, target.name, true)
             },
             onOpenChat = {
                 addedUserPromptTarget = null
@@ -701,7 +694,7 @@ fun CallsScreen(
             onAddOrFindContact = onAddOrFindContact,
             onStartCall = { tid, peerName, isVideo ->
                 showCallPickerDialog = false
-                activeCallTarget = ActiveCallTarget(tid, peerName, isVideo)
+                onStartCall(tid, peerName, isVideo)
             },
             onToggleFavorite = onToggleFavorite,
             onDismiss = { showCallPickerDialog = false }
@@ -713,7 +706,7 @@ fun CallsScreen(
             onAddOrFindContact = onAddOrFindContact,
             onStartCall = { tid, peerName, isVideo ->
                 showKeypadDialog = false
-                activeCallTarget = ActiveCallTarget(tid, peerName, isVideo)
+                onStartCall(tid, peerName, isVideo)
             },
             onDismiss = { showKeypadDialog = false }
         )
@@ -736,26 +729,12 @@ fun CallsScreen(
             onAddAndFavorite = onAddOrFindContact,
             onStartCall = { tid, peerName, isVideo ->
                 showFavoritesDialog = false
-                activeCallTarget = ActiveCallTarget(tid, peerName, isVideo)
+                onStartCall(tid, peerName, isVideo)
             },
             onDismiss = { showFavoritesDialog = false }
         )
     }
 
-    activeCallTarget?.let { target ->
-        CallsActiveCallDialog(
-            target = target,
-            onMarkMissed = {
-                onLogCall(target.threadId, target.peerName, target.isVideo, true, "Missed")
-                activeCallTarget = null
-            },
-            onEndCall = { duration ->
-                onLogCall(target.threadId, target.peerName, target.isVideo, false, duration)
-                activeCallTarget = null
-            },
-            onDismiss = { activeCallTarget = null }
-        )
-    }
 }
 
 @Composable

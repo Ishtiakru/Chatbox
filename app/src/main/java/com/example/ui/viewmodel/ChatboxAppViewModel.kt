@@ -39,6 +39,7 @@ import com.example.data.repository.AppPreferencesRepository
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.LiveChatRepository
 import com.example.data.repository.SairaSessionRepository
+import com.example.util.ChatboxNotifier
 import com.example.data.repository.SparkAdminRepository
 import com.example.saira.SairaAutoReplyLog
 import com.example.saira.SairaDirectoryUser
@@ -92,6 +93,18 @@ data class SairaAutoReplyTestResult(
     val usedAi: Boolean,
     val includedLocation: Boolean,
     val statusNote: String
+)
+
+/** Live call session shown by the global call dialogs (signaling rides Firestore messages). */
+data class ActiveChatboxCall(
+    val callId: String,
+    val threadId: String,
+    val peerName: String,
+    val isVideo: Boolean,
+    val isIncoming: Boolean,
+    /** "ringing" until the callee accepts, then "connected". */
+    val phase: String,
+    val connectedAtMs: Long
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1873,6 +1886,153 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // ---------- Call signaling: rides the live-message pipeline (no new rules) ----------
+    private val _activeCall = MutableStateFlow<ActiveChatboxCall?>(null)
+    val activeCall: StateFlow<ActiveChatboxCall?> = _activeCall.asStateFlow()
+
+    /** Caller presses audio/video call: local dialog + ringing signal to the peer. */
+    fun startCall(threadId: String, peerName: String, isVideo: Boolean) {
+        if (_activeCall.value != null) return
+        val callId = "call_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+        _activeCall.value = ActiveChatboxCall(
+            callId = callId,
+            threadId = threadId,
+            peerName = peerName,
+            isVideo = isVideo,
+            isIncoming = false,
+            phase = "ringing",
+            connectedAtMs = 0L
+        )
+        sendCallSig(threadId, callId, "start", isVideo)
+    }
+
+    /** Callee answers: stop ring notification, connect both sides. */
+    fun acceptCall() {
+        val call = _activeCall.value ?: return
+        if (!call.isIncoming || call.phase != "ringing") return
+        _activeCall.value = call.copy(phase = "connected", connectedAtMs = System.currentTimeMillis())
+        runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
+        sendCallSig(call.threadId, call.callId, "accept", call.isVideo)
+    }
+
+    /** Callee declines: caller sees a missed call. */
+    fun declineCall() {
+        val call = _activeCall.value ?: return
+        if (!call.isIncoming) return
+        runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
+        sendCallSig(call.threadId, call.callId, "decline", call.isVideo)
+        _activeCall.value = null
+    }
+
+    /**
+     * Dialog closed on either side. [dismissed] = outside-tap (no local log while
+     * still ringing, mirrors the old UI); [missed] = "Mark missed"; otherwise a
+     * normal end with [durationLabel].
+     */
+    fun endCall(missed: Boolean, durationLabel: String? = null, dismissed: Boolean = false) {
+        val call = _activeCall.value ?: return
+        runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
+        if (call.phase == "ringing") {
+            if (call.isIncoming) {
+                sendCallSig(call.threadId, call.callId, "decline", call.isVideo)
+            } else {
+                if (!dismissed) {
+                    logChatboxCall(call.threadId, call.peerName, call.isVideo, true, "Missed")
+                }
+                sendCallSig(call.threadId, call.callId, "missed", call.isVideo)
+            }
+        } else {
+            val label = durationLabel ?: connectedDurationLabel(call)
+            logChatboxCall(call.threadId, call.peerName, call.isVideo, missed, if (missed) "Missed" else label)
+            sendCallSig(call.threadId, call.callId, "end", call.isVideo)
+        }
+        _activeCall.value = null
+    }
+
+    private fun connectedDurationLabel(call: ActiveChatboxCall): String {
+        val sec = ((System.currentTimeMillis() - call.connectedAtMs) / 1000L).coerceAtLeast(1L)
+        return String.format(Locale.US, "%d:%02d", sec / 60, sec % 60)
+    }
+
+    private fun sendCallSig(threadId: String, callId: String, action: String, isVideo: Boolean) {
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: return
+        val convId = thread.conversationId.orEmpty()
+        val myUid = currentUser.value?.uid ?: return
+        if (convId.isBlank()) return // local-only thread: dialog behaves as before
+        val body = (CALL_SIG_PREFIX + "$callId|$action|${if (isVideo) "1" else "0"}")
+            .take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
+        viewModelScope.launch {
+            runCatching { liveChatRepo.sendLiveMessage(convId, myUid, body) }
+        }
+    }
+
+    /** Peer's call signal arrived over the conversation stream. Never shown in chat. */
+    private fun handleCallSig(thread: ChatboxThread, msg: LiveMessage, myUid: String) {
+        if (thread.isGroup) return
+        val payload = msg.body.removePrefix(CALL_SIG_PREFIX)
+        val parts = payload.split("|")
+        val callId = parts.getOrNull(0)?.trim().orEmpty()
+        val action = parts.getOrNull(1)?.trim().orEmpty()
+        if (callId.isEmpty() || action.isEmpty()) return
+        val isVideo = parts.getOrNull(2) == "1"
+        val sentAtMs = msg.sentAt?.toDate()?.time ?: return
+        val ageMs = System.currentTimeMillis() - sentAtMs
+        val cur = _activeCall.value
+        when (action) {
+            "start" -> {
+                // Only ring for a fresh invite from the peer (never replay old ones).
+                if (ageMs !in -30_000L..60_000L) return
+                if (cur != null) {
+                    if (cur.callId != callId) sendCallSig(thread.id, callId, "decline", isVideo)
+                    return
+                }
+                _activeCall.value = ActiveChatboxCall(
+                    callId = callId,
+                    threadId = thread.id,
+                    peerName = thread.name,
+                    isVideo = isVideo,
+                    isIncoming = true,
+                    phase = "ringing",
+                    connectedAtMs = 0L
+                )
+                runCatching {
+                    ChatboxNotifier.notifyIncomingCall(
+                        getApplication(),
+                        callId,
+                        title = if (isVideo) "ভিডিও কল" else "অডিও কল",
+                        body = "${thread.name} আপনাকে কল করছেন"
+                    )
+                }
+            }
+            "accept" -> {
+                if (cur != null && cur.callId == callId && !cur.isIncoming && cur.phase == "ringing") {
+                    _activeCall.value = cur.copy(phase = "connected", connectedAtMs = System.currentTimeMillis())
+                }
+            }
+            "decline", "missed" -> {
+                // decline → caller side; missed → callee side (caller cancelled while ringing).
+                if (cur != null && cur.callId == callId && cur.phase == "ringing") {
+                    _activeCall.value = null
+                    if (cur.isIncoming) {
+                        runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), callId) }
+                    }
+                    logChatboxCall(cur.threadId, cur.peerName, cur.isVideo, true, "Missed")
+                }
+            }
+            "end" -> {
+                if (cur != null && cur.callId == callId) {
+                    _activeCall.value = null
+                    when {
+                        cur.phase == "connected" ->
+                            logChatboxCall(cur.threadId, cur.peerName, cur.isVideo, false, connectedDurationLabel(cur))
+                        cur.isIncoming ->
+                            logChatboxCall(cur.threadId, cur.peerName, cur.isVideo, true, "Missed")
+                    }
+                }
+            }
+        }
+    }
+
     fun clearChatboxCallLogs() {
         viewModelScope.launch { prefs.clearChatboxCallLogs() }
     }
@@ -1960,6 +2120,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         liveMessageJobs.values.forEach { it.cancel() }
         liveMessageJobs.clear()
         liveAcceptedConversations.clear()
+        _activeCall.value?.let { call ->
+            runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
+        }
+        _activeCall.value = null
     }
 
     private fun startLiveSync(uid: String) {
@@ -2196,9 +2360,19 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun mergeLiveMessages(uid: String, conversationId: String, items: List<LiveMessage>) {
         val thread = prefs.chatboxThreads.first().firstOrNull { it.conversationId == conversationId } ?: return
+        // Call signaling rides the same stream: handle peer control messages,
+        // never render them in chat and never treat them as chat.
+        if (!thread.isGroup) {
+            items.forEach { m ->
+                if (m.senderId != uid && m.body.startsWith(CALL_SIG_PREFIX)) {
+                    runCatching { handleCallSig(thread, m, uid) }
+                }
+            }
+        }
         val fmt = SimpleDateFormat("hh:mm a", Locale.getDefault())
         var incomingNew = 0
         var freshIncoming: ChatboxMessage? = null
+        var notifyText: String? = null
         val freshCutoff = System.currentTimeMillis() - LIVE_AUTO_REPLY_FRESH_MS
         chatboxMessagesMutex.withLock {
             val map = prefs.chatboxMessages.first().toMutableMap()
@@ -2207,6 +2381,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             val additions = items
                 .filter { it.id.isNotBlank() && "live_${it.id}" !in known }
                 .mapNotNull { m ->
+                    // Hidden call control messages are never chat.
+                    if (m.body.startsWith(CALL_SIG_PREFIX)) return@mapNotNull null
                     val text = m.body.ifBlank {
                         when {
                             !m.imageUrl.isNullOrBlank() -> "📷 Photo"
@@ -2231,6 +2407,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 .filter { m -> m.senderId != uid && (m.sentAt?.toDate()?.time ?: System.currentTimeMillis()) >= freshCutoff }
                 .mapTo(HashSet()) { "live_${it.id}" }
             freshIncoming = additions.lastOrNull()?.takeIf { it.from == "them" && it.id in freshIds }
+            notifyText = additions.lastOrNull { it.from == "them" }?.text
             map[thread.id] = current + additions
             prefs.saveChatboxMessages(map)
         }
@@ -2239,6 +2416,16 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             pendingAbsenceJobs.remove(thread.id)?.cancel()
             if (_activeThreadId.value != thread.id) {
                 updateThread(thread.id) { it.copy(unreadCount = it.unreadCount + incomingNew) }
+            }
+            // Heads-up notification with sound unless the user is already in
+            // this very thread on the foreground.
+            val body = notifyText
+            if (body != null &&
+                (!com.example.util.AppPresence.foreground || _activeThreadId.value != thread.id)
+            ) {
+                runCatching {
+                    ChatboxNotifier.notifyMessage(getApplication(), thread.id, thread.name, body)
+                }
             }
         }
         freshIncoming?.let { msg ->
@@ -2294,6 +2481,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         const val DEFAULT_AUTO_REPLY_WAIT_MS = 10_000L
         /** Marks Saira-written live messages so the other side's Saira never answers them. */
         const val SAIRA_LIVE_PREFIX = "🤖 Saira: "
+        /** Hidden control message used to ring/accept/end calls. Never shown in chat. */
+        const val CALL_SIG_PREFIX = "\u0001CALL\u0001"
         // Messages that arrived while the app was closed (up to 6h) still get Saira's reply.
         private const val LIVE_AUTO_REPLY_FRESH_MS = 6 * 60 * 60 * 1000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
