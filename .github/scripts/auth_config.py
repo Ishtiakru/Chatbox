@@ -112,7 +112,19 @@ def main():
     billing = bill.get("billingEnabled") if st_b == 200 else f"unknown(HTTP {st_b})"
 
     if a.mode == "inspect":
-        notice(f"inspect {summarize(cfg)} billingEnabled={billing}")
+        st_g, g = call(tok, "GET", f"{IDT}/projects/{a.project}/defaultSupportedIdpConfigs/google.com")
+        gdesc = (f"google_enabled={g.get('enabled')} google_client={str(g.get('clientId',''))[:28]}"
+                 if st_g == 200 else f"google=HTTP{st_g}")
+        fb = "https://firebase.googleapis.com/v1beta1"
+        st_a, apps = call(tok, "GET", f"{fb}/projects/{a.project}/androidApps?pageSize=100")
+        shadesc = ""
+        app = next((x for x in apps.get("apps", []) if x.get("packageName") == a.package), None) if st_a == 200 else None
+        if app:
+            _, shas = call(tok, "GET", f"{fb}/{app['name']}/sha")
+            have = {c.get("shaHash", "").lower() for c in shas.get("certificates", [])}
+            shadesc = (f" shas={len(have)} release_sha1_present={a.sha1.replace(':','').lower() in have}"
+                       f" release_sha256_present={a.sha256.replace(':','').lower() in have}")
+        notice(f"inspect {summarize(cfg)} billingEnabled={billing} {gdesc}{shadesc}")
         return
 
     if a.mode == "enable-password":
