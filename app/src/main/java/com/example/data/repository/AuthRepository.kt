@@ -155,6 +155,96 @@ class AuthRepository(private val context: Context) {
         AuthResult.Failure(friendlyPhoneError(e))
     }
 
+    // ---- Mobile number / email + password (verified by Firebase) ----------
+
+    /** True when this account can open the app: it has a password or Google sign-in. */
+    fun hasPasswordOrGoogle(user: FirebaseUser?): Boolean =
+        user != null && user.providerData.any { it.providerId == "password" || it.providerId == "google.com" }
+
+    /** Signs in with a mobile number (or email) + password. Firebase checks the password. */
+    suspend fun signInWithPassword(identifier: String, password: String): AuthResult = try {
+        val email = loginEmailFor(identifier)
+            ?: return AuthResult.Failure("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678")
+        val user = auth.signInWithEmailAndPassword(email, password).await().user
+        if (user != null) AuthResult.Success(user) else AuthResult.Failure("Login সম্পূর্ণ হয়নি।")
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AuthResult.Failure(friendlyPasswordError(e))
+    }
+
+    /**
+     * Attaches (or replaces) the password on the currently signed-in account for
+     * [identifier]. For a mobile number the account must have just verified that
+     * number by SMS code, so nobody can set a password for someone else's number.
+     */
+    suspend fun setPasswordForVerifiedAccount(identifier: String, password: String): Result<FirebaseUser> = runCatching {
+        val user = auth.currentUser ?: error("আগে SMS কোড দিয়ে নম্বর যাচাই করুন।")
+        val email = loginEmailFor(identifier) ?: error("সঠিক মোবাইল নম্বর লিখুন।")
+        if (!identifier.contains("@")) {
+            val e164 = PhoneNumbers.toE164(identifier)
+            if (e164 == null || user.phoneNumber != e164) error("আগে SMS কোড দিয়ে এই নম্বরটি যাচাই করুন।")
+        }
+        val hasPassword = user.providerData.any { it.providerId == "password" }
+        if (hasPassword) {
+            user.updatePassword(password).await()
+        } else {
+            user.linkWithCredential(com.google.firebase.auth.EmailAuthProvider.getCredential(email, password)).await()
+        }
+        user
+    }.recoverCatching { e -> throw IllegalStateException(friendlyPasswordError(e), e) }
+
+    /** New email account (email + password); sends a verification email. */
+    suspend fun createEmailAccount(email: String, password: String): AuthResult = try {
+        val user = auth.createUserWithEmailAndPassword(email.trim(), password).await().user
+        if (user != null) {
+            runCatching { user.sendEmailVerification().await() }
+            AuthResult.Success(user)
+        } else {
+            AuthResult.Failure("Account তৈরি হয়নি।")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AuthResult.Failure(friendlyPasswordError(e))
+    }
+
+    private fun friendlyPasswordError(e: Throwable): String {
+        if (e is IllegalStateException && e.cause == null && !e.message.isNullOrBlank()) return e.message!!
+        val code = (e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode.orEmpty()
+        val msg = (e.message ?: "").uppercase()
+        return when {
+            e is com.google.firebase.FirebaseTooManyRequestsException || "TOO_MANY" in msg ->
+                "অনেকবার চেষ্টা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।"
+            e is com.google.firebase.FirebaseNetworkException -> "ইন্টারনেট সংযোগ নেই। নেট চালু করে আবার চেষ্টা করুন।"
+            code == "ERROR_WEAK_PASSWORD" || e is com.google.firebase.auth.FirebaseAuthWeakPasswordException ->
+                "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।"
+            code == "ERROR_EMAIL_ALREADY_IN_USE" || code == "ERROR_CREDENTIAL_ALREADY_IN_USE" ||
+                e is com.google.firebase.auth.FirebaseAuthUserCollisionException ->
+                "এই নম্বর/ইমেইলে আগেই account আছে। Log in করুন, পাসওয়ার্ড ভুলে গেলে Forgot password চাপুন।"
+            code == "ERROR_REQUIRES_RECENT_LOGIN" -> "নিরাপত্তার জন্য আবার SMS কোড দিয়ে যাচাই করুন।"
+            code == "ERROR_OPERATION_NOT_ALLOWED" -> "পাসওয়ার্ড Login এখনো চালু হয়নি। একটু পরে আবার চেষ্টা করুন।"
+            e is com.google.firebase.auth.FirebaseAuthInvalidUserException ||
+                e is com.google.firebase.auth.FirebaseAuthInvalidCredentialsException ||
+                "INVALID_LOGIN_CREDENTIALS" in msg ->
+                "নম্বর বা পাসওয়ার্ড ভুল। নতুন হলে \"Create new account\", পাসওয়ার্ড ভুলে গেলে \"Forgot password?\" চাপুন।"
+            else -> "Login করা যায়নি। আবার চেষ্টা করুন।"
+        }
+    }
+
+    companion object {
+        /**
+         * Firebase has no "phone + password" provider, so each mobile number gets a
+         * private sign-in address (never emailed). Real emails are used as-is.
+         */
+        fun loginEmailFor(identifier: String): String? {
+            val clean = identifier.trim()
+            if (clean.contains("@")) return clean.lowercase()
+            val e164 = PhoneNumbers.toE164(clean) ?: return null
+            return "${e164.removePrefix("+")}@phone.chatbox.app"
+        }
+    }
+
     suspend fun updateDisplayName(name: String) {
         val user = auth.currentUser ?: return
         runCatching { user.updateProfile(UserProfileChangeRequest.Builder().setDisplayName(name).build()).await() }

@@ -9,7 +9,7 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, enable-phone, sha]
+        options: [inspect, enable-phone, sha, enable-password]
 
 jobs:
   auth:

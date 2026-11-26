@@ -1,5 +1,6 @@
 package com.example.ui
 
+import com.example.BuildConfig
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -209,18 +210,30 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             return@ChatboxTheme
         }
 
-        if (!hasCompletedLogin && currentUser == null) {
+        val authFlowActive by viewModel.authFlowActive.collectAsState()
+        // Only a real Firebase session (number + its own password, Google, or a session
+        // that already existed) opens the app. The local "skip" flag counts only in
+        // debug/test builds.
+        val mayEnterWithoutAccount = BuildConfig.DEBUG && hasCompletedLogin
+        if (authFlowActive || (currentUser == null && !mayEnterWithoutAccount)) {
             AuthLoginScreen(
                 selectedLanguageCode = loginLanguage,
                 initialIdentifier = storedAccountIdentifier,
                 onLanguageSelected = viewModel::setLoginLanguage,
-                onBackSkipLogin = viewModel::enterAppWithoutLogin,
+                onBackSkipLogin = if (BuildConfig.DEBUG) viewModel::enterAppWithoutLogin else null,
+                onCancelPhoneFlow = viewModel::cancelAuthFlow,
                 onLoginWithCredentials = viewModel::loginWithCredentials,
                 onCreateAccount = viewModel::createAccountWithCredentials,
                 onResetPassword = viewModel::resetAccountPassword,
                 onGoogleSignIn = viewModel::signInWithGoogleFromLogin,
                 onSendPhoneCode = viewModel::sendPhoneLoginCode,
-                onVerifyPhoneCode = viewModel::verifyPhoneLoginCode
+                onVerifyPhoneCode = { id, code, name ->
+                    when (val r = viewModel.verifyPhoneLoginCode(id, code, name)) {
+                        is com.example.data.repository.AuthResult.Success -> Result.success(Unit)
+                        is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
+                        com.example.data.repository.AuthResult.Cancelled -> Result.failure(IllegalArgumentException("বাতিল হয়েছে।"))
+                    }
+                }
             )
             return@ChatboxTheme
         }
