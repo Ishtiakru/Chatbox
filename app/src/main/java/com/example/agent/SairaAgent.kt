@@ -396,7 +396,8 @@ object SairaAgent {
                     r.conclusion == "success" -> "✅"
                     else -> "❌"
                 }
-                append("$icon ${r.name} — ${r.title.take(50)}\n")
+                val label = if (r.title.isBlank() || r.title == r.name) r.name else "${r.name} — ${r.title.take(50)}"
+                append("$icon $label\n")
             }
             append("\n📝 সাম্প্রতিক কমিট:\n")
             commits.forEach { append("• $it\n") }
