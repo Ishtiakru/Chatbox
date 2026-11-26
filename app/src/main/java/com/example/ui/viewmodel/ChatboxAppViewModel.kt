@@ -1110,15 +1110,26 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
             val isFirstTurn = historyMessages.none { it.from == "me" }
+            val ownerActive = SairaPrompts.isOwnerAccount(
+                currentUser.value?.uid,
+                currentUser.value?.phoneNumber,
+                localUserProfile.value.phoneNumber
+            )
+            val ownerLabel = if (ownerActive) {
+                ownProfile.value?.displayName?.ifBlank { null }
+                    ?: localUserProfile.value.displayName.ifBlank { null }
+                    ?: "owner"
+            } else ""
             val prompt = SairaPrompts.buildTurnPrompt(
                 question = userMessage,
                 isFirstTurn = isFirstTurn,
                 isContinuation = !isFirstTurn,
-                hourOfDay = clockHourProvider()
+                hourOfDay = clockHourProvider(),
+                ownerLabel = ownerLabel
             )
             val aiAnswer = try {
                 withTimeoutOrNull(25_000L) {
-                    aiCompleter(SairaPrompts.chatSystemInstruction, aiHistory, prompt)
+                    aiCompleter(SairaPrompts.chatSystemInstructionFor(ownerActive), aiHistory, prompt)
                 }?.trim().orEmpty()
             } catch (e: CancellationException) {
                 throw e

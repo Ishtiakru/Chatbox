@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.data.ai.SairaPrompts
 import com.example.data.model.AppTab
 import com.example.data.model.CoreAppTab
 import com.example.ui.components.AppUpdateDetailsDialog
@@ -256,6 +257,14 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         val effectiveDisplayName = ownProfile?.displayName
             ?: currentUser?.displayName
             ?: localUserProfile.displayName
+        val sairaIsOwner = remember(uid, currentUser?.phoneNumber, localUserProfile.phoneNumber) {
+            SairaPrompts.isOwnerAccount(uid, currentUser?.phoneNumber, localUserProfile.phoneNumber)
+        }
+        val sairaOwnerName = remember(ownProfile, localUserProfile, currentUser) {
+            (ownProfile?.displayName?.ifBlank { null }
+                ?: localUserProfile.displayName.takeIf { it.isNotBlank() && it != "Chatbox User" }
+                ?: currentUser?.displayName).orEmpty()
+        }
 
         val navItems = remember(isAdmin, dynamicConfig.customMenus) {
             buildList {
@@ -349,6 +358,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             )
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,
+                                isOwner = sairaIsOwner,
+                                ownerName = sairaOwnerName,
                                 isOnline = isOnline,
                                 appUpdateActive = appUpdate.active,
                                 onAppUpdateClick = { viewModel.openUpdateDialog(true) },
