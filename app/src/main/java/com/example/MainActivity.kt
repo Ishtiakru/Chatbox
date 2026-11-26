@@ -8,13 +8,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.example.ui.ChatboxRoot
 import com.example.util.configureAppCheck
 
 class MainActivity : ComponentActivity() {
+
+    private companion object {
+        const val NOTIF_PERMISSION_CODE = 4401
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,15 +27,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // Android 13+: message/call notifications need the runtime POST_NOTIFICATIONS grant.
-        // Registered INSIDE onCreate — a property-initializer registration trips lint's
-        // InvalidFragmentVersionForActivityResult (fatal for lintVitalRelease).
-        val notifPermissionLauncher =
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        // Platform requestPermissions() instead of registerForActivityResult(): the latter
+        // trips lint's InvalidFragmentVersionForActivityResult (fatal for lintVitalRelease)
+        // because this app has no androidx.fragment >= 1.3.0 dependency.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            @Suppress("DEPRECATION")
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_PERMISSION_CODE)
         }
 
         val appViewModel = com.example.util.AppViewModels.chatbox(application)
