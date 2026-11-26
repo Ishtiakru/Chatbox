@@ -32,32 +32,35 @@ import java.util.concurrent.atomic.AtomicReference
 class SairaAutoReplyViewModelRobolectricTest {
 
     private lateinit var app: Application
-    private var watchdog: Thread? = null
+    companion object {
+        @Volatile private var watchdogStarted = false
 
-    @org.junit.After
-    fun tearDown() {
-        watchdog?.interrupt()
+        /** CI hang finder: every 45s dump all thread stacks (JVM-wide, outlives sandboxes). */
+        fun startGlobalWatchdog() {
+            if (watchdogStarted) return
+            watchdogStarted = true
+            val dir = System.getProperty("user.dir")
+            Thread {
+                while (true) {
+                    try { Thread.sleep(45_000) } catch (_: InterruptedException) { return@Thread }
+                    val sb = StringBuilder()
+                    Thread.getAllStackTraces().forEach { (t, st) ->
+                        if (t.name.contains("Test worker", true) || t.name == "main" ||
+                            t.name.contains("SDK 35", true) || t.name.contains("robolectric", true)
+                        ) {
+                            sb.append("THREAD ").append(t.name).append(" state=").append(t.state).append('\n')
+                            st.take(45).forEach { sb.append("  at ").append(it.toString()).append('\n') }
+                        }
+                    }
+                    runCatching { java.io.File(dir, "hang-dump.txt").writeText(sb.toString()) }
+                }
+            }.apply { isDaemon = true; name = "hang-watchdog"; start() }
+        }
     }
 
     @Before
     fun setUp() {
-        // CI hang finder: if a test runs > 75s, dump every thread's stack to a file.
-        val testThread = Thread.currentThread()
-        Thread {
-            try {
-                Thread.sleep(75_000)
-            } catch (_: InterruptedException) {
-                return@Thread
-            }
-            val sb = StringBuilder()
-            Thread.getAllStackTraces().forEach { (t, st) ->
-                if (t == testThread || t.name.contains("main", true) || t.name.contains("Test worker", true)) {
-                    sb.append("THREAD ").append(t.name).append(" state=").append(t.state).append('\n')
-                    st.take(40).forEach { sb.append("  at ").append(it.toString()).append('\n') }
-                }
-            }
-            runCatching { java.io.File("hang-dump.txt").writeText(sb.toString()) }
-        }.apply { isDaemon = true; name = "hang-watchdog"; start() }.also { watchdog = it }
+        startGlobalWatchdog()
         app = ApplicationProvider.getApplicationContext()
         if (FirebaseApp.getApps(app).isEmpty()) {
             FirebaseApp.initializeApp(app) ?: FirebaseApp.initializeApp(
