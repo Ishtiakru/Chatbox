@@ -53,7 +53,9 @@ fun GmailRequiredDialog(
     /** Fallback when the device cannot open Google's Gmail list: save a typed Gmail. */
     onSaveTypedGmail: (suspend (gmail: String, password: String?) -> Result<String>)? = null,
     /** Gmails already added to this account (any number of them). */
-    knownGmails: List<String> = emptyList()
+    knownGmails: List<String> = emptyList(),
+    /** Use Android's own account chooser (no Google sign-in / OAuth setup needed). */
+    useDeviceAccountChooser: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -63,9 +65,37 @@ fun GmailRequiredDialog(
     var failures by remember { mutableStateOf(0) }
     var typedGmail by remember { mutableStateOf("") }
 
+    fun save(gmail: String) {
+        val saver = onSaveTypedGmail ?: return
+        scope.launch {
+            busy = true
+            saver(gmail, if (needsPassword) password else null)
+                .onFailure { e -> error = e.message ?: "আবার চেষ্টা করুন।"; failures++ }
+            busy = false
+        }
+    }
+
+    val openChooser: (() -> Unit)? = if (useDeviceAccountChooser && onSaveTypedGmail != null) {
+        rememberDeviceGmailChooser { result ->
+            when (result) {
+                is DeviceGmailResult.Chosen -> save(result.gmail)
+                DeviceGmailResult.Cancelled -> { error = "একটা Gmail বেছে নিন।"; failures++ }
+                DeviceGmailResult.Unavailable -> {
+                    error = "এই ফোনে Gmail-এর তালিকা খুলছে না। নিচে আপনার Gmail লিখে দিন।"
+                    failures++
+                }
+            }
+        }
+    } else null
+
     fun pick() {
         if (busy) return
         error = null
+        if (needsPassword && password.length < 6) {
+            error = "আগে পাসওয়ার্ড দিন (কমপক্ষে ৬ অক্ষর)।"
+            return
+        }
+        openChooser?.let { it(); return }
         scope.launch {
             busy = true
             onLinkGmail(context, if (needsPassword) password else null)
