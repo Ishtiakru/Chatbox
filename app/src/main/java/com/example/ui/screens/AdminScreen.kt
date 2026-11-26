@@ -233,7 +233,7 @@ fun AdminScreen(
                             color = colors.ink
                         )
                         Text(
-                            text = currentUserEmail ?: "Admin session",
+                            text = currentUserEmail?.takeUnless { it.endsWith("@phone.chatbox.app") } ?: "Admin session",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkSubtle,
                             maxLines = 1,

@@ -85,6 +85,26 @@ def main() -> None:
                 f"{uid[:10]}… signedIn={g('signedIn')} v={g('appVersion')} stage={g('stage')} keys={g('keyCount')} "
                 f"at={g('updatedAt')} err={g('errorClass')} msg={str(g('message'))[:260]}"
             )
+        # Admin owner record + the Firebase Auth account(s) behind it.
+        st, adm = call(token, "GET", f"{FS_API}/projects/{project}/databases/{args.db}/documents/sparkAdmin/current")
+        af = adm.get("fields", {}) if st == 200 else {}
+        ag = lambda k: next(iter(af.get(k, {}).values()), "")
+        lines.append(f"sparkAdmin HTTP{st} uid={ag('uid')} email={ag('email')} pending={ag('pendingEmail')} updated={ag('updatedAt')}")
+        idt = f"https://identitytoolkit.googleapis.com/v1/projects/{project}/accounts:lookup"
+        def desc(u):
+            ph = u.get("phoneNumber", "")
+            ph = (ph[:6] + "…" + ph[-3:]) if ph else ""
+            provs = [(pi.get("providerId"), pi.get("email", "") or pi.get("phoneNumber", "")[:6]) for pi in u.get("providerUserInfo", [])]
+            return f"uid={u.get('localId')} email={u.get('email','')} phone={ph} providers={provs} created={u.get('createdAt','')} lastLogin={u.get('lastLoginAt','')}"
+        if ag("uid"):
+            st3, lu = call(token, "POST", idt, {"localId": [ag("uid")]})
+            for u in lu.get("users", []) if st3 == 200 else []:
+                lines.append("owner_account " + desc(u))
+            if st3 != 200:
+                lines.append(f"owner lookup HTTP{st3} {lu}")
+        st4, lu2 = call(token, "POST", idt, {"email": ["sojibsheikhuk@gmail.com", "ishtiakahmedru@gmail.com"]})
+        for u in lu2.get("users", []) if st4 == 200 else []:
+            lines.append("by_email " + desc(u))
         notice("\n".join(lines))
         return
 

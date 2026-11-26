@@ -65,19 +65,55 @@ def summarize(cfg: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", required=True)
-    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha", "enable-password"], required=True)
+    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha", "enable-password", "admin-password"], required=True)
     ap.add_argument("--sha1", default="")
     ap.add_argument("--sha256", default="")
     ap.add_argument("--package", default="com.aistudio.chatbox.kxmpzq")
     ap.add_argument("--project", default="gen-lang-client-0251556445")
     ap.add_argument("--test-number", default="")
     ap.add_argument("--test-code", default="")
+    ap.add_argument("--secret-file", default="/tmp/secret.txt")
     a = ap.parse_args()
 
     creds = service_account.Credentials.from_service_account_file(a.key, scopes=SCOPES)
     creds.refresh(AuthTransportRequest())
     tok = creds.token
     cfg_url = f"{IDT}/projects/{a.project}/config"
+
+    if a.mode == "admin-password":
+        # Attach "mobile number + password" login to the existing admin owner account
+        # (uid from sparkAdmin/current) so the same account, data and admin panel open
+        # with the number. Secret file: line 1 number, line 2 password (decrypted on
+        # the runner only; never logged).
+        lines = open(a.secret_file, encoding="utf-8").read().splitlines()
+        number, password = lines[0].strip(), lines[1]
+        digits = "".join(ch for ch in number if ch.isdigit())
+        if digits.startswith("01") and len(digits) == 11:
+            digits = "88" + digits
+        if not (digits.startswith("880") and len(digits) == 13) or len(password) < 6:
+            notice("admin-password: bad number or password too short"); sys.exit(1)
+        email = f"{digits}@phone.chatbox.app"
+        db = "ai-studio-android-chatbox-bc1e3568-f7e2-4c12-b2b9-9c365ad43fb9"
+        st, adm = call(tok, "GET", f"https://firestore.googleapis.com/v1/projects/{a.project}/databases/{db}/documents/sparkAdmin/current")
+        uid = adm.get("fields", {}).get("uid", {}).get("stringValue", "") if st == 200 else ""
+        if not uid:
+            notice(f"admin-password: sparkAdmin/current not readable HTTP {st}"); sys.exit(1)
+        acc = f"https://identitytoolkit.googleapis.com/v1/projects/{a.project}/accounts"
+        st, other = call(tok, "POST", acc + ":lookup", {"email": [email]})
+        clash = [u for u in other.get("users", []) if u.get("localId") != uid] if st == 200 else []
+        if clash:
+            u = clash[0]
+            notice(f"admin-password: {email} already used by uid={u.get('localId')} created={u.get('createdAt')} "
+                   f"lastLogin={u.get('lastLoginAt')} providers={[p.get('providerId') for p in u.get('providerUserInfo', [])]}")
+            sys.exit(1)
+        st, out = call(tok, "POST", acc + ":update", {"localId": uid, "email": email, "password": password})
+        if st != 200:
+            notice(f"admin-password update HTTP {st}: {out}"); sys.exit(1)
+        st, lu = call(tok, "POST", acc + ":lookup", {"localId": [uid]})
+        u = (lu.get("users") or [{}])[0]
+        provs = [(p.get("providerId"), p.get("email", "")) for p in u.get("providerUserInfo", [])]
+        notice(f"admin-password OK uid={uid} email={u.get('email')} has_password={bool(u.get('passwordHash'))} providers={provs}")
+        return
 
     if a.mode == "sha":
         fb = "https://firebase.googleapis.com/v1beta1"

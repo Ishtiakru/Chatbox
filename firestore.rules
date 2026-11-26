@@ -189,8 +189,13 @@ service cloud.firestore {
         && request.auth.token.email.size() <= 128;
     }
 
+    // A real login: Google, or mobile number + password (both bound to the uid).
+    function verifiedLogin() {
+      return verifiedGoogle() || (isSignedIn() && isPhonePasswordUser());
+    }
+
     function recentlyAuthenticated() {
-      return verifiedGoogle()
+      return verifiedLogin()
         && request.auth.token.auth_time is int
         && request.auth.token.auth_time * 1000 <= request.time.toMillis() + 60000
         && request.auth.token.auth_time * 1000 >= request.time.toMillis() - 300000;
@@ -201,7 +206,7 @@ service cloud.firestore {
     }
 
     function isSparkOwner() {
-      return verifiedGoogle()
+      return verifiedLogin()
         && exists(sparkAdminPath())
         && get(sparkAdminPath()).data.uid == request.auth.uid;
     }
