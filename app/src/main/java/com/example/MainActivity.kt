@@ -16,9 +16,6 @@ import com.example.util.configureAppCheck
 
 class MainActivity : ComponentActivity() {
 
-    private val notifPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -27,6 +24,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // Android 13+: message/call notifications need the runtime POST_NOTIFICATIONS grant.
+        // Registered INSIDE onCreate — a property-initializer registration trips lint's
+        // InvalidFragmentVersionForActivityResult (fatal for lintVitalRelease).
+        val notifPermissionLauncher =
+            registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
