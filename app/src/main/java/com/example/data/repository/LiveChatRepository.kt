@@ -24,6 +24,8 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
@@ -123,9 +125,9 @@ class LiveChatRepository(private val context: Context) {
         ).filter { it.isNotEmpty() }
         val name = displayName.trim().take(80).ifEmpty { "Chatbox User" }
         // All lookup keys in parallel (was one server round-trip after another).
-        kotlinx.coroutines.coroutineScope {
+        coroutineScope {
             digits.flatMap { buildPhoneLookupCandidates(it) }.distinct().map { key ->
-                kotlinx.coroutines.async {
+                async {
                     runCatching {
                         val ref = db.collection("phoneDirectory").document(key)
                         val snap = ref.get(Source.SERVER).await()
