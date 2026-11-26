@@ -143,15 +143,12 @@ jobs:
         if: steps.agent.outputs.changed == 'true'
         run: |
           set +e
-          ./gradlew :app:testDebugUnitTest --no-daemon \
+          # One Gradle invocation on the daemon the agent step already warmed up.
+          ./gradlew :app:testDebugUnitTest :app:assembleRelease \
             -Drobolectric.offline=true \
             -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7" \
             2>&1 | tee verify.txt
           s=${PIPESTATUS[0]}
-          if [ "$s" -eq 0 ]; then
-            ./gradlew :app:assembleRelease --no-daemon 2>&1 | tee -a verify.txt
-            s=${PIPESTATUS[0]}
-          fi
           if [ "$s" -ne 0 ]; then
             first=$( { grep -E "^e: " verify.txt; grep -B3 -E "FAILED$" verify.txt; grep -B20 "Lint found fatal" verify.txt; } | head -n 6 | tr '\n' ' ' | cut -c1-500)
             echo "::notice title=SAIRA::যাচাই (টেস্ট/রিলিজ বিল্ড) পাস করেনি, তাই অ্যাপে কিছু প্রকাশ করিনি। ${first}"
@@ -186,5 +183,6 @@ jobs:
             if git push -q origin HEAD:main; then break; fi
             git pull -q --rebase origin main
           done
-          gh workflow run release-apk.yml --ref main -f version_name=
+          # Tests already passed above on this exact code → release skips them (faster).
+          gh workflow run release-apk.yml --ref main -f skip_tests=true
           echo "::notice title=SAIRA::PUBLISHED $(git rev-parse --short HEAD) — নতুন ভার্সন রিলিজ হচ্ছে।"

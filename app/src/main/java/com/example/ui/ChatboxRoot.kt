@@ -254,6 +254,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         // debug/test builds.
         val mayEnterWithoutAccount = BuildConfig.DEBUG && hasCompletedLogin
         if (authFlowActive || (currentUser == null && !mayEnterWithoutAccount)) {
+            LaunchedEffect(Unit) { com.example.util.prewarmAppCheck() }
             AuthLoginScreen(
                 selectedLanguageCode = loginLanguage,
                 initialIdentifier = storedAccountIdentifier,
