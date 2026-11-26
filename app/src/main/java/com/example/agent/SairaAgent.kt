@@ -26,7 +26,13 @@ data class AgentMessage(
     val resolved: Boolean = false
 )
 
-data class AgentAction(val type: String, val instruction: String, val title: String)
+data class AgentAction(
+    val type: String,
+    val instruction: String,
+    val title: String,
+    /** Public image URLs (admin's attached logo/pictures) the coding agent adds as drawables. */
+    val assets: List<String> = emptyList()
+)
 
 /** Long-running app change being built on GitHub. */
 data class AgentJob(
@@ -163,7 +169,7 @@ object SairaAgent {
                 handle(clean, attachments, hooks)
             } catch (e: Exception) {
                 Log.w(TAG, "agent failed", e)
-                post(sairaMsg("দুঃখিত, এখন কাজটা করতে পারলাম না: ${e.message ?: e.javaClass.simpleName}"))
+                post(sairaMsg(friendlyError(e)))
             } finally {
                 _busy.value = false
             }
@@ -198,10 +204,20 @@ object SairaAgent {
                 } else if (_job.value != null) {
                     post(sairaMsg("আগের একটা পরিবর্তন এখনও চলছে (${phaseLabel(_job.value!!.phase)})। শেষ হলে নতুনটা ধরব।"))
                 } else {
+                    val images = attachments.filter { it.mimeType.startsWith("image/") }.take(4)
+                    val assets = images.mapIndexedNotNull { idx, a ->
+                        val ext = if (a.mimeType.contains("png")) "png" else "jpg"
+                        com.example.util.MediaHost.uploadBytes(a.bytes, "saira_asset_$idx.$ext").getOrNull()
+                    }
+                    val assetNote = when {
+                        images.isEmpty() -> ""
+                        assets.size == images.size -> "\n\n🖼️ সংযুক্ত ${assets.size}টা ছবি অ্যাপের ভেতরে যোগ করে ব্যবহার করব।"
+                        else -> "\n\n⚠️ ${images.size - assets.size}টা ছবি আপলোড হয়নি — সেগুলো ছাড়া কাজ হবে।"
+                    }
                     post(
                         sairaMsg(
-                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“$instruction”\n\nকোড লিখে, বিল্ড ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১৫–২৫ মিনিট)। শুরু করব?",
-                            confirm = AgentAction("app_change", instruction, "অ্যাপ পরিবর্তন")
+                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“$instruction”$assetNote\n\nকোড লিখে, বিল্ড ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১৫–২৫ মিনিট)। শুরু করব?",
+                            confirm = AgentAction("app_change", instruction, "অ্যাপ পরিবর্তন", assets)
                         )
                     )
                 }
@@ -258,7 +274,7 @@ object SairaAgent {
             _busy.value = true
             try {
                 when (action.type) {
-                    "app_change" -> startAppChange(action.instruction)
+                    "app_change" -> startAppChange(action.instruction, action.assets)
                     "rules_deploy" -> {
                         val r = gh()?.dispatch(GitHubClient.RULES_WORKFLOW, mapOf("mode" to "deploy"))
                         post(sairaMsg(if (r?.isSuccess == true) "🚀 Rules deploy শুরু হয়েছে (১–২ মিনিট)।" else "Deploy শুরু করা যায়নি: ${r?.exceptionOrNull()?.message}"))
@@ -272,7 +288,7 @@ object SairaAgent {
 
     // ------------------------------------------------------------ app change
 
-    private suspend fun startAppChange(instruction: String) {
+    private suspend fun startAppChange(instruction: String, assets: List<String> = emptyList()) {
         val client = gh() ?: run {
             post(sairaMsg("GitHub যুক্ত নেই।"))
             return
@@ -280,7 +296,11 @@ object SairaAgent {
         val requestId = "r${System.currentTimeMillis()}"
         val d = client.dispatch(
             GitHubClient.AGENT_WORKFLOW,
-            mapOf("instruction" to instruction.take(3000), "request_id" to requestId)
+            buildMap {
+                put("instruction", instruction.take(3000))
+                put("request_id", requestId)
+                if (assets.isNotEmpty()) put("assets", assets.joinToString(" "))
+            }
         )
         if (d.isFailure) {
             post(sairaMsg("কাজ শুরু করা যায়নি: ${d.exceptionOrNull()?.message}"))
@@ -417,6 +437,19 @@ object SairaAgent {
     private fun post(m: AgentMessage) {
         _messages.value = (_messages.value + m).takeLast(80)
         store?.let { saveMessages(it, _messages.value) }
+    }
+
+    private fun friendlyError(e: Exception): String {
+        val m = e.message.orEmpty()
+        return when {
+            m.contains("429") || m.contains("quota", true) ->
+                "😓 Saira-র ফ্রি AI কোটা এই মুহূর্তে শেষ/ব্যস্ত। ১–২ মিনিট পরে আবার বলুন।"
+            m.contains("503") || m.contains("overloaded", true) || m.contains("UNAVAILABLE") ->
+                "Google-এর AI সার্ভার এখন ব্যস্ত। একটু পরে আবার চেষ্টা করুন।"
+            e is java.net.UnknownHostException || e is java.net.SocketTimeoutException ->
+                "ইন্টারনেট সংযোগে সমস্যা — নেট চেক করে আবার চেষ্টা করুন।"
+            else -> "দুঃখিত, এখন কাজটা করতে পারলাম না: ${m.take(160).ifEmpty { e.javaClass.simpleName }}"
+        }
     }
 
     private fun sairaMsg(text: String, confirm: AgentAction? = null) =
