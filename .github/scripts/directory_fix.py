@@ -146,7 +146,7 @@ def main():
         have_keys = [k for k in keys if phones.get(k, {}).get("uid") == uid]
         taken = [k for k in keys if k in phones and phones[k].get("uid") != uid and phones[k].get("uid") in live]
         name = ((prof or {}).get("displayName") or u.get("displayName") or "Chatbox User")[:80]
-        rows.append(f"{uid[:6]}[{provs}] profile={'Y' if prof else 'N'} id={'Y' if sid_ok else 'N'} phone={len(have_keys)}/{len(keys)}" + (f" taken={len(taken)}" if taken else ""))
+        rows.append(f"{name.replace(' ', '_')}:{uid[:6]}[{provs}] digits={'/'.join(sorted(digits))} profile={'Y' if prof else 'N'} id={'Y' if sid_ok else 'N'} phone={len(have_keys)}/{len(keys)}" + (f" taken={len(taken)}" if taken else ""))
 
         if a.mode == "fix":
             if not prof:
@@ -179,6 +179,17 @@ def main():
                         phones[k] = {"uid": uid}
 
     notice("accounts: " + " | ".join(rows))
+    try:
+        convs = c.collection("conversations")
+        crow = []
+        for cid, v in convs.items():
+            parts = [x.get("stringValue", "")[:6] for x in (v.get("participants") or {}).get("values", [])]
+            st, b = c.call("GET", f"{c.base}/conversations/{cid}/messages?pageSize=300")
+            n = len(b.get("documents", [])) if st == 200 else f"err{st}"
+            crow.append(f"{'+'.join(parts)} status={v.get('status')} by={str(v.get('createdBy',''))[:6]} msgs={n}")
+        notice(f"conversations={len(convs)}: " + " | ".join(crow))
+    except Exception as e:  # noqa: BLE001
+        notice(f"conversations ERROR {e}")
     if a.mode == "fix":
         for k, v in list(phones.items()):
             if v.get("uid") not in live:
