@@ -178,12 +178,53 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--old-key", required=True)
     ap.add_argument("--new-key", required=True)
-    ap.add_argument("--mode", choices=["audit", "copy", "delete"], required=True)
+    ap.add_argument("--mode", choices=["audit", "copy", "delete", "keys"], required=True)
     a = ap.parse_args()
     old, new = G(a.old_key), G(a.new_key)
     if old.project == new.project:
         notice("ABORT old and new keys are the same project"); sys.exit(1)
     notice(f"old={old.project} new={new.project}")
+
+    if a.mode == "keys":
+        # Are any of Saira's pooled Gemini keys created inside the old project?
+        st, b = new.call("GET", f"{new.fs(DEST_DB)}/settings/aiKeyPool")
+        pool = set()
+        if st == 200:
+            for v in b.get("fields", {}).get("keys", {}).get("arrayValue", {}).get("values", []):
+                pool.add(v.get("stringValue", ""))
+        import re as _re
+        by_proj = {}
+        for key in pool:
+            url = ("https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent?key="
+                   + urllib.parse.quote(key, safe=""))
+            body = json.dumps({"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}).encode()
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}), timeout=30) as r:
+                    txt = r.read().decode(errors="replace")
+            except urllib.error.HTTPError as e:
+                txt = e.read().decode(errors="replace")
+            except Exception as e:  # noqa: BLE001
+                txt = str(e)
+            m = _re.search(r"projects/(\d{6,})", txt) or _re.search(r"project (\d{6,})", txt)
+            proj = m.group(1) if m else "unknown"
+            if proj == "unknown" and not by_proj.get("_sampled"):
+                by_proj["_sampled"] = 1
+                notice("SAMPLE " + txt.replace(key, "<KEY>")[:600])
+            by_proj[proj] = by_proj.get(proj, 0) + 1
+        old_num = "838258163823"
+        notice(f"KEYS pool={len(pool)} keys_in_OLD_project={by_proj.get(old_num, 0)} by_project={by_proj}")
+        # Second probe: Gemini API itself, an unsupported method reveals the consumer project.
+        return
+        keys = kb.get("keys", [])
+        in_pool = unreadable = 0
+        for k in keys:
+            s2, ks = old.call("GET", f"https://apikeys.googleapis.com/v2/{k['name']}/keyString")
+            if s2 != 200:
+                unreadable += 1
+            elif ks.get("keyString") in pool:
+                in_pool += 1
+        notice(f"KEYS pool={len(pool)} old_project_keys={len(keys)} of_which_in_saira_pool={in_pool} unreadable={unreadable}")
+        return
 
     if a.mode == "delete":
         if old.project != "gen-lang-client-0532609883":
