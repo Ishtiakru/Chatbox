@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Admin's logo (added by Saira) scaled into the adaptive-icon safe zone so no launcher mask crops it. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/saira_asset_5733705484_1"
+    android:inset="19%" />
