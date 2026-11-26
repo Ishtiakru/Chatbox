@@ -66,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -433,21 +434,44 @@ fun AppUpdateDetailsDialog(
                     }
                 }
 
+                // In-app update: downloads + installs inside Chatbox (no browser/link).
+                val updateScope = rememberCoroutineScope()
+                val updState by com.example.agent.AppSelfUpdater.state.collectAsState()
+                var updMessage by remember { mutableStateOf<String?>(null) }
+                val updBusy = updState == "checking" || updState.startsWith("downloading:") || updState == "installing"
+                if (updBusy || updMessage != null) {
+                    Text(
+                        text = when {
+                            updState.startsWith("downloading:") -> "ডাউনলোড হচ্ছে… ${updState.substringAfter(':')}%"
+                            updState == "checking" -> "নতুন ভার্সন খুঁজছি…"
+                            updState == "installing" -> "ইনস্টল হচ্ছে…"
+                            else -> updMessage.orEmpty()
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF3A3347)
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveUrl)))
+                        }
+                    }) {
+                        Text("Browser")
+                    }
                     TextButton(onClick = onDismiss) {
                         Text("Close")
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
+                        enabled = !updBusy,
                         onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(effectiveUrl))
-                                )
+                            updateScope.launch {
+                                updMessage = com.example.agent.AppSelfUpdater.updateToLatest(context)
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = ChatboxUpdateGreen),
@@ -455,11 +479,11 @@ fun AppUpdateDetailsDialog(
                     ) {
                         Icon(
                             Icons.Rounded.Download,
-                            contentDescription = "Download Update",
+                            contentDescription = "Update now",
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Download APK")
+                        Text("এখনই আপডেট")
                     }
                 }
             }

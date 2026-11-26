@@ -1,0 +1,36 @@
+name: Saira Firebase ops
+
+# Dispatched by Saira's admin agent inside the app (admin's own GitHub token).
+# Uses the FIREBASE_ADMIN_KEY secret; results come back as SAIRA annotations.
+run-name: "Saira firebase ${{ inputs.op }} ${{ inputs.request_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      op:
+        description: report
+        required: true
+        default: report
+      request_id:
+        description: request id from the app
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  firebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m pip install --quiet google-auth requests
+      - name: Run
+        env:
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+          OP: ${{ inputs.op }}
+        run: python3 .github/scripts/saira_firebase.py

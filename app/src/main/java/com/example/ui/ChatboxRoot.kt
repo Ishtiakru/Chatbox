@@ -401,6 +401,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,
                                 isOwner = sairaIsOwner,
+                                isAdminAgent = sairaIsOwner || isAdmin,
+                                onApplyLiveConfig = viewModel::sairaApplyLiveConfig,
                                 ownerName = sairaOwnerName,
                                 isOnline = isOnline,
                                 appUpdateActive = appUpdate.active,

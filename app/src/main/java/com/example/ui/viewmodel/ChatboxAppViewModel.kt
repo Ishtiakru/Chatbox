@@ -1702,6 +1702,18 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Saira agent → change LIVE app config in Firebase (theme, menus, banner…). Admin only. */
+    suspend fun sairaApplyLiveConfig(instruction: String): Result<String> {
+        val uid = currentUser.value?.uid ?: return Result.failure(IllegalStateException("লগইন নেই"))
+        if (!isAdmin.value && !SairaPrompts.isOwnerAccount(uid, currentUser.value?.phoneNumber, localUserProfile.value.phoneNumber)) {
+            return Result.failure(IllegalStateException("শুধু অ্যাডমিন এটা করতে পারেন"))
+        }
+        val plan = runCatching {
+            com.example.data.ai.AdminPlanInterpreter.interpret(instruction, dynamicConfig.value.customMenus)
+        }.getOrElse { return Result.failure(it) }
+        return sparkAdminRepo.applyAdminAiUpdatePlan(uid, dynamicConfig.value, plan)
+    }
+
     fun sendChatboxVideo(threadId: String, uri: Uri) {
         viewModelScope.launch {
             val savedPath = copyVideoToAppStorage(uri)
