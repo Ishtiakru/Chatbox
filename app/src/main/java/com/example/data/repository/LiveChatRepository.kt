@@ -648,16 +648,18 @@ class LiveChatRepository(private val context: Context) {
         imageUrl: String? = null,
         audioUrl: String? = null,
         audioDurationMs: Long? = null,
+        videoUrl: String? = null,
         messageId: String? = null
     ): Result<Unit> {
         val body = rawBody.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
         val cleanImage = imageUrl?.trim()?.takeIf { it.isNotEmpty() }
         val cleanAudio = audioUrl?.trim()?.takeIf { it.isNotEmpty() }
+        val cleanVideo = videoUrl?.trim()?.takeIf { it.isNotEmpty() }
         val cleanDuration = if (cleanAudio != null && audioDurationMs != null) {
             audioDurationMs.coerceIn(0L, 300_000L)
         } else null
 
-        if (body.isEmpty() && cleanImage == null && cleanAudio == null) {
+        if (body.isEmpty() && cleanImage == null && cleanAudio == null && cleanVideo == null) {
             return Result.failure(IllegalArgumentException("Cannot send an empty message."))
         }
 
@@ -670,6 +672,7 @@ class LiveChatRepository(private val context: Context) {
                 put("audioUrl", cleanAudio)
                 if (cleanDuration != null) put("audioDurationMs", cleanDuration)
             }
+            if (cleanVideo != null) put("videoUrl", cleanVideo)
         }
 
         val path = "conversations/$conversationId/messages"
@@ -787,7 +790,7 @@ class LiveChatRepository(private val context: Context) {
         }
     }
 
-    private fun compressUriToJpeg(uri: Uri): ByteArray? {
+    fun compressUriToJpeg(uri: Uri): ByteArray? {
         val cr = context.contentResolver
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOpts) }
@@ -826,6 +829,7 @@ class LiveChatRepository(private val context: Context) {
             imageUrl = getString("imageUrl"),
             audioUrl = getString("audioUrl"),
             audioDurationMs = getLong("audioDurationMs"),
+            videoUrl = getString("videoUrl"),
             sentAt = getTimestamp("sentAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
             pendingWrites = metadata.hasPendingWrites()
         )
