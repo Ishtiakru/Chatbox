@@ -139,6 +139,13 @@ def main() -> None:
         lines += changed[:40]
         # Cloud Storage bucket + storage rules release (media uploads depend on both).
         bucket = args.bucket
+        # All buckets in the project (billing-free default may already exist).
+        lstat, lbody = call(token, "GET", f"https://storage.googleapis.com/storage/v1/b?project={project}&maxResults=50")
+        if lstat == 200:
+            names = [b.get("name", "") for b in lbody.get("items", [])]
+            lines.append(f"storage_buckets_in_project={names or 'NONE'}")
+        else:
+            lines.append(f"storage_buckets_list_http={lstat} {str(lbody)[:160]}")
         if bucket:
             bst, bbody = call(token, "GET", f"https://storage.googleapis.com/storage/v1/b/{bucket}")
             lines.append(f"storage_bucket={bucket} probe_http={bst}")
