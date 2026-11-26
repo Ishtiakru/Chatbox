@@ -1,3 +1,4 @@
+import java.time.Duration
 import java.util.Properties
 
 plugins {
@@ -90,7 +91,7 @@ android {
                 // Print each test as it starts so a hanging test can be identified in CI.
                 it.testLogging { events("started", "failed") }
                 // A single hung test must not block CI forever.
-                it.timeout.set(java.time.Duration.ofMinutes(15))
+                it.timeout.set(Duration.ofMinutes(15))
             }
         }
     }
