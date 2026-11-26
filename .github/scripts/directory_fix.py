@@ -118,6 +118,10 @@ def main():
     notice(f"totals auth_users={len(users)} profiles={len(profiles)} shortIds={len(short_ids)} phoneDirectory={len(phones)}")
 
     rows, fixes, errs = [], [], []
+    live = {u["localId"] for u in users}
+    ghost_phone = sorted(k for k, v in phones.items() if v.get("uid") not in live)
+    ghost_short = sorted(k for k, v in short_ids.items() if v.get("uid") not in live)
+    notice(f"ghost entries (point to accounts that do not exist): phoneDirectory={len(ghost_phone)} shortIds={len(ghost_short)} profiles={sum(1 for k in profiles if k not in live)}")
     for u in users:
         uid = u["localId"]
         email = (u.get("email") or "").lower()
@@ -140,7 +144,7 @@ def main():
         sid = (prof or {}).get("shortId", "")
         sid_ok = bool(sid) and short_ids.get(sid, {}).get("uid") == uid
         have_keys = [k for k in keys if phones.get(k, {}).get("uid") == uid]
-        taken = [k for k in keys if k in phones and phones[k].get("uid") != uid]
+        taken = [k for k in keys if k in phones and phones[k].get("uid") != uid and phones[k].get("uid") in live]
         name = ((prof or {}).get("displayName") or u.get("displayName") or "Chatbox User")[:80]
         rows.append(f"{uid[:6]}[{provs}] profile={'Y' if prof else 'N'} id={'Y' if sid_ok else 'N'} phone={len(have_keys)}/{len(keys)}" + (f" taken={len(taken)}" if taken else ""))
 
@@ -161,7 +165,14 @@ def main():
                 if st == 200:
                     short_ids[sid] = {"uid": uid}
             for k in keys:
-                if k not in phones:
+                if k in phones and phones[k].get("uid") not in live:
+                    # Entry points to an account that no longer exists: give it to the real owner.
+                    st, b = c.call("PATCH", f"{c.base}/phoneDirectory/{k}",
+                                   {"fields": {"uid": {"stringValue": uid}, "displayName": {"stringValue": name}}})
+                    (fixes if st == 200 else errs).append(f"{uid[:6]}:phone-reassign" + ("" if st == 200 else f" {st}"))
+                    if st == 200:
+                        phones[k] = {"uid": uid}
+                elif k not in phones:
                     st, b = c.create(f"phoneDirectory/{k}", {"uid": uid, "displayName": name})
                     (fixes if st == 200 else errs).append(f"{uid[:6]}:phone" + ("" if st == 200 else f" {st}"))
                     if st == 200:
@@ -169,6 +180,14 @@ def main():
 
     notice("accounts: " + " | ".join(rows))
     if a.mode == "fix":
+        for k, v in list(phones.items()):
+            if v.get("uid") not in live:
+                st, _ = c.call("DELETE", f"{c.base}/phoneDirectory/{k}")
+                (fixes if st == 200 else errs).append("ghost-phone-del" + ("" if st == 200 else f" {st}"))
+        for k, v in list(short_ids.items()):
+            if v.get("uid") not in live:
+                st, _ = c.call("DELETE", f"{c.base}/shortIds/{k}")
+                (fixes if st == 200 else errs).append("ghost-id-del" + ("" if st == 200 else f" {st}"))
         notice(f"fix created={len(fixes)} {fixes} errors={errs}")
 
 
