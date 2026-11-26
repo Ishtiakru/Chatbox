@@ -223,7 +223,9 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 onBackSkipLogin = if (BuildConfig.DEBUG) viewModel::enterAppWithoutLogin else null,
                 onLoginWithCredentials = viewModel::loginWithCredentials,
                 onCreateAccount = viewModel::createAccountWithCredentials,
-                onResetPassword = viewModel::resetAccountPassword
+                onResetPassword = viewModel::resetAccountPassword,
+                onSendResetCode = viewModel::sendResetCodeToGmail,
+                onResetWithCode = viewModel::resetPasswordWithGmailCode
             )
             return@ChatboxTheme
         }
@@ -234,16 +236,19 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             com.example.ui.screens.GmailRequiredDialog(
                 needsPassword = remember(currentUser) { viewModel.currentAccountNeedsPassword() },
                 onLinkGmail = viewModel::linkGmail,
-                onSaveTypedGmail = viewModel::saveTypedGmail
+                onSaveTypedGmail = viewModel::saveTypedGmail,
+                knownGmails = viewModel.knownGmails.collectAsState().value
             )
         }
 
         val uid = currentUser?.uid.orEmpty()
         // Show the linked Gmail, never the private "<number>@phone.chatbox.app" login address.
-        val visibleEmail = remember(currentUser, gmailRequired) {
+        val knownGmailsForHeader by viewModel.knownGmails.collectAsState()
+        val visibleEmail = remember(currentUser, gmailRequired, knownGmailsForHeader) {
             currentUser?.let { u ->
                 u.providerData.firstOrNull { it.providerId == "google.com" }?.email
                     ?: u.email?.takeUnless { it.endsWith("@phone.chatbox.app") }
+                    ?: knownGmailsForHeader.firstOrNull()
             }
         }
         val effectiveDisplayName = ownProfile?.displayName

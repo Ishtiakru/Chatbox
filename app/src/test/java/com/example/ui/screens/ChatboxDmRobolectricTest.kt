@@ -845,6 +845,7 @@ class ChatboxDmRobolectricTest {
             ChatboxTheme {
                 GmailRequiredDialog(
                     needsPassword = false,
+                    knownGmails = listOf("old@gmail.com", "second@gmail.com"),
                     onLinkGmail = { _, _ -> Result.failure(IllegalStateException("Gmail যুক্ত করা যায়নি।\n(কোড: X)")) },
                     onSaveTypedGmail = { g, _ ->
                         if (g.endsWith("@gmail.com")) { saved = g; Result.success(g) }
@@ -855,6 +856,7 @@ class ChatboxDmRobolectricTest {
         }
         composeRule.mainClock.advanceTimeBy(1_500)
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("gmail_known_list").assertExists()
         composeRule.onNodeWithTag("gmail_manual_input").performScrollTo().performTextInput("me@gmail.com")
         composeRule.onNodeWithTag("gmail_manual_save_button").performScrollTo().performClick()
         composeRule.waitForIdle()

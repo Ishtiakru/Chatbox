@@ -298,6 +298,18 @@ class AuthRepository(private val context: Context) {
         else -> "Gmail যুক্ত করা যায়নি। আবার চেষ্টা করুন, না হলে নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"
     }
 
+    /** Opens the phone's Gmail list and returns the chosen address (nothing is linked). */
+    suspend fun chooseGmailAddress(activityContext: Context): Result<String> = try {
+        val (_, gmail) = pickGmail(activityContext)
+        Result.success(gmail.trim().lowercase())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "chooseGmailAddress failed", e)
+        if (e !is GetCredentialCancellationException) com.example.data.ai.AiDiagnostics.report("gmail_pick", e)
+        Result.failure(IllegalStateException(friendlyGmailError(e), e))
+    }
+
     /** Links the chosen Gmail to the signed-in account. Returns the Gmail address. */
     suspend fun linkGmail(activityContext: Context): Result<String> = try {
         val user = auth.currentUser ?: error("আগে Log in করুন।")
@@ -319,29 +331,77 @@ class AuthRepository(private val context: Context) {
         Result.failure(IllegalStateException(friendlyGmailError(e), e))
     }
 
+    private val recovery by lazy { GmailRecoveryRepository(context, auth) }
+
     /**
-     * Forgot password without SMS: the user picks the Gmail linked to the number's
-     * account; only if it really belongs to that account is the new password saved.
+     * Forgot password without SMS: the user picks, on this phone, ANY Gmail that was
+     * added to the number's account. Only then is the new password saved.
      */
     suspend fun resetPasswordWithGmail(activityContext: Context, identifier: String, newPassword: String): Result<FirebaseUser> = try {
         val email = loginEmailFor(identifier) ?: error("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678")
-        val (credential, _) = pickGmail(activityContext)
+        val (credential, picked) = pickGmail(activityContext)
         val result = auth.signInWithCredential(credential).await()
         val user = result.user ?: error("আবার চেষ্টা করুন।")
         val owns = user.providerData.any { it.providerId == "password" && it.email.equals(email, ignoreCase = true) }
-        if (!owns) {
-            if (result.additionalUserInfo?.isNewUser == true) runCatching { user.delete().await() }
-            auth.signOut()
-            error("এই Gmail এই নম্বরের account-এ যুক্ত নয়। Account খোলার পর যে Gmail দিয়েছিলেন সেটা বেছে নিন।")
+        if (owns) {
+            // Older accounts had this Gmail linked directly.
+            user.updatePassword(newPassword).await()
+            runCatching { recovery.refreshSecrets(newPassword) }
+            Result.success(user)
+        } else {
+            val gmail = (user.email ?: picked).trim().lowercase()
+            val secret = try {
+                runCatching { user.getIdToken(true).await() }
+                recovery.secretFor(gmail, email)
+            } finally {
+                if (result.additionalUserInfo?.isNewUser == true) runCatching { user.delete().await() }
+                auth.signOut()
+            }
+            val found = secret ?: error("এই Gmail ($gmail) এই নম্বরের account-এ যুক্ত নেই। Login-এর পর যে Gmail-গুলো দিয়েছিলেন তার যেকোনো একটা বেছে নিন।")
+            Result.success(finishReset(email, found, newPassword))
         }
-        user.updatePassword(newPassword).await()
-        Result.success(user)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         Log.w(TAG, "resetPasswordWithGmail failed", e)
-        val msg = if (e is com.google.firebase.auth.FirebaseAuthWeakPasswordException) "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।" else friendlyGmailError(e)
-        Result.failure(IllegalStateException(msg, e))
+        Result.failure(IllegalStateException(resetErrorMessage(e), e))
+    }
+
+    /** Forgot password, step 1 (Gmail not on this phone): Firebase emails a link to [gmail]. */
+    suspend fun sendResetCodeToGmail(gmail: String): Result<String> =
+        recovery.sendEmailCode(gmail).recoverCatching { e ->
+            throw IllegalStateException(if (e is IllegalStateException && e.cause == null) e.message else friendlyPasswordError(e), e)
+        }
+
+    /** Forgot password, step 2: after the emailed link was clicked, save [newPassword]. */
+    suspend fun resetPasswordWithGmailCode(identifier: String, gmail: String, newPassword: String): Result<FirebaseUser> = try {
+        val email = loginEmailFor(identifier) ?: error("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678")
+        val secret = recovery.secretAfterEmailCode(gmail, email).getOrThrow()
+        Result.success(finishReset(email, secret, newPassword))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "resetPasswordWithGmailCode failed", e)
+        Result.failure(IllegalStateException(resetErrorMessage(e), e))
+    }
+
+    private suspend fun finishReset(login: String, secret: String, newPassword: String): FirebaseUser {
+        val user = try {
+            auth.signInWithEmailAndPassword(login, secret).await().user ?: error("আবার চেষ্টা করুন।")
+        } catch (e: com.google.firebase.auth.FirebaseAuthException) {
+            auth.signOut()
+            error("এই Gmail-এ রাখা তথ্য পুরনো হয়ে গেছে। এই নম্বরে যুক্ত অন্য একটা Gmail দিয়ে চেষ্টা করুন।")
+        }
+        user.updatePassword(newPassword).await()
+        runCatching { recovery.refreshSecrets(newPassword) }
+        return user
+    }
+
+    private fun resetErrorMessage(e: Throwable): String = when {
+        e is com.google.firebase.auth.FirebaseAuthWeakPasswordException -> "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।"
+        e is IllegalStateException && e.cause == null && !e.message.isNullOrBlank() -> e.message!!
+        e is com.google.firebase.FirebaseNetworkException -> "ইন্টারনেট সংযোগ নেই। নেট চালু করে আবার চেষ্টা করুন।"
+        else -> friendlyGmailError(e)
     }
 
     private fun friendlyPasswordError(e: Throwable): String {

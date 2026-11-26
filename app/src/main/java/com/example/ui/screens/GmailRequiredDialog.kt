@@ -51,7 +51,9 @@ fun GmailRequiredDialog(
     needsPassword: Boolean,
     onLinkGmail: suspend (activityContext: Context, password: String?) -> Result<String>,
     /** Fallback when the device cannot open Google's Gmail list: save a typed Gmail. */
-    onSaveTypedGmail: ((gmail: String, password: String?) -> Result<String>)? = null
+    onSaveTypedGmail: (suspend (gmail: String, password: String?) -> Result<String>)? = null,
+    /** Gmails already added to this account (any number of them). */
+    knownGmails: List<String> = emptyList()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -101,16 +103,25 @@ fun GmailRequiredDialog(
             ) {
                 Text("📧", fontSize = 36.sp)
                 Text(
-                    text = "আপনার Gmail যুক্ত করুন",
+                    text = "একটা Gmail বেছে নিন",
                     color = LoginInkDark,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Chatbox চালাতে একটা Gmail দরকার। ফোনের Gmail-গুলো থেকে একটা বেছে নিন। পাসওয়ার্ড ভুলে গেলে এই Gmail দিয়েই নতুন পাসওয়ার্ড দিতে পারবেন।",
+                    text = "প্রতিবার Login-এর পর একটা Gmail বেছে নিন — আগেরটা বা নতুন, যেকোনোটা। " +
+                        "একই নম্বরে যত খুশি Gmail যোগ করতে পারবেন। পাসওয়ার্ড ভুলে গেলে এর যেকোনো একটা দিয়ে নতুন পাসওয়ার্ড দিতে পারবেন, তাই একটা Gmail হারালেও সমস্যা নেই।",
                     color = LoginInkMuted,
                     fontSize = 14.sp
                 )
+                if (knownGmails.isNotEmpty()) {
+                    Text(
+                        text = "এই নম্বরে যুক্ত Gmail (${knownGmails.size}টি):\n" + knownGmails.joinToString("\n") { "✓ $it" },
+                        color = LoginInkDark,
+                        fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth().testTag("gmail_known_list")
+                    )
+                }
                 if (needsPassword) {
                     OutlinedTextField(
                         value = password,
@@ -155,8 +166,12 @@ fun GmailRequiredDialog(
                     )
                     androidx.compose.material3.OutlinedButton(
                         onClick = {
-                            onSaveTypedGmail(typedGmail, if (needsPassword) password else null)
-                                .onFailure { e -> error = e.message ?: "সঠিক Gmail লিখুন।" }
+                            scope.launch {
+                                busy = true
+                                onSaveTypedGmail(typedGmail, if (needsPassword) password else null)
+                                    .onFailure { e -> error = e.message ?: "সঠিক Gmail লিখুন।" }
+                                busy = false
+                            }
                         },
                         enabled = !busy && typedGmail.isNotBlank(),
                         shape = CircleShape,

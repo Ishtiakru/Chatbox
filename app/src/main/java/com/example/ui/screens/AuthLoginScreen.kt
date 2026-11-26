@@ -99,7 +99,11 @@ fun AuthLoginScreen(
     onLoginWithCredentials: suspend (identifier: String, password: String) -> Result<Unit>,
     onCreateAccount: suspend (fullName: String, identifier: String, password: String) -> Result<Unit>,
     /** Forgot password: the number's new password is saved after the user picks the Gmail linked to it. */
-    onResetPassword: suspend (activityContext: Context, identifier: String, newPassword: String) -> Result<String>
+    onResetPassword: suspend (activityContext: Context, identifier: String, newPassword: String) -> Result<String>,
+    /** Forgot password when the Gmail is not on this phone: email a link to that Gmail. */
+    onSendResetCode: (suspend (gmail: String) -> Result<String>)? = null,
+    /** ...then, after the link was clicked, save the new password. */
+    onResetWithCode: (suspend (identifier: String, gmail: String, newPassword: String) -> Result<String>)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -531,6 +535,20 @@ fun AuthLoginScreen(
         var newPassword by remember { mutableStateOf("") }
         var resetError by remember { mutableStateOf<String?>(null) }
         var resetBusy by remember { mutableStateOf(false) }
+        var codeGmail by remember { mutableStateOf("") }
+        var codeSent by remember { mutableStateOf(false) }
+        var codeInfo by remember { mutableStateOf<String?>(null) }
+        fun finishReset(res: Result<String>) {
+            res.onSuccess { msg ->
+                identifier = resetIdentifier.trim()
+                password = ""
+                infoMessage = msg
+                errorMessage = null
+                showForgotDialog = false
+            }.onFailure { err ->
+                resetError = err.message ?: "Unable to reset password."
+            }
+        }
 
         AlertDialog(
             onDismissRequest = { showForgotDialog = false },
@@ -539,10 +557,12 @@ fun AuthLoginScreen(
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.testTag("forgot_password_dialog")
+                    modifier = Modifier
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                        .testTag("forgot_password_dialog")
                 ) {
                     Text(
-                        text = "মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। তারপর এই account-এ যে Gmail যুক্ত করেছিলেন সেটা বেছে নিন — মিললে পাসওয়ার্ড বদলে যাবে।",
+                        text = "মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। তারপর এই নম্বরে যুক্ত যেকোনো একটা Gmail দিয়ে যাচাই করুন — মিললে পাসওয়ার্ড বদলে যাবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = LoginInkMuted
                     )
@@ -574,6 +594,51 @@ fun AuthLoginScreen(
                             .testTag("forgot_new_password_input")
                     )
                     resetError?.let { NoticeBanner(text = it, isError = true) }
+                    if (onSendResetCode != null && onResetWithCode != null) {
+                        Text(
+                            text = "Gmail-টা এই ফোনে নেই? Gmail লিখুন, সেখানে একটা লিংক যাবে:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LoginInkMuted
+                        )
+                        OutlinedTextField(
+                            value = codeGmail,
+                            onValueChange = {
+                                codeGmail = it.trim().take(80)
+                                codeSent = false
+                                codeInfo = null
+                                resetError = null
+                            },
+                            label = { Text("আপনার Gmail") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("forgot_code_gmail_input")
+                        )
+                        codeInfo?.let { NoticeBanner(text = it, isError = false) }
+                        OutlinedButton(
+                            enabled = !resetBusy && codeGmail.isNotBlank(),
+                            onClick = {
+                                scope.launch {
+                                    resetBusy = true
+                                    resetError = null
+                                    if (!codeSent) {
+                                        onSendResetCode(codeGmail)
+                                            .onSuccess { codeSent = true; codeInfo = it }
+                                            .onFailure { resetError = it.message ?: "আবার চেষ্টা করুন।" }
+                                    } else {
+                                        finishReset(onResetWithCode(resetIdentifier, codeGmail, newPassword))
+                                    }
+                                    resetBusy = false
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("forgot_code_button")
+                        ) {
+                            Text(if (codeSent) "লিংকে চেপেছি — পাসওয়ার্ড বদলান" else "Gmail-এ লিংক পাঠান")
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -585,15 +650,7 @@ fun AuthLoginScreen(
                             resetBusy = true
                             val res = onResetPassword(context, resetIdentifier, newPassword)
                             resetBusy = false
-                            res.onSuccess { msg ->
-                                identifier = resetIdentifier.trim()
-                                password = ""
-                                infoMessage = msg
-                                errorMessage = null
-                                showForgotDialog = false
-                            }.onFailure { err ->
-                                resetError = err.message ?: "Unable to reset password."
-                            }
+                            finishReset(res)
                         }
                     },
                     modifier = Modifier.testTag("forgot_reset_confirm_button")
@@ -601,7 +658,7 @@ fun AuthLoginScreen(
                     if (resetBusy) {
                         CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                     } else {
-                        Text("Gmail দিয়ে পাসওয়ার্ড বদলান")
+                        Text("ফোনের Gmail বেছে নিন")
                     }
                 }
             },
