@@ -18,8 +18,9 @@ class MainActivity : ComponentActivity() {
         configureAppCheck(this, intent)
         enableEdgeToEdge()
 
+        val appViewModel = com.example.util.AppViewModels.chatbox(application)
         setContent {
-            ChatboxRoot()
+            ChatboxRoot(appViewModel)
         }
     }
 

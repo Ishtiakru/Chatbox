@@ -48,6 +48,8 @@ class SairaKeepAliveService : Service() {
         super.onCreate()
         isRunning = true
         goForeground()
+        // Keep Chatbox live chat + Saira auto-reply running even with the app closed.
+        runCatching { com.example.util.AppViewModels.chatbox(application) }
         handler.postDelayed(rebindTick, REBIND_INTERVAL_MS)
     }
 
@@ -158,11 +160,13 @@ class SairaKeepAliveService : Service() {
             val app = context.applicationContext
             if (!isAvailable(app)) return
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                val enabled = runCatching {
-                    AppPreferencesRepository(app).sairaNotifReplyEnabled.first()
-                }.getOrDefault(false)
+                val prefs = AppPreferencesRepository(app)
+                val enabled = runCatching { prefs.sairaNotifReplyEnabled.first() }.getOrDefault(false)
                 val granted = SairaNotificationListenerService.isNotificationAccessGranted(app)
-                if (enabled && granted) start(app, fromForeground) else stop(app)
+                // Chatbox Saira (answers Chatbox DMs while I'm away) also needs the process alive.
+                val chatboxSaira = runCatching { prefs.sairaChatboxOneMinEnabled.first() }.getOrDefault(false) &&
+                    runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser != null }.getOrDefault(false)
+                if ((enabled && granted) || chatboxSaira) start(app, fromForeground) else stop(app)
             }
         }
 
@@ -193,7 +197,7 @@ class SairaKeepAliveService : Service() {
             return builder
                 .setSmallIcon(R.drawable.ic_stat_saira)
                 .setContentTitle("Saira Auto-Reply চালু")
-                .setContentText("WhatsApp/Messenger-এ আপনার হয়ে উত্তর দিতে প্রস্তুত")
+                .setContentText("আপনি না থাকলে Chatbox, WhatsApp, Messenger-এ আপনার হয়ে উত্তর দেবে")
                 .setOngoing(true)
                 .setContentIntent(open)
                 .build()

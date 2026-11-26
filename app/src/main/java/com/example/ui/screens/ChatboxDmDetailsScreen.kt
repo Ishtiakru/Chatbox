@@ -28,6 +28,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material3.Switch
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -127,7 +129,9 @@ fun ChatboxDmDetailsScreen(
     onDisappearingChange: (String) -> Unit,
     onToggleReadReceipts: (Boolean) -> Unit,
     onToggleBlock: () -> Unit,
-    onSubmitReport: (reason: String, note: String) -> Unit
+    onSubmitReport: (reason: String, note: String) -> Unit,
+    sairaEnabled: Boolean = true,
+    onSairaEnabledChange: (Boolean) -> Unit = {}
 ) {
     BackHandler { onClose() }
 
@@ -350,6 +354,49 @@ fun ChatboxDmDetailsScreen(
                 },
                 testTag = "chatbox_details_search"
             )
+
+            // Saira auto-reply for THIS chat
+            if (!thread.isGroup) {
+                ChatboxDetailsSectionHeader("Saira Assistant")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSairaEnabledChange(!sairaEnabled) }
+                        .testTag("chatbox_details_saira_row")
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(shape = CircleShape, color = DmLavenderSoft, modifier = Modifier.size(38.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = DmLavenderAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Saira auto-reply",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = DmInkDark
+                        )
+                        Text(
+                            text = if (sairaEnabled) "আপনি line-এ না থাকলে Saira $firstName-কে উত্তর দেবে"
+                            else "$firstName-কে Saira উত্তর দেবে না",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DmInkDark.copy(alpha = 0.6f)
+                        )
+                    }
+                    Switch(
+                        checked = sairaEnabled,
+                        onCheckedChange = onSairaEnabledChange,
+                        modifier = Modifier.testTag("chatbox_details_saira_switch")
+                    )
+                }
+            }
 
             // Customization section
             ChatboxDetailsSectionHeader("Customization")

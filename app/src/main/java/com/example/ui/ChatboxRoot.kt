@@ -127,6 +127,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val chatboxScheduledCalls by viewModel.chatboxScheduledCalls.collectAsState()
     val localSairaSessions by viewModel.localSairaSessions.collectAsState()
     val quickReaction by viewModel.quickReaction.collectAsState()
+    val sairaOffThreads by viewModel.sairaOffThreads.collectAsState()
     val oneMinAutoReplyEnabled by viewModel.oneMinAutoReplyEnabled.collectAsState()
     val notifAutoReplyEnabled by viewModel.notifAutoReplyEnabled.collectAsState()
     val liveLocationEnabled by viewModel.liveLocationEnabled.collectAsState()
@@ -343,8 +344,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 onSearchPeer = viewModel::searchPeer,
                                 onOpenPeer = viewModel::openChatWithPeer,
                                 onRequestLogin = viewModel::requestLogin,
-                                sairaAutoReplyOn = oneMinAutoReplyEnabled,
-                                onSairaAutoReplyChange = viewModel::setOneMinAutoReplyEnabled
+                                sairaOffThreadIds = if (oneMinAutoReplyEnabled) sairaOffThreads else chatboxThreads.map { it.id }.toSet(),
+                                onSetThreadSaira = viewModel::setThreadSairaEnabled
                             )
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,

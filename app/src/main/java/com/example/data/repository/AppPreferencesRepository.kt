@@ -58,6 +58,7 @@ class AppPreferencesRepository(private val context: Context) {
     private val profileAvatarsKey = stringPreferencesKey("profile_avatars_v1")
     private val dmPeerNicknamesKey = stringPreferencesKey("dm_peer_nicknames_v1")
     private val dmMutedPeersKey = stringPreferencesKey("dm_muted_peers_v1")
+    private val sairaOffThreadsKey = stringPreferencesKey("saira_off_threads_v1")
     // v2: users who only had the old local-only login see the login screen once more
     // so they can sign in for real (mobile number + SMS code).
     private val hasCompletedLoginKey = booleanPreferencesKey("has_completed_login_v2")
@@ -540,6 +541,24 @@ class AppPreferencesRepository(private val context: Context) {
                 current[cleanUid] = cleanNick
             }
             prefs[dmPeerNicknamesKey] = json.encodeToString(current)
+        }
+    }
+
+    /** Chats where the owner turned Saira auto-reply OFF (DM settings switch). */
+    val sairaOffThreads: Flow<Set<String>> =
+        context.appDataStore.data.map { prefs ->
+            val raw = prefs[sairaOffThreadsKey] ?: return@map emptySet()
+            runCatching { json.decodeFromString<Set<String>>(raw) }.getOrDefault(emptySet())
+        }
+
+    suspend fun setThreadSairaOff(threadId: String, off: Boolean) {
+        val id = threadId.trim()
+        if (id.isEmpty()) return
+        context.appDataStore.edit { prefs ->
+            val current = prefs[sairaOffThreadsKey]?.let {
+                runCatching { json.decodeFromString<Set<String>>(it) }.getOrNull()
+            }.orEmpty()
+            prefs[sairaOffThreadsKey] = json.encodeToString(if (off) current + id else current - id)
         }
     }
 
