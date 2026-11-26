@@ -192,9 +192,24 @@ def main():
         if st == 200:
             for v in b.get("fields", {}).get("keys", {}).get("arrayValue", {}).get("values", []):
                 pool.add(v.get("stringValue", ""))
+        import re as _re
+        by_proj = {}
+        for key in pool:
+            url = "https://translation.googleapis.com/language/translate/v2?q=a&target=bn&key=" + urllib.parse.quote(key, safe="")
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as r:
+                    txt = r.read().decode(errors="replace")
+            except urllib.error.HTTPError as e:
+                txt = e.read().decode(errors="replace")
+            except Exception as e:  # noqa: BLE001
+                txt = str(e)
+            m = _re.search(r"projects/(\d{6,})", txt) or _re.search(r"project (\d{6,})", txt)
+            proj = m.group(1) if m else "unknown"
+            by_proj[proj] = by_proj.get(proj, 0) + 1
+        old_num = "838258163823"
+        notice(f"KEYS pool={len(pool)} keys_in_OLD_project={by_proj.get(old_num, 0)} projects={len(by_proj)} unknown={by_proj.get('unknown', 0)}")
         st, kb = old.call("GET", f"https://apikeys.googleapis.com/v2/projects/{old.project}/locations/global/keys?pageSize=300")
         if st != 200:
-            notice(f"KEYS pool={len(pool)} old-project key list HTTP {st} {str(kb)[:200]}")
             return
         keys = kb.get("keys", [])
         in_pool = unreadable = 0
