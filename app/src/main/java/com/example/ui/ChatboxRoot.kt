@@ -221,21 +221,20 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 initialIdentifier = storedAccountIdentifier,
                 onLanguageSelected = viewModel::setLoginLanguage,
                 onBackSkipLogin = if (BuildConfig.DEBUG) viewModel::enterAppWithoutLogin else null,
-                onCancelPhoneFlow = viewModel::cancelAuthFlow,
                 onLoginWithCredentials = viewModel::loginWithCredentials,
                 onCreateAccount = viewModel::createAccountWithCredentials,
-                onResetPassword = viewModel::resetAccountPassword,
-                onGoogleSignIn = viewModel::signInWithGoogleFromLogin,
-                onSendPhoneCode = viewModel::sendPhoneLoginCode,
-                onVerifyPhoneCode = { id, code, name ->
-                    when (val r = viewModel.verifyPhoneLoginCode(id, code, name)) {
-                        is com.example.data.repository.AuthResult.Success -> Result.success(Unit)
-                        is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
-                        com.example.data.repository.AuthResult.Cancelled -> Result.failure(IllegalArgumentException("বাতিল হয়েছে।"))
-                    }
-                }
+                onResetPassword = viewModel::resetAccountPassword
             )
             return@ChatboxTheme
+        }
+
+        // After login: the Gmail popup blocks everything until a Gmail is linked.
+        val gmailRequired by viewModel.gmailRequired.collectAsState()
+        if (currentUser != null && gmailRequired) {
+            com.example.ui.screens.GmailRequiredDialog(
+                needsPassword = remember(currentUser) { viewModel.currentAccountNeedsPassword() },
+                onLinkGmail = viewModel::linkGmail
+            )
         }
 
         val uid = currentUser?.uid.orEmpty()

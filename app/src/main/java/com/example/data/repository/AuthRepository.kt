@@ -209,6 +209,109 @@ class AuthRepository(private val context: Context) {
         AuthResult.Failure(friendlyPasswordError(e))
     }
 
+    /** New account = mobile number + any password (no SMS code). */
+    suspend fun createPhonePasswordAccount(identifier: String, password: String): AuthResult = try {
+        val email = loginEmailFor(identifier)?.takeIf { !identifier.contains("@") }
+            ?: return AuthResult.Failure("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678")
+        val user = auth.createUserWithEmailAndPassword(email, password).await().user
+        if (user != null) AuthResult.Success(user) else AuthResult.Failure("Account তৈরি হয়নি। আবার চেষ্টা করুন।")
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AuthResult.Failure(friendlyPasswordError(e))
+    }
+
+    fun hasGoogle(user: FirebaseUser?): Boolean =
+        user != null && user.providerData.any { it.providerId == "google.com" }
+
+    fun hasPassword(user: FirebaseUser?): Boolean =
+        user != null && user.providerData.any { it.providerId == "password" }
+
+    /**
+     * Opens the system sheet listing every Gmail account on the phone and returns the
+     * chosen one as a Firebase credential + its address.
+     */
+    private suspend fun pickGmail(activityContext: Context): Pair<com.google.firebase.auth.AuthCredential, String> {
+        val uiContext = activityContext.findActivity() ?: activityContext
+        val serverClientId = context.getString(R.string.default_web_client_id)
+        val credentialManager = CredentialManager.create(uiContext)
+        runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+        val result = try {
+            val option = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setAutoSelectEnabled(false)
+                .setServerClientId(serverClientId)
+                .build()
+            credentialManager.getCredential(uiContext, GetCredentialRequest.Builder().addCredentialOption(option).build())
+        } catch (e: NoCredentialException) {
+            val signInOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
+            credentialManager.getCredential(uiContext, GetCredentialRequest.Builder().addCredentialOption(signInOption).build())
+        }
+        val custom = result.credential as? CustomCredential
+        if (custom == null || custom.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            error("Gmail পাওয়া যায়নি। আবার চেষ্টা করুন।")
+        }
+        val google = GoogleIdTokenCredential.createFrom(custom.data)
+        return GoogleAuthProvider.getCredential(google.idToken, null) to google.id
+    }
+
+    private fun friendlyGmailError(e: Throwable): String = when {
+        e is GetCredentialCancellationException -> "একটা Gmail বেছে নিন।"
+        e is NoCredentialException ->
+            "ফোনে কোনো Gmail নেই। Settings → Accounts → Add account → Google থেকে Gmail যোগ করে আবার চেষ্টা করুন।"
+        e is com.google.firebase.auth.FirebaseAuthUserCollisionException ||
+            (e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode == "ERROR_CREDENTIAL_ALREADY_IN_USE" ->
+            "এই Gmail অন্য একটি account-এ যুক্ত আছে। অন্য Gmail বেছে নিন।"
+        e is com.google.firebase.FirebaseNetworkException -> "ইন্টারনেট সংযোগ নেই। নেট চালু করে আবার চেষ্টা করুন।"
+        e is IllegalStateException && !e.message.isNullOrBlank() -> e.message!!
+        else -> "Gmail যুক্ত করা যায়নি। আবার চেষ্টা করুন।"
+    }
+
+    /** Links the chosen Gmail to the signed-in account. Returns the Gmail address. */
+    suspend fun linkGmail(activityContext: Context): Result<String> = try {
+        val user = auth.currentUser ?: error("আগে Log in করুন।")
+        val (credential, gmail) = pickGmail(activityContext)
+        if (!hasGoogle(user)) {
+            try {
+                user.linkWithCredential(credential).await()
+            } catch (e: com.google.firebase.auth.FirebaseAuthException) {
+                if (e.errorCode != "ERROR_PROVIDER_ALREADY_LINKED") throw e
+            }
+        }
+        runCatching { user.reload().await() }
+        Result.success(gmail)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "linkGmail failed", e)
+        Result.failure(IllegalStateException(friendlyGmailError(e), e))
+    }
+
+    /**
+     * Forgot password without SMS: the user picks the Gmail linked to the number's
+     * account; only if it really belongs to that account is the new password saved.
+     */
+    suspend fun resetPasswordWithGmail(activityContext: Context, identifier: String, newPassword: String): Result<FirebaseUser> = try {
+        val email = loginEmailFor(identifier) ?: error("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678")
+        val (credential, _) = pickGmail(activityContext)
+        val result = auth.signInWithCredential(credential).await()
+        val user = result.user ?: error("আবার চেষ্টা করুন।")
+        val owns = user.providerData.any { it.providerId == "password" && it.email.equals(email, ignoreCase = true) }
+        if (!owns) {
+            if (result.additionalUserInfo?.isNewUser == true) runCatching { user.delete().await() }
+            auth.signOut()
+            error("এই Gmail এই নম্বরের account-এ যুক্ত নয়। Account খোলার পর যে Gmail দিয়েছিলেন সেটা বেছে নিন।")
+        }
+        user.updatePassword(newPassword).await()
+        Result.success(user)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "resetPasswordWithGmail failed", e)
+        val msg = if (e is com.google.firebase.auth.FirebaseAuthWeakPasswordException) "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।" else friendlyGmailError(e)
+        Result.failure(IllegalStateException(msg, e))
+    }
+
     private fun friendlyPasswordError(e: Throwable): String {
         if (e is IllegalStateException && e.cause == null && !e.message.isNullOrBlank()) return e.message!!
         val code = (e as? com.google.firebase.auth.FirebaseAuthException)?.errorCode.orEmpty()

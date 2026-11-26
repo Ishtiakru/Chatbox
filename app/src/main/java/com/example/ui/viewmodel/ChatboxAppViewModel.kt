@@ -410,6 +410,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         return when (val r = authRepo.signInWithPassword(cleanId, password)) {
             is com.example.data.repository.AuthResult.Success -> {
                 _authFlowActive.value = false
+                _gmailRequired.value = !authRepo.hasGoogle(r.user)
                 prefs.setHasCompletedLogin(true)
                 syncLocalProfileFromAccount(nameInput = r.user.displayName, identifier = r.user.phoneNumber ?: cleanId)
                 liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
@@ -443,13 +444,20 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
         }
         if (isPhoneIdentifier(cleanId)) {
-            val set = authRepo.setPasswordForVerifiedAccount(cleanId, password)
-            val user = set.getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
-            authRepo.updateDisplayName(cleanName)
-            prefs.setHasCompletedLogin(true)
-            syncLocalProfileFromAccount(nameInput = cleanName, identifier = user.phoneNumber ?: cleanId)
-            _authFlowActive.value = false
-            return Result.success(Unit)
+            val e164 = com.example.data.repository.PhoneNumbers.toE164(cleanId)
+                ?: return Result.failure(IllegalArgumentException("সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678"))
+            return when (val r = authRepo.createPhonePasswordAccount(cleanId, password)) {
+                is com.example.data.repository.AuthResult.Success -> {
+                    authRepo.updateDisplayName(cleanName)
+                    _gmailRequired.value = true
+                    prefs.setHasCompletedLogin(true)
+                    completePhoneSignIn(r.user, cleanName, phoneOverride = e164)
+                    _authFlowActive.value = false
+                    Result.success(Unit)
+                }
+                is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
+                com.example.data.repository.AuthResult.Cancelled -> Result.failure(IllegalArgumentException("বাতিল হয়েছে।"))
+            }
         }
         return when (val r = authRepo.createEmailAccount(cleanId, password)) {
             is com.example.data.repository.AuthResult.Success -> {
@@ -469,27 +477,62 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
      * Forgot password. Mobile number: only after the SMS code proved ownership of the
      * number (done by the login screen first). Email: Firebase reset link.
      */
-    suspend fun resetAccountPassword(identifier: String, newPassword: String): Result<String> {
+    /**
+     * Forgot password (no SMS): new password is saved only after the user picks the
+     * Gmail that was linked to this number's account.
+     */
+    suspend fun resetAccountPassword(
+        activityContext: android.content.Context,
+        identifier: String,
+        newPassword: String
+    ): Result<String> {
         val cleanId = identifier.trim()
         if (cleanId.isEmpty()) {
             return Result.failure(IllegalArgumentException("মোবাইল নম্বর লিখুন।"))
         }
-        if (!isPhoneIdentifier(cleanId)) {
-            return authRepo.sendPasswordReset(cleanId).fold(
-                onSuccess = { Result.success("পাসওয়ার্ড বদলানোর link $cleanId ঠিকানায় পাঠানো হয়েছে।") },
-                onFailure = { Result.failure(IllegalArgumentException("Reset link পাঠানো যায়নি। ইমেইল ঠিক আছে কিনা দেখুন।")) }
-            )
-        }
         if (newPassword.length < MIN_PASSWORD_LENGTH) {
             return Result.failure(IllegalArgumentException("নতুন পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
         }
-        val user = authRepo.setPasswordForVerifiedAccount(cleanId, newPassword)
-            .getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
-        prefs.setHasCompletedLogin(true)
-        syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
-        _authFlowActive.value = false
-        return Result.success("পাসওয়ার্ড সেট হয়েছে। এখন থেকে এই নম্বর আর পাসওয়ার্ড দিয়ে Login করবেন।")
+        _authFlowActive.value = true
+        try {
+            val user = authRepo.resetPasswordWithGmail(activityContext, cleanId, newPassword)
+                .getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
+            _gmailRequired.value = false
+            prefs.setHasCompletedLogin(true)
+            syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
+            liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            return Result.success("পাসওয়ার্ড বদলে গেছে।")
+        } finally {
+            _authFlowActive.value = false
+        }
     }
+
+    // ---- Gmail (required once after login) -------------------------------
+
+    /** True while the signed-in account has no Gmail linked: the home screen is blocked by the Gmail popup. */
+    private val _gmailRequired = MutableStateFlow(authRepo.currentUser()?.let { !authRepo.hasGoogle(it) } ?: false)
+    val gmailRequired: StateFlow<Boolean> = _gmailRequired.asStateFlow()
+
+    /** Account has no password yet (old SMS-code login): the Gmail popup also asks for one. */
+    fun currentAccountNeedsPassword(): Boolean {
+        val user = authRepo.currentUser() ?: return false
+        return !authRepo.hasPassword(user) && !user.phoneNumber.isNullOrBlank()
+    }
+
+    /** Links the chosen Gmail (and, for old accounts, sets the password). Returns the Gmail address. */
+    suspend fun linkGmail(activityContext: android.content.Context, password: String?): Result<String> {
+        val user = authRepo.currentUser()
+            ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
+        if (currentAccountNeedsPassword()) {
+            if (password == null || password.length < MIN_PASSWORD_LENGTH) {
+                return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
+            }
+            authRepo.setPasswordForVerifiedAccount(user.phoneNumber.orEmpty(), password)
+                .onFailure { return Result.failure(IllegalArgumentException(it.message)) }
+        }
+        return authRepo.linkGmail(activityContext).onSuccess { _gmailRequired.value = false }
+    }
+
 
     suspend fun signInWithGoogleFromLogin(activityContext: android.content.Context): com.example.data.repository.AuthResult {
         val result = authRepo.signInWithGoogleInteractive(activityContext)
@@ -544,9 +587,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         return result
     }
 
-    private suspend fun completePhoneSignIn(user: FirebaseUser, rawName: String) {
+    private suspend fun completePhoneSignIn(user: FirebaseUser, rawName: String, phoneOverride: String? = null) {
         try {
-            val phone = user.phoneNumber.orEmpty()
+            val phone = phoneOverride ?: user.phoneNumber.orEmpty()
             val typedName = rawName.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
             val localName = localUserProfile.value.displayName.takeIf { it.isNotBlank() && it != "Chatbox User" }
             // The app opens only after the password step finishes (authFlowActive=false).
