@@ -75,6 +75,9 @@ object SairaLocationHelper {
     suspend fun getFreshLocation(context: Context, timeoutMs: Long = 6_000L): SharedLocationSnapshot? {
         val app = context.applicationContext
         if (!hasLocationPermission(app)) return null
+        cached(app)?.let { c ->
+            if (System.currentTimeMillis() - c.timeMs < FRESH_ENOUGH_MS) return c
+        }
         val lastKnown = getBestAvailableLocation(app)
         if (lastKnown != null && System.currentTimeMillis() - lastKnown.timeMs < FRESH_ENOUGH_MS) {
             saveCache(app, lastKnown)

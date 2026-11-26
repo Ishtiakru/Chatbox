@@ -46,6 +46,7 @@ class SairaKeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         goForeground()
         handler.postDelayed(rebindTick, REBIND_INTERVAL_MS)
     }
@@ -53,9 +54,9 @@ class SairaKeepAliveService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Only (re)enter foreground when needed: first start, or to add the location
         // type once permission exists. Re-calling from background could drop it.
-        if (!inForeground || (!hasLocationType && SairaLocationHelper.hasLocationPermission(this) &&
-                intent?.getBooleanExtra(EXTRA_FROM_FOREGROUND, false) == true)
-        ) {
+        // From the foreground it is always safe to (re)enter foreground with the best
+        // type; from the background only when not yet foreground (avoid dropping location).
+        if (!inForeground || intent?.getBooleanExtra(EXTRA_FROM_FOREGROUND, false) == true) {
             goForeground()
         }
         if (SairaNotificationListenerService.isNotificationAccessGranted(this)) {
@@ -74,6 +75,7 @@ class SairaKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         handler.removeCallbacks(rebindTick)
         super.onDestroy()
     }
@@ -118,6 +120,11 @@ class SairaKeepAliveService : Service() {
         private const val NOTIFICATION_ID = 4107
         private const val REBIND_INTERVAL_MS = 10 * 60 * 1000L
         private const val EXTRA_FROM_FOREGROUND = "from_foreground"
+
+        /** True while the keep-alive foreground service is alive in this process. */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
 
         /** True only in the full edition, where the service is declared in the manifest. */
         fun isAvailable(context: Context): Boolean = runCatching {
