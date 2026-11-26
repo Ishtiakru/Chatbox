@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -40,7 +42,14 @@ class MainActivity : ComponentActivity() {
 
         val appViewModel = com.example.util.AppViewModels.chatbox(application)
         setContent {
-            ChatboxRoot(appViewModel)
+            val loginLanguage by appViewModel.loginLanguage.collectAsState(initial = "en-US")
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalConfiguration provides androidx.compose.ui.platform.LocalConfiguration.current.also {
+                    it.setLocales(android.os.LocaleList.forLanguageTags(loginLanguage))
+                }
+            ) {
+                ChatboxRoot(appViewModel)
+            }
         }
     }
 

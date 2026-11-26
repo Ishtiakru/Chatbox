@@ -198,7 +198,12 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         splashDone = true
     }
 
-    ChatboxTheme(useLavenderTheme = appearance.theme == "lavender") {
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalConfiguration provides androidx.compose.ui.platform.LocalConfiguration.current.also {
+            it.setLocales(android.os.LocaleList.forLanguageTags(loginLanguage))
+        }
+    ) {
+        ChatboxTheme(useLavenderTheme = appearance.theme == "lavender") {
         val colors = LocalChatboxColors.current
         if (!splashDone) {
             Box(
@@ -705,6 +710,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 onDismiss = { viewModel.openUpdateDialog(false) }
             )
         }
+    }
     }
 }
 
