@@ -32,9 +32,33 @@ import java.util.concurrent.atomic.AtomicReference
 class SairaAutoReplyViewModelRobolectricTest {
 
     private lateinit var app: Application
+    companion object {
+        @Volatile private var watchdogStarted = false
+
+        /** CI hang finder: every 45s dump all thread stacks (JVM-wide, outlives sandboxes). */
+        fun startGlobalWatchdog() {
+            if (watchdogStarted) return
+            watchdogStarted = true
+            val dir = System.getProperty("user.dir")
+            Thread {
+                while (true) {
+                    try { Thread.sleep(45_000) } catch (_: InterruptedException) { return@Thread }
+                    val sb = StringBuilder()
+                    Thread.getAllStackTraces().forEach { (t, st) ->
+                        if (t.name.contains("SDK 35 Main", true)) {
+                            sb.append("THREAD ").append(t.name).append(" state=").append(t.state).append('\n')
+                            st.take(55).forEach { sb.append("  at ").append(it.toString()).append('\n') }
+                        }
+                    }
+                    runCatching { java.io.File(dir, "hang-dump.txt").writeText(sb.toString()) }
+                }
+            }.apply { isDaemon = true; name = "hang-watchdog"; start() }
+        }
+    }
 
     @Before
     fun setUp() {
+        startGlobalWatchdog()
         app = ApplicationProvider.getApplicationContext()
         if (FirebaseApp.getApps(app).isEmpty()) {
             FirebaseApp.initializeApp(app) ?: FirebaseApp.initializeApp(

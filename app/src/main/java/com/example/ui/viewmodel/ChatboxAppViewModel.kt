@@ -263,6 +263,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun effectiveIsOnline(): Boolean = onlineOverride ?: isOnline.value
 
+    /** Owner is using Chatbox right now (app on screen). Tests can override. */
+    internal var ownerOnlineOverride: Boolean? = null
+    private fun ownerOnline(): Boolean = ownerOnlineOverride ?: com.example.util.AppPresence.foreground
+
     init {
         syncSairaUserDirectory()
         viewModelScope.launch {
@@ -1196,10 +1200,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
 
         val job = viewModelScope.launch {
-            val rules = prefs.sairaNotificationRules.first()
-            val matchedRule = SairaNotificationMatcher.findInAppRule(thread.name, SairaPlatform.ANY, rules)
-            val shouldRun = matchedRule != null || prefs.sairaChatboxOneMinEnabled.first()
-            if (!shouldRun) return@launch
+            // The owner's small "Saira" switch in Chatbox: OFF = Saira never answers for them.
+            if (!prefs.sairaChatboxOneMinEnabled.first()) return@launch
 
             val engagedAt = sairaAbsenceEngagedThreads[threadId]
             val isContinuation = engagedAt != null &&
@@ -1211,6 +1213,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             val latest = currentMessages.lastOrNull() ?: return@launch
             // Owner already replied manually in time -> do not auto-reply!
             if (latest.id != incomingMsgId || latest.from == "me") return@launch
+            // Owner is on line (Chatbox open on screen) -> they answer themselves.
+            if (ownerOnline()) return@launch
 
             val ownerName = ownProfile.value?.displayName?.ifBlank { null }
                 ?: localUserProfile.value.displayName
@@ -1227,6 +1231,13 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 }
             )
             if (!result.replied || result.replyText.isBlank()) return@launch
+            // A newer message came in (or the owner answered / came on line) while Saira was
+            // thinking: drop this reply so only ONE answer goes out, for the latest message.
+            if (!isActive) return@launch
+            val stillLatest = prefs.chatboxMessages.first()[threadId].orEmpty().lastOrNull()
+            if (stillLatest?.id != incomingMsgId || ownerOnline() ||
+                !prefs.sairaChatboxOneMinEnabled.first()
+            ) return@launch
 
             val freshThread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: thread
             val myUid = currentUser.value?.uid

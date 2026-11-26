@@ -114,6 +114,14 @@ jobs:
             -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7" \
             2>&1 | tee gradle-output.txt
           status=${PIPESTATUS[0]}
+          grep -E " STARTED$" gradle-output.txt | tail -n 3 | while IFS= read -r line; do
+            echo "::notice::LAST-STARTED ${line}"
+          done
+          D=$(ls app/hang-dump.txt hang-dump.txt 2>/dev/null | head -1)
+          if [ -n "$D" ] && [ "$status" -ne 0 ]; then
+            echo "::notice::HANG $(sed 's/^ *at //' "$D" | head -n 14 | sed -E 's/^java\.base@[0-9.]+\///' | cut -c1-110 | tr '\n' '|')"
+            echo "::notice::HANGX $(grep -oE 'com\.example[^ ]*\([A-Za-z]+\.kt:[0-9]+\)' "$D" | sed -E 's/.*\.([A-Za-z]+\.kt:[0-9]+)\)/\1/' | head -n 8 | tr '\n' '|')"
+          fi
           if [ "$status" -ne 0 ]; then
             echo "::group::Failure highlights"
             grep -nE "^e: |FAILURE:|What went wrong|> Task .* FAILED|FAILED$" gradle-output.txt | tail -n 40 || true
