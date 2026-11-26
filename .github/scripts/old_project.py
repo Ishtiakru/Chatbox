@@ -90,7 +90,7 @@ class G:
         while True:
             url = f"{self.fs(db)}/{urllib.parse.quote(col_path, safe='/')}?pageSize=300&showMissing=true"
             if mask_only:
-                url += "&mask.fieldPaths=__none__"
+                url += "&mask.fieldPaths=zzNoSuchField"
             if token:
                 url += f"&pageToken={urllib.parse.quote(token, safe='')}"
             st, b = self.call("GET", url)
