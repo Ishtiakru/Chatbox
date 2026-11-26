@@ -62,6 +62,17 @@ object MediaHost {
         }
     }
 
+    /** Uploads in-memory bytes (Saira agent attachments → GitHub workflow assets). */
+    suspend fun uploadBytes(bytes: ByteArray, fileName: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            if (bytes.isEmpty()) return@withContext Result.failure(IOException("File is empty."))
+            if (bytes.size > MAX_BYTES) return@withContext Result.failure(IOException("File exceeds the 50 MB limit."))
+            uploadStream(bytes.inputStream(), fileName, bytes.size.toLong())
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun uploadStream(input: java.io.InputStream, fileName: String, length: Long?): Result<String> {
         val boundary = "----chatboxBoundary${System.currentTimeMillis()}"
         val conn = URL(ENDPOINT).openConnection() as HttpURLConnection

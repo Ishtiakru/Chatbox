@@ -21,6 +21,10 @@ on:
         description: 'true = build + verify only, never publish'
         required: false
         default: 'false'
+      assets:
+        description: space-separated image URLs attached by the admin (files.catbox.moe)
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -131,6 +135,8 @@ jobs:
         env:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
           INSTRUCTION: ${{ inputs.instruction }}
+          ASSETS: ${{ inputs.assets }}
+          REQUEST_ID: ${{ inputs.request_id }}
         run: python3 .github/scripts/saira_agent.py
 
       - name: Verify (unit tests + release build)

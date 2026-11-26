@@ -39,32 +39,40 @@ class SairaAgentAi(context: Context) {
         var attempts = 0
         var useSearch = search
         for (model in MODELS) {
-            for (key in keys.shuffled().take(KEYS_PER_MODEL)) {
+            val modelKeys = keys.shuffled().take(KEYS_PER_MODEL)
+            var i = 0
+            var modelMissing = false
+            while (i < modelKeys.size && !modelMissing) {
+                val key = modelKeys[i]
                 attempts++
                 val body = buildBody(system, history, prompt, attachments, json, useSearch, maxTokens)
                 val (code, raw) = try {
                     post("$BASE/$model:generateContent?key=$key", body)
                 } catch (e: Exception) {
                     lastError = e
+                    i++
                     continue
                 }
                 if (code in 200..299) {
                     val text = extract(raw)
                     if (!text.isNullOrBlank()) return@withContext text
                     lastError = IllegalStateException("empty answer")
+                    i++
                     continue
                 }
                 val low = raw.lowercase()
-                when {
-                    // Search grounding not allowed for this key/model → retry without it.
-                    code == 400 && useSearch && (low.contains("search") || low.contains("tool")) -> {
-                        useSearch = false
-                    }
-                    code == 429 || low.contains("resource_exhausted") -> pool.markCooling(key, 60_000L)
-                    code == 404 -> break // model missing → next model
-                }
                 lastError = IllegalStateException("Gemini HTTP $code: ${raw.take(160)}")
-                Log.w(TAG, "model=$model code=$code")
+                Log.w(TAG, "model=$model code=$code search=$useSearch")
+                if (useSearch && (code == 429 || (code == 400 && (low.contains("search") || low.contains("tool"))))) {
+                    // Google Search grounding has its own (often zero) free quota → same key, no search.
+                    useSearch = false
+                    continue
+                }
+                when {
+                    code == 429 || low.contains("resource_exhausted") -> pool.markCooling(key, 60_000L)
+                    code == 404 -> modelMissing = true
+                }
+                i++
             }
         }
         throw lastError ?: IllegalStateException("AI উত্তর দেয়নি ($attempts চেষ্টা)")

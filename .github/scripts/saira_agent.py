@@ -230,12 +230,59 @@ def files_from_errors(errs: list[str]) -> list[str]:
     return found[:6]
 
 
+ASSET_DIR = "app/src/main/res/drawable-nodpi"
+ASSET_URL = re.compile(r"^https://files\.catbox\.moe/[A-Za-z0-9._-]+$")
+
+
+def fetch_assets() -> list[str]:
+    """Download the admin's attached images (uploaded by the app) as drawable resources."""
+    urls = (os.environ.get("ASSETS") or "").split()
+    tag = re.sub(r"[^a-z0-9]", "", (os.environ.get("REQUEST_ID") or "").lower())[-10:] or str(int(time.time()))
+    names = []
+    for i, url in enumerate(urls[:4]):
+        if not ASSET_URL.match(url):
+            print(f"[agent] skip asset url {url[:80]}")
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Saira agent)"})
+            data = urllib.request.urlopen(req, timeout=90).read()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[agent] asset download failed: {exc}")
+            continue
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            ext = "png"
+        elif data[:3] == b"\xff\xd8\xff":
+            ext = "jpg"
+        else:
+            print("[agent] asset is not png/jpg, skipped")
+            continue
+        name = f"saira_asset_{tag}_{i + 1}"
+        os.makedirs(os.path.join(ROOT, ASSET_DIR), exist_ok=True)
+        with open(os.path.join(ROOT, ASSET_DIR, f"{name}.{ext}"), "wb") as fh:
+            fh.write(data)
+        names.append(name)
+        print(f"[agent] asset {name}.{ext} ({len(data) // 1024} KB)")
+    return names
+
+
 def main() -> int:
     instruction = (os.environ.get("INSTRUCTION") or "").strip()
     if not instruction:
         notice("কোনো নির্দেশ পাইনি।")
         set_output("changed", "false")
         return 1
+    assets = fetch_assets()
+    if assets:
+        refs = ", ".join(f"R.drawable.{n}" for n in assets)
+        instruction += (
+            f"\n\n[The admin attached {len(assets)} image(s). They are ALREADY added to the project as "
+            f"drawable resources: {refs} (import com.example.R). Use them where the request says, e.g. "
+            "Image(painter = painterResource(R.drawable.NAME), contentDescription = ...). The app's current logo is "
+            "R.drawable.chatbox_logo_lavender, used in ui/ChatboxRoot.kt, ui/components/ChatboxCommon.kt and "
+            "ui/screens/AuthLoginScreen.kt — to replace the logo everywhere, change those painterResource calls. "
+            "Launcher icon = res/mipmap-anydpi-v26/ic_launcher.xml + ic_launcher_round.xml (adaptive icon); to use "
+            "the image there, set the foreground to an <inset android:inset=\"22%\" android:drawable=\"@drawable/NAME\"/>.]"
+        )
     print(f"[agent] instruction: {instruction[:300]}")
 
     system = ("You are Saira, a senior Android/Kotlin engineer working on the 'Chatbox' app "
@@ -287,7 +334,7 @@ Re-send ONLY the failed edits, with "search" copied exactly from these CURRENT f
             print("[agent] still unapplied:", problems)
 
     diff = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout
-    changed = [l for l in diff.splitlines() if "google-services.json" not in l]
+    changed = [l for l in diff.splitlines() if "google-services.json" not in l and "drawable-nodpi" not in l]
     if not changed:
         notice("কোনো পরিবর্তন তৈরি করা যায়নি। নির্দেশটা আরেকটু নির্দিষ্ট করে বলুন।")
         set_output("changed", "false")
