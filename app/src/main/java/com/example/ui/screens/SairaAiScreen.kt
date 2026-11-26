@@ -961,6 +961,16 @@ private fun AutoReplyAndBackupTab(
     val listenerAvailable = remember { SairaNotificationListenerService.isListenerAvailable(context) }
     var setupAttempts by remember { mutableIntStateOf(0) }
     var lastAutoReplyStatus by remember { mutableStateOf(SairaNotificationListenerService.lastStatus(context)) }
+    fun postNotifMissing(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+    var needsNotifPermission by remember { mutableStateOf(postNotifMissing()) }
+    val postNotifLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        needsNotifPermission = postNotifMissing()
+        com.example.saira.SairaKeepAliveService.sync(context, fromForeground = true)
+    }
     var notifAccessGranted by remember {
         mutableStateOf(SairaNotificationListenerService.isNotificationAccessGranted(context))
     }
@@ -975,6 +985,7 @@ private fun AutoReplyAndBackupTab(
                 notifAccessGranted = SairaNotificationListenerService.isNotificationAccessGranted(context)
                 batteryUnrestricted = SairaNotificationListenerService.isBatteryOptimizationIgnored(context)
                 lastAutoReplyStatus = SairaNotificationListenerService.lastStatus(context)
+                needsNotifPermission = postNotifMissing()
                 if (notifAccessGranted) {
                     SairaNotificationListenerService.ensureBound(context)
                     // Just granted during setup -> one system "Allow" dialog for reliable background replies.
@@ -1191,13 +1202,39 @@ private fun AutoReplyAndBackupTab(
                             )
                         }
                         if (!batteryUnrestricted) {
-                            TextButton(
+                            NoticeBanner(
+                                text = "স্ক্রিন লক থাকলে ফোন ব্যাটারি বাঁচাতে সায়রাকে থামিয়ে রাখে, তাই উত্তর দেরিতে যায়। নিচের বাটন চাপুন → Allow দিন, তাহলে স্ক্রিন লক থাকলেও ১০ সেকেন্ডে উত্তর যাবে।",
+                                isError = true
+                            )
+                            Button(
                                 onClick = { SairaNotificationListenerService.requestIgnoreBatteryOptimization(context) },
-                                modifier = Modifier.testTag("saira_battery_button")
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("saira_battery_button")
                             ) {
-                                Text("স্ক্রিন বন্ধ থাকলেও দ্রুত উত্তরের জন্য এখানে চাপুন → Allow")
+                                Text("স্ক্রিন লক অবস্থায় ১০ সেকেন্ডে উত্তর: Allow দিন")
                             }
                         }
+                        if (needsNotifPermission) {
+                            OutlinedButton(
+                                onClick = { postNotifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("saira_post_notif_button")
+                            ) {
+                                Text("\"Saira Auto-Reply চালু\" নোটিফিকেশন দেখাতে অনুমতি দিন")
+                            }
+                        }
+                        Text(
+                            text = if (com.example.saira.SairaKeepAliveService.isRunning) {
+                                "Background সার্ভিস: চালু ✓"
+                            } else {
+                                "Background সার্ভিস: বন্ধ — Chatbox একবার খুলে রাখুন"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (com.example.saira.SairaKeepAliveService.isRunning) ChatboxUpdateGreen else ChatboxErrorInk,
+                            modifier = Modifier.testTag("saira_keepalive_status")
+                        )
                         if (lastAutoReplyStatus.isNotBlank()) {
                             Text(
                                 text = "শেষ অবস্থা: $lastAutoReplyStatus",

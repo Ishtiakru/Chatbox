@@ -85,7 +85,12 @@ class SairaNotificationListenerService : NotificationListenerService() {
         val previousPending = pendingReplyJobs.remove(sbnKey)
         previousPending?.job?.cancel()
         releaseWakeLock(previousPending?.wakeLock)
-        val firstSeenMs = previousPending?.firstSeenMs ?: nowMs
+        // Measure the 10s from when the FIRST message actually arrived (postTime),
+        // even if WhatsApp re-posted/updated the notification since.
+        val postedAtMs = target.postTime.takeIf { it in 1..nowMs } ?: nowMs
+        val firstSeenMs = previousPending?.firstSeenMs
+            ?: recentlyRemoved.remove(sbnKey)?.takeIf { nowMs - it.removedAtMs < REPOST_GRACE_MS }?.firstSeenMs
+            ?: postedAtMs
 
         val senderTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val cleanSender = SairaNotificationMatcher.cleanContactTitle(senderTitle)
@@ -100,6 +105,10 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
         // Keep CPU awake while the screen is off during the 10s wait, AI reply call, and RemoteInput dispatch
         val wakeLock = acquirePartialWakeLock(PENDING_WAKE_LOCK_TIMEOUT_MS)
+
+        // Use the waiting time: wake the radio / TLS connection and fetch location
+        // in parallel so the reply goes out right at the 10s mark.
+        prewarm(extras)
 
         val job = serviceScope.launch {
             try {
@@ -117,6 +126,15 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 }
                 delay(targetDelayMs)
                 pendingReplyJobs.remove(sbnKey)
+                // Owner opened/answered the chat during the wait -> WhatsApp removed
+                // the notification. Only then skip (a re-post keeps it active).
+                val stillActive = runCatching {
+                    activeNotifications?.any { it.key == sbnKey }
+                }.getOrNull() ?: true
+                if (!stillActive) {
+                    recordStatus(applicationContext, "$cleanSender: আপনি নিজে মেসেজটি খুলেছেন/উত্তর দিয়েছেন — সায়রা উত্তর দেয়নি")
+                    return@launch
+                }
                 // Never let one stuck reply (network/location) block later messages.
                 val finished = withTimeoutOrNull(PROCESS_TIMEOUT_MS) { processNotification(target); true }
                 if (finished == null) recordStatus(applicationContext, "$cleanSender: উত্তর দিতে বেশি সময় লাগছিল — বাতিল, পরের মেসেজে আবার চেষ্টা করবে")
@@ -132,12 +150,41 @@ class SairaNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        // Do NOT cancel here: WhatsApp/Messenger often remove + re-post the same
+        // notification, which used to restart the 10s timer or drop the reply.
+        // The pending job re-checks activeNotifications when the 10s are up.
         val target = sbn ?: return
         val sbnKey = target.key ?: "${target.packageName}:${target.id}"
-        pendingReplyJobs.remove(sbnKey)?.let { entry ->
-            entry.job.cancel()
-            releaseWakeLock(entry.wakeLock)
-            recordStatus(this, "আপনি নিজে মেসেজটি খুলেছেন/উত্তর দিয়েছেন — সায়রা উত্তর দেয়নি")
+        pendingReplyJobs[sbnKey]?.let { entry ->
+            recentlyRemoved[sbnKey] = RemovedEntry(entry.firstSeenMs, System.currentTimeMillis())
+        }
+    }
+
+    private val recentlyRemoved = ConcurrentHashMap<String, RemovedEntry>()
+
+    private data class RemovedEntry(val firstSeenMs: Long, val removedAtMs: Long)
+
+    private fun prewarm(extras: Bundle) {
+        serviceScope.launch {
+            runCatching {
+                withTimeoutOrNull(6_000L) {
+                    val conn = java.net.URL("https://generativelanguage.googleapis.com/").openConnection()
+                        as java.net.HttpURLConnection
+                    conn.connectTimeout = 5_000
+                    conn.readTimeout = 5_000
+                    conn.requestMethod = "GET"
+                    runCatching { conn.responseCode }
+                    runCatching { (conn.errorStream ?: conn.inputStream)?.use { it.readBytes() } }
+                }
+            }
+        }
+        val text = buildString {
+            append(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty())
+            append(' ')
+            append(extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty())
+        }
+        if (SairaTimeGreeting.isLocationRequest(text) && SairaLocationHelper.hasLocationPermission(this)) {
+            serviceScope.launch { runCatching { SairaLocationHelper.getFreshLocation(applicationContext) } }
         }
     }
 
@@ -642,7 +689,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
         private const val CONTINUATION_DEBOUNCE_MS = 1_500L
         private const val ACTIVE_CONVERSATION_WINDOW_MS = 15 * 60_000L
         private const val MIN_REPLY_GAP_MS = 1_000L
-        private const val AI_REPLY_TIMEOUT_MS = 12_000L
+        private const val AI_REPLY_TIMEOUT_MS = 7_000L
+        private const val REPOST_GRACE_MS = 5_000L
         private const val PROCESS_TIMEOUT_MS = 40_000L
         private const val STATUS_PREFS = "saira_autoreply_status"
         private const val STATUS_KEY = "last"
