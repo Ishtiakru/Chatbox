@@ -81,6 +81,7 @@ import com.example.data.ai.SairaPrompts
 import com.example.data.model.AppTab
 import com.example.data.model.CoreAppTab
 import com.example.ui.components.AppUpdateDetailsDialog
+import com.example.ui.components.ChatboxLogoWithUpdateBadge
 import com.example.ui.components.CustomMenuContentScreen
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
@@ -517,21 +518,11 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     NavigationRail(
                         containerColor = colors.surface,
                         header = {
-                            if (appUpdate.active) {
-                                Surface(
-                                    onClick = { viewModel.openUpdateDialog(true) },
-                                    shape = CircleShape,
-                                    color = ChatboxUpdateGreen,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                ) {
-                                    Text(
-                                        text = "UPD",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
+                            ChatboxLogoWithUpdateBadge(
+                                appUpdateActive = appUpdate.active,
+                                onUpdateClick = { viewModel.openUpdateDialog(true) },
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
                         }
                     ) {
                         Spacer(Modifier.height(8.dp))
@@ -758,6 +749,25 @@ private fun NavTabIcon(
                     size = 23.dp
                 )
             }
+        }
+    } else if (item.tab is AppTab.Core && item.tab.tab == CoreAppTab.CHATBOX) {
+        val ringColor = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.55f)
+        Surface(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .border(if (selected) 2.dp else 1.dp, ringColor, CircleShape)
+                .padding(1.dp)
+                .clip(CircleShape),
+            shape = CircleShape,
+            color = Color.White
+        ) {
+            Image(
+                painter = painterResource(R.drawable.chatbox_logo_lavender),
+                contentDescription = item.label,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     } else {
         Icon(

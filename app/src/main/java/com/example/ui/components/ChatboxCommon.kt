@@ -138,6 +138,7 @@ fun ChatboxLogoWithUpdateBadge(
     logoSize: Dp = 36.dp
 ) {
     Row(
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
