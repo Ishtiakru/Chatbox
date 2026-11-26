@@ -45,11 +45,9 @@ class SairaAutoReplyViewModelRobolectricTest {
                     try { Thread.sleep(45_000) } catch (_: InterruptedException) { return@Thread }
                     val sb = StringBuilder()
                     Thread.getAllStackTraces().forEach { (t, st) ->
-                        if (t.name.contains("Test worker", true) || t.name == "main" ||
-                            t.name.contains("SDK 35", true) || t.name.contains("robolectric", true)
-                        ) {
+                        if (t.name.contains("SDK 35 Main", true)) {
                             sb.append("THREAD ").append(t.name).append(" state=").append(t.state).append('\n')
-                            st.take(45).forEach { sb.append("  at ").append(it.toString()).append('\n') }
+                            st.take(55).forEach { sb.append("  at ").append(it.toString()).append('\n') }
                         }
                     }
                     runCatching { java.io.File(dir, "hang-dump.txt").writeText(sb.toString()) }

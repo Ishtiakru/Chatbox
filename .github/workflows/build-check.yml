@@ -119,7 +119,7 @@ jobs:
           done
           D=$(ls app/hang-dump.txt hang-dump.txt 2>/dev/null | head -1)
           if [ -n "$D" ] && [ "$status" -ne 0 ]; then
-            grep -vE "java\.base|jdk\.internal|org\.junit|org\.gradle|sun\.|java\.lang\.Thread\.|java\.util\.concurrent" "$D" | head -n 45 | while IFS= read -r line; do
+            sed 's/^ *at //' "$D" | cut -c1-160 | head -n 60 | while IFS= read -r line; do
               echo "::notice::HANG ${line}"
             done
           fi
