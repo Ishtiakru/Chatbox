@@ -73,7 +73,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
-import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -370,34 +369,63 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Debug/test builds only (the release login screen has no skip button). */
     fun enterAppWithoutLogin() {
         viewModelScope.launch {
             prefs.setHasCompletedLogin(true)
         }
     }
 
+    /**
+     * True while a create-account / forgot-password flow is running: the SMS code
+     * signs the user in before the password is set, and the app must not open
+     * until the password is saved.
+     */
+    private val _authFlowActive = MutableStateFlow(false)
+    val authFlowActive: StateFlow<Boolean> = _authFlowActive.asStateFlow()
+
+    /** Called when the SMS-code step is cancelled: never leave a password-less session. */
+    fun cancelAuthFlow() {
+        viewModelScope.launch {
+            val user = authRepo.currentUser()
+            if (_authFlowActive.value && user != null && !authRepo.hasPasswordOrGoogle(user)) {
+                authRepo.signOut()
+            }
+            _authFlowActive.value = false
+        }
+    }
+
+    private fun isPhoneIdentifier(id: String): Boolean =
+        !id.contains("@") && id.count { it.isDigit() } >= 6
+
+    /** Log in = mobile number (or email) + password, checked by Firebase. */
     suspend fun loginWithCredentials(identifier: String, password: String): Result<Unit> {
         val cleanId = identifier.trim()
         if (cleanId.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+            return Result.failure(IllegalArgumentException("মোবাইল নম্বর লিখুন।"))
         }
-        if (password.length < 4) {
-            return Result.failure(IllegalArgumentException("Password must be at least 4 characters."))
+        if (password.isEmpty()) {
+            return Result.failure(IllegalArgumentException("পাসওয়ার্ড লিখুন।"))
         }
-        val normalizedId = cleanId.lowercase(Locale.ROOT)
-        val existingId = prefs.storedAccountIdentifier.first().lowercase(Locale.ROOT)
-        val existingHash = prefs.storedAccountPasswordHash.first()
-        val enteredHash = hashPassword(normalizedId, password)
-
-        if (existingId.isNotEmpty() && existingId == normalizedId && existingHash.isNotEmpty() && existingHash != enteredHash) {
-            return Result.failure(IllegalArgumentException("Incorrect password. Tap Forgot password? to reset."))
+        return when (val r = authRepo.signInWithPassword(cleanId, password)) {
+            is com.example.data.repository.AuthResult.Success -> {
+                _authFlowActive.value = false
+                prefs.setHasCompletedLogin(true)
+                syncLocalProfileFromAccount(nameInput = r.user.displayName, identifier = r.user.phoneNumber ?: cleanId)
+                liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
+                    .onSuccess { profile -> _ownProfile.value = profile }
+                Result.success(Unit)
+            }
+            is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
+            com.example.data.repository.AuthResult.Cancelled -> Result.failure(IllegalArgumentException("Login বাতিল হয়েছে।"))
         }
-
-        prefs.saveAccountCredentials(cleanId, enteredHash)
-        syncLocalProfileFromAccount(nameInput = null, identifier = cleanId)
-        return Result.success(Unit)
     }
 
+    /**
+     * Create account. Mobile number: the number must have just been verified by SMS
+     * code (the login screen does that first); then the password is attached to that
+     * account. Email: Firebase email/password account + verification email.
+     */
     suspend fun createAccountWithCredentials(
         fullName: String,
         identifier: String,
@@ -406,42 +434,61 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         val cleanName = fullName.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
         val cleanId = identifier.trim()
         if (cleanName.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Enter your full name."))
+            return Result.failure(IllegalArgumentException("আপনার নাম লিখুন।"))
         }
         if (cleanId.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+            return Result.failure(IllegalArgumentException("মোবাইল নম্বর লিখুন।"))
         }
-        if (password.length < 4) {
-            return Result.failure(IllegalArgumentException("Choose a password of at least 4 characters."))
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
         }
-
-        val enteredHash = hashPassword(cleanId.lowercase(Locale.ROOT), password)
-        prefs.saveAccountCredentials(cleanId, enteredHash)
-        syncLocalProfileFromAccount(nameInput = cleanName, identifier = cleanId)
-        return Result.success(Unit)
+        if (isPhoneIdentifier(cleanId)) {
+            val set = authRepo.setPasswordForVerifiedAccount(cleanId, password)
+            val user = set.getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
+            authRepo.updateDisplayName(cleanName)
+            prefs.setHasCompletedLogin(true)
+            syncLocalProfileFromAccount(nameInput = cleanName, identifier = user.phoneNumber ?: cleanId)
+            _authFlowActive.value = false
+            return Result.success(Unit)
+        }
+        return when (val r = authRepo.createEmailAccount(cleanId, password)) {
+            is com.example.data.repository.AuthResult.Success -> {
+                authRepo.updateDisplayName(cleanName)
+                prefs.setHasCompletedLogin(true)
+                syncLocalProfileFromAccount(nameInput = cleanName, identifier = cleanId)
+                liveChatRepo.ensureOwnProfile(r.user.uid, cleanName).onSuccess { _ownProfile.value = it }
+                _authFlowActive.value = false
+                Result.success(Unit)
+            }
+            is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
+            com.example.data.repository.AuthResult.Cancelled -> Result.failure(IllegalArgumentException("বাতিল হয়েছে।"))
+        }
     }
 
+    /**
+     * Forgot password. Mobile number: only after the SMS code proved ownership of the
+     * number (done by the login screen first). Email: Firebase reset link.
+     */
     suspend fun resetAccountPassword(identifier: String, newPassword: String): Result<String> {
         val cleanId = identifier.trim()
         if (cleanId.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Enter your mobile number or email."))
+            return Result.failure(IllegalArgumentException("মোবাইল নম্বর লিখুন।"))
         }
-        if (newPassword.length < 4) {
-            return Result.failure(IllegalArgumentException("Enter a new password of at least 4 characters."))
+        if (!isPhoneIdentifier(cleanId)) {
+            return authRepo.sendPasswordReset(cleanId).fold(
+                onSuccess = { Result.success("পাসওয়ার্ড বদলানোর link $cleanId ঠিকানায় পাঠানো হয়েছে।") },
+                onFailure = { Result.failure(IllegalArgumentException("Reset link পাঠানো যায়নি। ইমেইল ঠিক আছে কিনা দেখুন।")) }
+            )
         }
-        val emailSent = if (cleanId.contains("@") && isOnline.value) {
-            authRepo.sendPasswordReset(cleanId).isSuccess
-        } else {
-            false
+        if (newPassword.length < MIN_PASSWORD_LENGTH) {
+            return Result.failure(IllegalArgumentException("নতুন পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
         }
-        val newHash = hashPassword(cleanId.lowercase(Locale.ROOT), newPassword)
-        prefs.saveAccountCredentials(cleanId, newHash)
-        val msg = if (emailSent) {
-            "Password updated and reset email sent to $cleanId."
-        } else {
-            "Password updated. You can now log in."
-        }
-        return Result.success(msg)
+        val user = authRepo.setPasswordForVerifiedAccount(cleanId, newPassword)
+            .getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
+        prefs.setHasCompletedLogin(true)
+        syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
+        _authFlowActive.value = false
+        return Result.success("পাসওয়ার্ড সেট হয়েছে। এখন থেকে এই নম্বর আর পাসওয়ার্ড দিয়ে Login করবেন।")
     }
 
     suspend fun signInWithGoogleFromLogin(activityContext: android.content.Context): com.example.data.repository.AuthResult {
@@ -472,6 +519,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 "সঠিক মোবাইল নম্বর লিখুন, যেমন: 01712345678"
             )
         phoneSignInInProgress = true
+        _authFlowActive.value = true
         val result = authRepo.sendPhoneCode(activityContext, e164, resendToken)
         when (result) {
             is com.example.data.repository.PhoneCodeResult.SignedIn -> completePhoneSignIn(result.user, displayName)
@@ -501,7 +549,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             val phone = user.phoneNumber.orEmpty()
             val typedName = rawName.trim().take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
             val localName = localUserProfile.value.displayName.takeIf { it.isNotBlank() && it != "Chatbox User" }
-            prefs.setHasCompletedLogin(true)
+            // The app opens only after the password step finishes (authFlowActive=false).
             val base = liveChatRepo.ensureOwnProfile(user.uid, typedName.ifEmpty { localName }).getOrNull()
             val existingName = base?.displayName?.takeIf { it.isNotBlank() && it != "Chatbox User" }
             val finalName = typedName.ifEmpty { existingName ?: localName ?: "Chatbox User" }
@@ -547,11 +595,6 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         prefs.saveLocalUserProfile(updated)
     }
 
-    private fun hashPassword(normalizedIdentifier: String, password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("chatbox:$normalizedIdentifier:$password".toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }
-    }
 
     fun retryEnsureOwnProfile() {
         val user = currentUser.value ?: return
@@ -2038,5 +2081,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         private const val LIVE_AUTO_REPLY_FRESH_MS = 120_000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
         private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
+        /** Firebase's minimum password length. */
+        const val MIN_PASSWORD_LENGTH = 6
     }
 }

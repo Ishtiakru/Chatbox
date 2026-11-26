@@ -65,7 +65,7 @@ def summarize(cfg: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", required=True)
-    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha"], required=True)
+    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha", "enable-password"], required=True)
     ap.add_argument("--sha1", default="")
     ap.add_argument("--sha256", default="")
     ap.add_argument("--package", default="com.aistudio.chatbox.kxmpzq")
@@ -113,6 +113,17 @@ def main():
 
     if a.mode == "inspect":
         notice(f"inspect {summarize(cfg)} billingEnabled={billing}")
+        return
+
+    if a.mode == "enable-password":
+        # Mobile number + password login: passwords are verified by Firebase
+        # (email/password provider with a per-number synthetic address).
+        body = {"signIn": {"email": {"enabled": True, "passwordRequired": True}}}
+        st, out = call(tok, "PATCH", cfg_url + "?updateMask=signIn.email.enabled,signIn.email.passwordRequired", body)
+        if st != 200:
+            notice(f"enable-password HTTP {st}: {out}")
+            sys.exit(1)
+        notice(f"enable-password OK {summarize(out)}")
         return
 
     phone = {"enabled": True}

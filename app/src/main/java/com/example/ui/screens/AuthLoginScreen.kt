@@ -92,19 +92,21 @@ import com.example.ui.theme.LoginInkDark
 import com.example.ui.theme.LoginInkMuted
 import com.example.ui.theme.LoginLogoRing
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun AuthLoginScreen(
     selectedLanguageCode: String,
     initialIdentifier: String,
     onLanguageSelected: (String) -> Unit,
-    onBackSkipLogin: () -> Unit,
+    onBackSkipLogin: (() -> Unit)?,
     onLoginWithCredentials: suspend (identifier: String, password: String) -> Result<Unit>,
     onCreateAccount: suspend (fullName: String, identifier: String, password: String) -> Result<Unit>,
     onResetPassword: suspend (identifier: String, newPassword: String) -> Result<String>,
     onGoogleSignIn: suspend (Context) -> AuthResult,
     onSendPhoneCode: (suspend (Context, String, String, PhoneAuthProvider.ForceResendingToken?) -> PhoneCodeResult)? = null,
-    onVerifyPhoneCode: (suspend (String, String, String) -> AuthResult)? = null
+    onVerifyPhoneCode: (suspend (verificationId: String, code: String, name: String) -> Result<Unit>)? = null,
+    onCancelPhoneFlow: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -120,7 +122,10 @@ fun AuthLoginScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showForgotDialog by remember { mutableStateOf(false) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
-    var showPhoneOtpDialog by remember { mutableStateOf(false) }
+    // SMS-code step that proves the number belongs to the user before a password
+    // is created/changed. Holds the action to run once the code is verified.
+    var pendingVerify by remember { mutableStateOf<PendingPhoneVerify?>(null) }
+    val otpAvailable = onSendPhoneCode != null && onVerifyPhoneCode != null
 
     val languageLabel = remember(selectedLanguageCode) {
         WorldLanguages.displayLabel(selectedLanguageCode)
@@ -175,7 +180,7 @@ fun AuthLoginScreen(
                         horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
+                        if (onBackSkipLogin != null) IconButton(
                             onClick = onBackSkipLogin,
                             modifier = Modifier.testTag("login_back_button")
                         ) {
@@ -249,32 +254,6 @@ fun AuthLoginScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (onSendPhoneCode != null && onVerifyPhoneCode != null) {
-                    Button(
-                        onClick = { showPhoneOtpDialog = true },
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = LoginBrandBlue,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("login_phone_otp_button")
-                    ) {
-                        Text(
-                            text = "📱 মোবাইল নম্বর দিয়ে Login (SMS কোড)",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    Text(
-                        text = "বন্ধুদের মেসেজ পাঠাতে ও খুঁজে পেতে এটি দিয়ে login করুন",
-                        color = LoginInkMuted,
-                        fontSize = 12.sp
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
                 OutlinedTextField(
                     value = identifier,
                     onValueChange = {
@@ -283,7 +262,7 @@ fun AuthLoginScreen(
                     },
                     placeholder = {
                         Text(
-                            text = "Mobile number or email",
+                            text = "Mobile number",
                             color = LoginInkMuted,
                             fontSize = 15.sp
                         )
@@ -322,7 +301,7 @@ fun AuthLoginScreen(
 
                 AnimatedVisibility(visible = showIdentifierHint) {
                     NoticeBanner(
-                        text = "Enter your mobile number, Gmail/email address, or 6-digit Chatbox ID.",
+                        text = "Account খোলার সময় যে মোবাইল নম্বর আর পাসওয়ার্ড দিয়েছিলেন, সেটা দিয়ে Log in করুন। নতুন হলে \"Create new account\" চাপুন।",
                         modifier = Modifier.testTag("login_identifier_hint_banner")
                     )
                 }
@@ -574,7 +553,7 @@ fun AuthLoginScreen(
                     modifier = Modifier.testTag("forgot_password_dialog")
                 ) {
                     Text(
-                        text = "Enter your mobile number or email and choose a new password.",
+                        text = "আপনার মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। নম্বরটি আপনার কিনা যাচাই করতে SMS-এ একটা কোড যাবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = LoginInkMuted
                     )
@@ -584,7 +563,7 @@ fun AuthLoginScreen(
                             resetIdentifier = it.take(100)
                             resetError = null
                         },
-                        label = { Text("Mobile number or email") },
+                        label = { Text("Mobile number") },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
@@ -597,7 +576,7 @@ fun AuthLoginScreen(
                             newPassword = it.take(64)
                             resetError = null
                         },
-                        label = { Text("New password") },
+                        label = { Text("New password (কমপক্ষে ৬ অক্ষর)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         shape = RoundedCornerShape(14.dp),
@@ -613,6 +592,20 @@ fun AuthLoginScreen(
                     enabled = !resetBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = LoginBrandBlue),
                     onClick = {
+                        val resetId = resetIdentifier.trim()
+                        if (otpAvailable && isPhoneLike(resetId)) {
+                            if (newPassword.length < 6) {
+                                resetError = "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।"
+                                return@Button
+                            }
+                            val chosen = newPassword
+                            identifier = resetId
+                            showForgotDialog = false
+                            pendingVerify = PendingPhoneVerify(resetId, "") {
+                                onResetPassword(resetId, chosen)
+                            }
+                            return@Button
+                        }
                         scope.launch {
                             resetBusy = true
                             val res = onResetPassword(resetIdentifier, newPassword)
@@ -657,7 +650,7 @@ fun AuthLoginScreen(
                     modifier = Modifier.testTag("create_account_dialog")
                 ) {
                     Text(
-                        text = "Join Chatbox in seconds with your name, phone number or email.",
+                        text = "নাম, মোবাইল নম্বর আর একটা পাসওয়ার্ড দিন। নম্বরটি আপনার কিনা যাচাই করতে SMS-এ একটা কোড যাবে। পরে শুধু এই নম্বর আর পাসওয়ার্ড দিয়েই Log in করা যাবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = LoginInkMuted
                     )
@@ -680,7 +673,7 @@ fun AuthLoginScreen(
                             newIdentifier = it.take(100)
                             createError = null
                         },
-                        label = { Text("Mobile number or email") },
+                        label = { Text("Mobile number") },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
@@ -693,7 +686,7 @@ fun AuthLoginScreen(
                             newPassword = it.take(64)
                             createError = null
                         },
-                        label = { Text("Password") },
+                        label = { Text("Password (কমপক্ষে ৬ অক্ষর)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         shape = RoundedCornerShape(14.dp),
@@ -730,6 +723,23 @@ fun AuthLoginScreen(
                     enabled = !createBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = LoginBrandBlue),
                     onClick = {
+                        val newId = newIdentifier.trim()
+                        if (otpAvailable && isPhoneLike(newId)) {
+                            when {
+                                fullName.isBlank() -> createError = "আপনার নাম লিখুন।"
+                                newPassword.length < 6 -> createError = "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের দিন।"
+                                else -> {
+                                    val name = fullName.trim()
+                                    val chosen = newPassword
+                                    identifier = newId
+                                    showCreateAccountDialog = false
+                                    pendingVerify = PendingPhoneVerify(newId, name) {
+                                        onCreateAccount(name, newId, chosen).map { "Account তৈরি হয়েছে।" }
+                                    }
+                                }
+                            }
+                            return@Button
+                        }
                         scope.launch {
                             createBusy = true
                             val res = onCreateAccount(fullName, newIdentifier, newPassword)
@@ -752,31 +762,65 @@ fun AuthLoginScreen(
         )
     }
 
-    if (showPhoneOtpDialog && onSendPhoneCode != null && onVerifyPhoneCode != null) {
+    val verify = pendingVerify
+    if (verify != null && onSendPhoneCode != null && onVerifyPhoneCode != null) {
         PhoneOtpDialog(
+            phone = verify.phone,
+            name = verify.name,
             onSendCode = onSendPhoneCode,
             onVerifyCode = onVerifyPhoneCode,
-            onDismiss = { showPhoneOtpDialog = false }
+            onVerified = verify.onVerified,
+            onDone = { message ->
+                pendingVerify = null
+                password = ""
+                infoMessage = message
+            },
+            onDismiss = {
+                pendingVerify = null
+                onCancelPhoneFlow()
+            }
         )
     }
 }
 
+/** A create-account / forgot-password action waiting for the SMS-code check. */
+private class PendingPhoneVerify(
+    val phone: String,
+    val name: String,
+    val onVerified: suspend () -> Result<String>
+)
+
+private fun isPhoneLike(id: String): Boolean = !id.contains("@") && id.count { it.isDigit() } >= 6
+
+/**
+ * Verifies that the number belongs to the user (SMS code), then runs [onVerified]
+ * (create the password / set a new password). Cancelling signs the half-finished
+ * session out, so nobody gets in without a password.
+ */
 @Composable
 private fun PhoneOtpDialog(
+    phone: String,
+    name: String,
     onSendCode: suspend (Context, String, String, PhoneAuthProvider.ForceResendingToken?) -> PhoneCodeResult,
-    onVerifyCode: suspend (String, String, String) -> AuthResult,
+    onVerifyCode: suspend (String, String, String) -> Result<Unit>,
+    onVerified: suspend () -> Result<String>,
+    onDone: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var verificationId by remember { mutableStateOf<String?>(null) }
     var resendToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
+
+    suspend fun finish() {
+        onVerified().onSuccess { msg -> onDone(msg) }.onFailure { e ->
+            error = e.message ?: "আবার চেষ্টা করুন।"
+        }
+    }
 
     fun send(resend: Boolean) {
         if (busy) return
@@ -788,9 +832,9 @@ private fun PhoneOtpDialog(
                 is PhoneCodeResult.CodeSent -> {
                     verificationId = r.verificationId
                     resendToken = r.resendToken
-                    info = "কোড পাঠানো হয়েছে। SMS-এ আসা ৬ সংখ্যার কোড লিখুন।"
+                    info = "$phone নম্বরে SMS-এ ৬ সংখ্যার কোড পাঠানো হয়েছে।"
                 }
-                is PhoneCodeResult.SignedIn -> onDismiss()
+                is PhoneCodeResult.SignedIn -> finish()
                 is PhoneCodeResult.Failure -> error = r.message
             }
             busy = false
@@ -803,76 +847,54 @@ private fun PhoneOtpDialog(
         error = null
         scope.launch {
             busy = true
-            when (val r = onVerifyCode(id, code, name)) {
-                is AuthResult.Success -> onDismiss()
-                is AuthResult.Failure -> error = r.message
-                AuthResult.Cancelled -> Unit
-            }
+            onVerifyCode(id, code, name)
+                .onSuccess { finish() }
+                .onFailure { e -> error = e.message ?: "কোড মেলেনি। আবার চেষ্টা করুন।" }
             busy = false
         }
     }
 
+    LaunchedEffect(phone) { send(false) }
+
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         modifier = Modifier.testTag("phone_otp_dialog"),
-        title = { Text("মোবাইল নম্বর দিয়ে Login") },
+        title = { Text("নম্বর যাচাই") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (verificationId == null) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it.take(40) },
-                        label = { Text("আপনার নাম") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_name_input")
-                    )
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' }.take(16) },
-                        label = { Text("মোবাইল নম্বর (যেমন 01712345678)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { send(false) }),
-                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_phone_input")
-                    )
-                } else {
-                    Text("$phone নম্বরে কোড পাঠানো হয়েছে", color = LoginInkMuted, fontSize = 13.sp)
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = { code = it.filter { c -> c.isDigit() }.take(6) },
-                        label = { Text("৬ সংখ্যার কোড") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.NumberPassword,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { verify() }),
-                        modifier = Modifier.fillMaxWidth().testTag("phone_otp_code_input")
-                    )
-                    TextButton(
-                        onClick = { send(true) },
-                        enabled = !busy,
-                        modifier = Modifier.testTag("phone_otp_resend_button")
-                    ) { Text("কোড আসেনি? আবার পাঠান") }
-                }
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.filter { c -> c.isDigit() }.take(6) },
+                    label = { Text("৬ সংখ্যার কোড") },
+                    singleLine = true,
+                    enabled = verificationId != null,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { verify() }),
+                    modifier = Modifier.fillMaxWidth().testTag("phone_otp_code_input")
+                )
+                TextButton(
+                    onClick = { send(true) },
+                    enabled = !busy,
+                    modifier = Modifier.testTag("phone_otp_resend_button")
+                ) { Text("কোড আসেনি? আবার পাঠান") }
                 info?.let { NoticeBanner(text = it) }
                 error?.let { NoticeBanner(text = it, isError = true) }
             }
         },
         confirmButton = {
             Button(
-                enabled = !busy && (if (verificationId == null) phone.length >= 10 else code.length == 6),
+                enabled = !busy && verificationId != null && code.length == 6,
                 colors = ButtonDefaults.buttonColors(containerColor = LoginBrandBlue),
-                onClick = { if (verificationId == null) send(false) else verify() },
+                onClick = { verify() },
                 modifier = Modifier.testTag("phone_otp_submit_button")
             ) {
                 if (busy) {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                 } else {
-                    Text(if (verificationId == null) "কোড পাঠান" else "Login")
+                    Text("যাচাই করুন")
                 }
             }
         },
