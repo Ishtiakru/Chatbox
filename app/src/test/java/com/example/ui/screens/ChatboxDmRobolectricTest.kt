@@ -572,23 +572,14 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithText("Recent").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("calls_empty_state").performScrollTo().assertIsDisplayed()
 
-        // Search by 6-digit user ID and tap small Add button -> Audio Call -> End call -> logged in Recent
+        // An ID that belongs to nobody must NOT create a fake "Chatbox Friend" contact or call.
         composeRule.onNodeWithTag("calls_search_input").performTextInput("774411")
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("calls_add_user_button").performClick()
         composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("calls_added_user_dialog").assertIsDisplayed()
-        composeRule.onNodeWithTag("calls_added_audio_button").performClick()
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag("calls_active_call_dialog").assertIsDisplayed()
-        composeRule.onNodeWithTag("calls_dialog_end").performClick()
-        composeRule.waitUntil(timeoutMillis = 3_000) {
-            Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
-            composeRule.onAllNodesWithText("774411", substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onAllNodesWithTag("calls_empty_state").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("calls_added_user_dialog").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("calls_active_call_dialog").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Chatbox Friend", substring = true).assertCountEquals(0)
     }
 
     @Test
