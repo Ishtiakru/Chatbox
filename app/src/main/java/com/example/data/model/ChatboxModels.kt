@@ -88,7 +88,8 @@ enum class ChatboxMessageKind {
     MISSED_VIDEO_CALL,
     CALL_COMPLETED,
     IMAGE,
-    VOICE
+    VOICE,
+    VIDEO
 }
 
 @Serializable
@@ -131,6 +132,7 @@ data class ChatboxMessage(
     val imageUri: String? = null,
     val audioPath: String? = null,
     val audioDurationMs: Long? = null,
+    val videoUrl: String? = null,
     val isRestoredHistory: Boolean = false
 )
 
@@ -228,6 +230,7 @@ data class LiveMessage(
     val imageUrl: String? = null,
     val audioUrl: String? = null,
     val audioDurationMs: Long? = null,
+    val videoUrl: String? = null,
     @ServerTimestamp val sentAt: Timestamp? = null,
     val pendingWrites: Boolean = false
 )

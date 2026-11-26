@@ -128,6 +128,7 @@ dependencies {
     implementation(libs.androidx.credentials.play.services)
     implementation(libs.googleid)
     implementation(libs.coil.compose)
+    implementation(libs.webrtc.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

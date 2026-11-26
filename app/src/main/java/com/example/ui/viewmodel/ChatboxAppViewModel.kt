@@ -266,6 +266,15 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val _activeCall = MutableStateFlow<ActiveChatboxCall?>(null)
     val activeCall: StateFlow<ActiveChatboxCall?> = _activeCall.asStateFlow()
 
+    /** Real audio/video media for the active call (WebRTC); null when no call. */
+    private val _callEngine = MutableStateFlow<com.example.call.CallEngine?>(null)
+    val callEngine: StateFlow<com.example.call.CallEngine?> = _callEngine.asStateFlow()
+    private val callSdpChunks = java.util.concurrent.ConcurrentHashMap<String, Array<String?>>()
+    private val callSdpDone: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    @Volatile private var pendingOfferSdp: Pair<String, String>? = null
+    /** Finished calls: a re-delivered old "start" signal must never ring again. */
+    private val endedCallIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     private val _showProfileDialog = MutableStateFlow(false)
     val showProfileDialog: StateFlow<Boolean> = _showProfileDialog.asStateFlow()
 
@@ -985,7 +994,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         kind: ChatboxMessageKind = ChatboxMessageKind.TEXT,
         imageUri: String? = null,
         audioPath: String? = null,
-        audioDurationMs: Long? = null
+        audioDurationMs: Long? = null,
+        videoPath: String? = null
     ) {
         val thread = chatboxThreads.value.firstOrNull { it.id == threadId }
         val me = currentUser.value
@@ -1006,15 +1016,15 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                         ?: list.firstOrNull { !it.isGroup && it.peerUid == thread.peerUid && it.conversationId.isNotBlank() }
                 }
                 if (!ok || target == null) {
-                    sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null)
+                    sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null, videoPath = videoPath)
                     appendSystemNotice(threadId, "মেসেজটি পাঠানো যায়নি। ইন্টারনেট চেক করে আবার পাঠান।")
                 } else {
-                    sendChatboxMessageNow(target.id, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = target.conversationId)
+                    sendChatboxMessageNow(target.id, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = target.conversationId, videoPath = videoPath)
                 }
             }
             return
         }
-        sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null)
+        sendChatboxMessageNow(threadId, body, timeString, kind, imageUri, audioPath, audioDurationMs, conversationOverride = null, videoPath = videoPath)
     }
 
     private fun sendChatboxMessageNow(
@@ -1025,10 +1035,17 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         imageUri: String?,
         audioPath: String?,
         audioDurationMs: Long?,
-        conversationOverride: String?
+        conversationOverride: String?,
+        videoPath: String? = null
     ) {
         val trimmed = body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
-        if (trimmed.isEmpty() && imageUri.isNullOrBlank() && audioPath.isNullOrBlank()) return
+        if (trimmed.isEmpty() && imageUri.isNullOrBlank() && audioPath.isNullOrBlank() && videoPath.isNullOrBlank()) return
+        val mediaPath = when (kind) {
+            ChatboxMessageKind.IMAGE -> imageUri
+            ChatboxMessageKind.VOICE -> audioPath
+            ChatboxMessageKind.VIDEO -> videoPath
+            else -> null
+        }?.takeIf { it.isNotBlank() }
 
         // User replied manually -> cancel any pending incoming auto-reply for this thread.
         pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
@@ -1040,7 +1057,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         val liveConversationId = conversationOverride ?: liveThread?.conversationId.orEmpty()
         val liveMessageId = if (
             liveConversationId.isNotBlank() && liveUid != null &&
-            kind == ChatboxMessageKind.TEXT && trimmed.isNotEmpty()
+            ((kind == ChatboxMessageKind.TEXT && trimmed.isNotEmpty()) || mediaPath != null)
         ) {
             runCatching { liveChatRepo.newMessageId(liveConversationId) }.getOrNull()
         } else null
@@ -1054,7 +1071,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             kind = kind,
             imageUri = imageUri,
             audioPath = audioPath,
-            audioDurationMs = audioDurationMs
+            audioDurationMs = audioDurationMs,
+            videoUrl = videoPath
         )
         val thread = chatboxThreads.value.firstOrNull { it.id == threadId }
 
@@ -1069,10 +1087,30 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             if (liveMessageId != null && liveUid != null) {
-                val sent = liveChatRepo.sendLiveMessage(
+                // Photos / videos / voice notes: upload the file first, then send its
+                // public https link so the other person's phone can show / play it.
+                var remoteUrl: String? = null
+                var uploadFailed = false
+                if (mediaPath != null) {
+                    val up = uploadChatMedia(mediaPath)
+                    remoteUrl = up.getOrNull()
+                    if (remoteUrl == null) {
+                        uploadFailed = true
+                        Log.w(LIVE_TAG, "media upload failed", up.exceptionOrNull())
+                        appendSystemNotice(
+                            threadId,
+                            "ফাইলটি পাঠানো যায়নি (আপলোড ব্যর্থ)। ইন্টারনেট চেক করে আবার পাঠান।"
+                        )
+                    }
+                }
+                val sent = if (uploadFailed) Result.success(Unit) else liveChatRepo.sendLiveMessage(
                     conversationId = liveConversationId,
                     senderId = liveUid,
-                    rawBody = trimmed,
+                    rawBody = if (kind == ChatboxMessageKind.VOICE) "" else trimmed,
+                    imageUrl = remoteUrl.takeIf { kind == ChatboxMessageKind.IMAGE },
+                    audioUrl = remoteUrl.takeIf { kind == ChatboxMessageKind.VOICE },
+                    audioDurationMs = audioDurationMs.takeIf { kind == ChatboxMessageKind.VOICE },
+                    videoUrl = remoteUrl.takeIf { kind == ChatboxMessageKind.VIDEO },
                     messageId = liveMessageId
                 )
                 if (sent.isFailure) {
@@ -1646,6 +1684,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun sendChatboxImage(threadId: String, uri: Uri) {
+        val mime = runCatching { getApplication<Application>().contentResolver.getType(uri) }.getOrNull().orEmpty()
+        if (mime.startsWith("video/")) {
+            sendChatboxVideo(threadId, uri)
+            return
+        }
         viewModelScope.launch {
             val savedPath = copyMediaToAppStorage(uri) ?: return@launch
             val now = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
@@ -1656,6 +1699,50 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 kind = ChatboxMessageKind.IMAGE,
                 imageUri = savedPath
             )
+        }
+    }
+
+    fun sendChatboxVideo(threadId: String, uri: Uri) {
+        viewModelScope.launch {
+            val savedPath = copyVideoToAppStorage(uri)
+            if (savedPath == null) {
+                showUserNotice("ভিডিওটি পাঠানো যায়নি। ৫০ MB-এর ছোট ভিডিও বেছে নিন।")
+                return@launch
+            }
+            showUserNotice("ভিডিও আপলোড হচ্ছে…")
+            val now = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            sendChatboxMessage(
+                threadId = threadId,
+                body = "",
+                timeString = now,
+                kind = ChatboxMessageKind.VIDEO,
+                videoPath = savedPath
+            )
+        }
+    }
+
+    private suspend fun copyVideoToAppStorage(uri: Uri): String? = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        runCatching {
+            val mediaDir = File(app.filesDir, "chat_video").apply { mkdirs() }
+            val outFile = File(mediaDir, "vid_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}.mp4")
+            val input = app.contentResolver.openInputStream(uri) ?: return@runCatching null
+            input.use { inp -> FileOutputStream(outFile).use { out -> inp.copyTo(out) } }
+            if (outFile.length() == 0L || outFile.length() > 50L * 1024 * 1024) {
+                outFile.delete()
+                return@runCatching null
+            }
+            outFile.absolutePath
+        }.getOrNull()
+    }
+
+    private suspend fun uploadChatMedia(path: String): Result<String> {
+        if (path.startsWith("https://")) return Result.success(path)
+        val file = File(path)
+        return if (file.exists()) {
+            com.example.util.MediaHost.upload(file)
+        } else {
+            com.example.util.MediaHost.upload(getApplication(), Uri.parse(path))
         }
     }
 
@@ -1904,7 +1991,89 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             phase = "ringing",
             connectedAtMs = 0L
         )
+        startCallEngine(callId, threadId, peerName, isVideo)
         sendCallSig(threadId, callId, "start", isVideo)
+    }
+
+    private fun startCallEngine(callId: String, threadId: String, peerName: String, isVideo: Boolean) {
+        _callEngine.value?.let { if (it.callId != callId) stopCallEngine() else return }
+        val app = getApplication<Application>()
+        val engine = runCatching {
+            com.example.call.CallEngine(app, callId, isVideo) { kind, sdp ->
+                sendCallSdp(threadId, callId, isVideo, kind, sdp)
+            }
+        }.onFailure { Log.w(LIVE_TAG, "call engine start failed", it) }.getOrNull() ?: return
+        _callEngine.value = engine
+        com.example.call.CallForegroundService.start(app, peerName, isVideo)
+        pendingOfferSdp?.let { (id, sdp) ->
+            if (id == callId) {
+                pendingOfferSdp = null
+                engine.acceptOffer(sdp)
+            }
+        }
+    }
+
+    private fun stopCallEngine() {
+        val engine = _callEngine.value
+        _callEngine.value = null
+        engine?.close()
+        callSdpChunks.clear()
+        pendingOfferSdp = null
+        runCatching { com.example.call.CallForegroundService.stop(getApplication()) }
+    }
+
+    private fun clearActiveCall() {
+        _activeCall.value?.callId?.let { endedCallIds.add(it) }
+        _activeCall.value = null
+        stopCallEngine()
+    }
+
+    /** SDP is base64-chunked into hidden call-signal messages (body limit 2000). */
+    private fun sendCallSdp(threadId: String, callId: String, isVideo: Boolean, kind: String, sdp: String) {
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: return
+        val convId = thread.conversationId
+        val myUid = currentUser.value?.uid ?: return
+        if (convId.isBlank()) return
+        val encoded = android.util.Base64.encodeToString(sdp.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        val chunks = encoded.chunked(SDP_CHUNK_CHARS)
+        viewModelScope.launch {
+            chunks.forEachIndexed { i, chunk ->
+                val body = CALL_SIG_PREFIX + "$callId|sdp|${if (isVideo) "1" else "0"}|$kind|$i|${chunks.size}|$chunk"
+                val r = runCatching { liveChatRepo.sendLiveMessage(convId, myUid, body) }
+                if (r.isFailure || r.getOrNull()?.isFailure == true) Log.w(LIVE_TAG, "sdp chunk $i send failed")
+            }
+        }
+    }
+
+    private fun handleCallSdpChunk(cur: ActiveChatboxCall?, callId: String, payload: String) {
+        if (cur == null || cur.callId != callId) return
+        val p = payload.split("|", limit = 7)
+        if (p.size < 7) return
+        val kind = p[3]
+        val idx = p[4].toIntOrNull() ?: return
+        val total = p[5].toIntOrNull() ?: return
+        if (total !in 1..40 || idx !in 0 until total) return
+        val key = "$callId|$kind"
+        if (key in callSdpDone) return
+        val arr = callSdpChunks.getOrPut(key) { arrayOfNulls(total) }
+        if (arr.size != total) return
+        arr[idx] = p[6]
+        if (arr.any { it == null }) return
+        callSdpChunks.remove(key)
+        callSdpDone.add(key)
+        val sdp = runCatching {
+            String(android.util.Base64.decode(arr.joinToString(""), android.util.Base64.NO_WRAP), Charsets.UTF_8)
+        }.getOrNull() ?: return
+        when {
+            kind == "offer" && cur.isIncoming -> {
+                val engine = _callEngine.value
+                if (engine != null && engine.callId == callId) engine.acceptOffer(sdp)
+                else pendingOfferSdp = callId to sdp
+            }
+            kind == "answer" && !cur.isIncoming -> {
+                _callEngine.value?.takeIf { it.callId == callId }?.acceptAnswer(sdp)
+            }
+        }
     }
 
     /** Callee answers: stop ring notification, connect both sides. */
@@ -1913,6 +2082,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         if (!call.isIncoming || call.phase != "ringing") return
         _activeCall.value = call.copy(phase = "connected", connectedAtMs = System.currentTimeMillis())
         runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
+        startCallEngine(call.callId, call.threadId, call.peerName, call.isVideo)
         sendCallSig(call.threadId, call.callId, "accept", call.isVideo)
     }
 
@@ -1922,7 +2092,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         if (!call.isIncoming) return
         runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
         sendCallSig(call.threadId, call.callId, "decline", call.isVideo)
-        _activeCall.value = null
+        clearActiveCall()
     }
 
     /**
@@ -1947,7 +2117,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             logChatboxCall(call.threadId, call.peerName, call.isVideo, missed, if (missed) "Missed" else label)
             sendCallSig(call.threadId, call.callId, "end", call.isVideo)
         }
-        _activeCall.value = null
+        clearActiveCall()
     }
 
     private fun connectedDurationLabel(call: ActiveChatboxCall): String {
@@ -1980,9 +2150,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         val ageMs = System.currentTimeMillis() - sentAtMs
         val cur = _activeCall.value
         when (action) {
+            "sdp" -> handleCallSdpChunk(cur, callId, payload)
             "start" -> {
                 // Only ring for a fresh invite from the peer (never replay old ones).
                 if (ageMs !in -30_000L..60_000L) return
+                if (callId in endedCallIds) return
                 if (cur != null) {
                     if (cur.callId != callId) sendCallSig(thread.id, callId, "decline", isVideo)
                     return
@@ -2008,12 +2180,18 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             "accept" -> {
                 if (cur != null && cur.callId == callId && !cur.isIncoming && cur.phase == "ringing") {
                     _activeCall.value = cur.copy(phase = "connected", connectedAtMs = System.currentTimeMillis())
+                    // Callee is ready: send the WebRTC offer so voice/video starts flowing.
+                    val engine = _callEngine.value
+                    if (engine == null || engine.callId != callId) {
+                        startCallEngine(cur.callId, cur.threadId, cur.peerName, cur.isVideo)
+                    }
+                    _callEngine.value?.takeIf { it.callId == callId }?.makeOffer()
                 }
             }
             "decline", "missed" -> {
                 // decline → caller side; missed → callee side (caller cancelled while ringing).
                 if (cur != null && cur.callId == callId && cur.phase == "ringing") {
-                    _activeCall.value = null
+                    clearActiveCall()
                     if (cur.isIncoming) {
                         runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), callId) }
                     }
@@ -2022,7 +2200,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             }
             "end" -> {
                 if (cur != null && cur.callId == callId) {
-                    _activeCall.value = null
+                    clearActiveCall()
                     when {
                         cur.phase == "connected" ->
                             logChatboxCall(cur.threadId, cur.peerName, cur.isVideo, false, connectedDurationLabel(cur))
@@ -2124,7 +2302,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         _activeCall.value?.let { call ->
             runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
         }
-        _activeCall.value = null
+        clearActiveCall()
     }
 
     private fun startLiveSync(uid: String) {
@@ -2384,10 +2562,14 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 .mapNotNull { m ->
                     // Hidden call control messages are never chat.
                     if (m.body.startsWith(CALL_SIG_PREFIX)) return@mapNotNull null
+                    val img = m.imageUrl?.takeIf { it.isNotBlank() }
+                    val aud = m.audioUrl?.takeIf { it.isNotBlank() }
+                    val vid = m.videoUrl?.takeIf { it.isNotBlank() }
                     val text = m.body.ifBlank {
                         when {
-                            !m.imageUrl.isNullOrBlank() -> "📷 Photo"
-                            !m.audioUrl.isNullOrBlank() -> "🎤 Voice message"
+                            img != null -> "📷 Photo"
+                            vid != null -> "🎬 Video"
+                            aud != null -> "🎤 Voice message"
                             else -> ""
                         }
                     }
@@ -2399,7 +2581,16 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                         senderName = if (mine) "" else thread.name,
                         text = text,
                         time = fmt.format(m.sentAt?.toDate() ?: Date()),
-                        kind = ChatboxMessageKind.TEXT
+                        kind = when {
+                            img != null -> ChatboxMessageKind.IMAGE
+                            vid != null -> ChatboxMessageKind.VIDEO
+                            aud != null -> ChatboxMessageKind.VOICE
+                            else -> ChatboxMessageKind.TEXT
+                        },
+                        imageUri = img,
+                        audioPath = aud,
+                        audioDurationMs = m.audioDurationMs.takeIf { aud != null },
+                        videoUrl = vid
                     )
                 }
             if (additions.isEmpty()) return@withLock
@@ -2484,6 +2675,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         const val SAIRA_LIVE_PREFIX = "🤖 Saira: "
         /** Hidden control message used to ring/accept/end calls. Never shown in chat. */
         const val CALL_SIG_PREFIX = "\u0001CALL\u0001"
+        private const val SDP_CHUNK_CHARS = 1700
         // Messages that arrived while the app was closed (up to 6h) still get Saira's reply.
         private const val LIVE_AUTO_REPLY_FRESH_MS = 6 * 60 * 60 * 1000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L

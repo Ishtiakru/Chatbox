@@ -143,7 +143,7 @@ service cloud.firestore {
         data.imageUrl is string
         && data.imageUrl.size() > 0
         && data.imageUrl.size() <= 2048
-        && data.imageUrl.matches('^https://(firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com)/.*')
+        && data.imageUrl.matches('^https://.*')
       );
     }
 
@@ -152,7 +152,7 @@ service cloud.firestore {
         data.audioUrl is string
         && data.audioUrl.size() > 0
         && data.audioUrl.size() <= 2048
-        && data.audioUrl.matches('^https://(firebasestorage[.]googleapis[.]com|storage[.]googleapis[.]com)/.*')
+        && data.audioUrl.matches('^https://.*')
       );
     }
 
@@ -165,18 +165,27 @@ service cloud.firestore {
       );
     }
 
+    function isValidOptionalVideoUrl(data) {
+      return !('videoUrl' in data) || (
+        ('videoUrl' in data && data.videoUrl is string && data.videoUrl.size() > 0 && data.videoUrl.size() <= 2048
+          && data.videoUrl.matches('^https://.*'))
+      );
+    }
+
     function isValidMessage(data) {
       return data.keys().hasAll(['senderId', 'body', 'sentAt'])
-        && data.keys().hasOnly(['senderId', 'body', 'sentAt', 'imageUrl', 'audioUrl', 'audioDurationMs'])
+        && data.keys().hasOnly(['senderId', 'body', 'sentAt', 'imageUrl', 'audioUrl', 'audioDurationMs', 'videoUrl'])
         && data.senderId is string && data.senderId.size() > 0 && data.senderId.size() <= 128
         && data.body is string && data.body.size() <= 2000
         && isValidOptionalImageUrl(data)
         && isValidOptionalAudioUrl(data)
         && isValidOptionalAudioDuration(data)
+        && isValidOptionalVideoUrl(data)
         && (
           data.body.size() > 0
           || ('imageUrl' in data && data.imageUrl is string && data.imageUrl.size() > 0)
           || ('audioUrl' in data && data.audioUrl is string && data.audioUrl.size() > 0)
+          || ('videoUrl' in data && data.videoUrl is string && data.videoUrl.size() > 0)
         )
         && data.sentAt is timestamp && data.sentAt <= request.time;
     }

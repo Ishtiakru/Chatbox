@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -89,6 +90,8 @@ internal fun CallsActiveCallDialog(
     /** false = still ringing; true = callee accepted, timer runs from [connectedAtMs]. */
     isConnected: Boolean,
     connectedAtMs: Long,
+    /** Real-time media session; null = signaling-only dialog (local threads / tests). */
+    engine: com.example.call.CallEngine? = null,
     onMarkMissed: () -> Unit,
     onEndCall: (durationLabel: String) -> Unit,
     onDismiss: () -> Unit
@@ -110,10 +113,32 @@ internal fun CallsActiveCallDialog(
             .toInt().coerceAtLeast(0)
         val mins = totalSec / 60
         val secs = totalSec % 60
-        String.format(Locale.US, "Connected · %d:%02d", mins, secs)
+        val timer = String.format(Locale.US, "Connected · %d:%02d", mins, secs)
+        if (engine != null) {
+            val media by engine.mediaState.collectAsState()
+            mediaStatusLabel(media, timer)
+        } else timer
+    }
+    val endNow = {
+        val totalSec = if (isConnected) {
+            ((System.currentTimeMillis() - connectedAtMs) / 1000L).toInt().coerceAtLeast(1)
+        } else 1
+        onEndCall(String.format(Locale.US, "%d:%02d", totalSec / 60, totalSec % 60))
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    if (engine != null && target.isVideo) {
+        InCallVideoScreen(
+            engine = engine,
+            peerName = target.peerName,
+            statusText = if (!isConnected) "Ringing…" else statusText,
+            onEnd = endNow,
+            onDismiss = {}
+        )
+        return
+    }
+
+    Dialog(onDismissRequest = if (engine != null) ({}) else onDismiss) {
+        if (engine != null) KeepScreenOn()
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1E1930),
@@ -142,7 +167,11 @@ internal fun CallsActiveCallDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
-                Row(
+                if (engine != null) {
+                    Box(modifier = Modifier.padding(top = 12.dp)) {
+                        CallControlsRow(engine = engine, showVideoControls = false, onEnd = endNow)
+                    }
+                } else Row(
                     modifier = Modifier.padding(top = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalAlignment = Alignment.CenterVertically
