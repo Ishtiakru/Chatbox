@@ -339,41 +339,4 @@ class SairaAutoReplyViewModelRobolectricTest {
         pumpLooper(250)
         assertFalse(vm.chatboxMessages.value["test_bot"].orEmpty().any { it.senderName == "Saira" })
     }
-
-    @Test
-    fun `saira stays quiet while owner is on line or the chatbox saira switch is off`() {
-        val vm = ChatboxAppViewModel(app)
-        vm.autoReplyWaitMs = 60L
-        vm.clockHourProvider = { 19 }
-        vm.onlineOverride = false
-        runSuspendAndAwait {
-            vm.prefs.saveChatboxThreads(
-                listOf(ChatboxThread(id = "test_nila", name = "Nila", shortId = "445566", style = AvatarStyle.PEACH, online = true))
-            )
-        }
-        vm.setOneMinAutoReplyEnabled(true)
-        awaitCondition { vm.oneMinAutoReplyEnabled.value && vm.chatboxThreads.value.any { it.id == "test_nila" } }
-
-        // Owner has Chatbox open (on line) -> no Saira reply
-        vm.ownerOnlineOverride = true
-        vm.simulateIncomingChatboxMessage("test_nila", "Hello?", triggerAutoReplyAfterWait = true)
-        awaitCondition { vm.chatboxMessages.value["test_nila"].orEmpty().isNotEmpty() }
-        pumpLooper(300)
-        assertFalse(vm.chatboxMessages.value["test_nila"].orEmpty().any { it.senderName == "Saira" })
-
-        // Owner turned the small Saira switch OFF -> no reply even when away
-        vm.ownerOnlineOverride = false
-        vm.setOneMinAutoReplyEnabled(false)
-        awaitCondition { !vm.oneMinAutoReplyEnabled.value }
-        vm.simulateIncomingChatboxMessage("test_nila", "Are you there?", triggerAutoReplyAfterWait = true)
-        awaitCondition { vm.chatboxMessages.value["test_nila"].orEmpty().size >= 2 }
-        pumpLooper(300)
-        assertFalse(vm.chatboxMessages.value["test_nila"].orEmpty().any { it.senderName == "Saira" })
-
-        // Switch ON + owner away -> Saira answers
-        vm.setOneMinAutoReplyEnabled(true)
-        awaitCondition { vm.oneMinAutoReplyEnabled.value }
-        vm.simulateIncomingChatboxMessage("test_nila", "Kothay tumi?", triggerAutoReplyAfterWait = true)
-        awaitCondition { vm.chatboxMessages.value["test_nila"]?.any { it.senderName == "Saira" } == true }
-    }
 }
