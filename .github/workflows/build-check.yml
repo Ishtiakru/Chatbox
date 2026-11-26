@@ -154,7 +154,8 @@ jobs:
           if [ "$s1" -ne 0 ]; then
             {
               grep -E "^e: " rel-standard.txt | head -n 15
-              grep -E "^(Error|Warning): " rel-standard.txt | head -n 20
+              grep -E "Error:" rel-standard.txt | head -n 20
+              grep -B45 "Lint found fatal" rel-standard.txt | tail -n 45
               awk '/What went wrong:/{f=1} f{print; n++; if(n>=20) exit}' rel-standard.txt
               grep -E "^> Task .* FAILED$" rel-standard.txt | head -n 10
             } | sed '/^[[:space:]]*$/d' | head -n 40 | while IFS= read -r line; do
@@ -181,3 +182,14 @@ jobs:
             exit "$s2"
           fi
           echo "::notice::release assembly smoke OK (standard + full)"
+
+      - name: Upload release smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-smoke-logs
+          path: |
+            rel-standard.txt
+            rel-full.txt
+          if-no-files-found: ignore
+          retention-days: 3
