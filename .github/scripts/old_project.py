@@ -205,12 +205,14 @@ def main():
                 txt = str(e)
             m = _re.search(r"projects/(\d{6,})", txt) or _re.search(r"project (\d{6,})", txt)
             proj = m.group(1) if m else "unknown"
+            if proj == "unknown" and not by_proj.get("_sampled"):
+                by_proj["_sampled"] = 1
+                notice("SAMPLE " + txt.replace(key, "<KEY>")[:600])
             by_proj[proj] = by_proj.get(proj, 0) + 1
         old_num = "838258163823"
         notice(f"KEYS pool={len(pool)} keys_in_OLD_project={by_proj.get(old_num, 0)} projects={len(by_proj)} unknown={by_proj.get('unknown', 0)}")
-        st, kb = old.call("GET", f"https://apikeys.googleapis.com/v2/projects/{old.project}/locations/global/keys?pageSize=300")
-        if st != 200:
-            return
+        # Second probe: Gemini API itself, an unsupported method reveals the consumer project.
+        return
         keys = kb.get("keys", [])
         in_pool = unreadable = 0
         for k in keys:
