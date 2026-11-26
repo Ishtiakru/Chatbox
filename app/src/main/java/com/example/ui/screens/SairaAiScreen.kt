@@ -177,13 +177,16 @@ fun SairaAiScreen(
     onDeleteLocalSession: (sessionId: String) -> Unit = {},
     dmThreads: List<ChatboxThread> = emptyList(),
     onTestAutoReply: (suspend (senderName: String, platform: SairaPlatform, incomingText: String) -> SairaAutoReplyTestResult)? = null,
-    onSimulateIncomingDm: ((threadId: String, messageText: String) -> Unit)? = null
+    onSimulateIncomingDm: ((threadId: String, messageText: String) -> Unit)? = null,
+    /** Admin/owner only: Saira's agent tab (GitHub/Firebase/Drive/Gallery). */
+    isAdminAgent: Boolean = false,
+    onApplyLiveConfig: suspend (String) -> Result<String> = { Result.failure(IllegalStateException("unavailable")) }
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var selectedSubTab by remember { mutableStateOf("chat") } // "chat" | "autoReply"
+    var selectedSubTab by remember { mutableStateOf("chat") } // "chat" | "autoReply" | "agent"
     var draft by remember { mutableStateOf("") }
     var exchanges by remember { mutableStateOf<List<AiExchange>>(emptyList()) }
     var isBusy by remember { mutableStateOf(false) }
@@ -498,6 +501,21 @@ fun SairaAiScreen(
                                     color = if (selectedSubTab == "autoReply") ChatboxPrimary else colors.inkMuted,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
+                            }
+                            if (isAdminAgent) {
+                                Surface(
+                                    onClick = { selectedSubTab = "agent" },
+                                    color = if (selectedSubTab == "agent") Color.White else Color.Transparent,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.testTag("saira_subtab_agent")
+                                ) {
+                                    Text(
+                                        text = "Agent",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (selectedSubTab == "agent") ChatboxPrimary else colors.inkMuted,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -860,6 +878,12 @@ fun SairaAiScreen(
                     }
                 }
             }
+        } else if (selectedSubTab == "agent" && isAdminAgent) {
+            SairaAgentPanel(
+                isOnline = isOnline,
+                firebaseUid = currentUserId,
+                onApplyLiveConfig = onApplyLiveConfig
+            )
         } else {
             AutoReplyAndBackupTab(
                 oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
