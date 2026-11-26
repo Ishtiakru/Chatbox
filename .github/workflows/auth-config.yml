@@ -9,7 +9,7 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, enable-phone, sha, enable-password, admin-password, old-inspect, old-remove-sha, old-audit, old-copy, old-delete]
+        options: [inspect, enable-phone, sha, enable-password, admin-password, old-inspect, old-remove-sha, old-audit, old-copy, old-delete, dir-audit, dir-fix]
 
 jobs:
   auth:
@@ -150,8 +150,13 @@ jobs:
           print("::notice title=GSJSON::" + " ;; ".join(out))
           PY2
 
+      - name: Search directory audit / fix
+        if: inputs.mode == 'dir-audit' || inputs.mode == 'dir-fix'
+        run: |
+          M="${{ inputs.mode }}"
+          timeout 600s python3 .github/scripts/directory_fix.py --key /tmp/admin.json --mode "${M#dir-}"
       - name: Run
-        if: inputs.mode != 'old-audit' && inputs.mode != 'old-copy' && inputs.mode != 'old-delete'
+        if: inputs.mode != 'old-audit' && inputs.mode != 'old-copy' && inputs.mode != 'old-delete' && inputs.mode != 'dir-audit' && inputs.mode != 'dir-fix'
         run: |
           timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
             --mode "${{ inputs.mode }}" --test-number "+8801000000000" --test-code "123456" \
