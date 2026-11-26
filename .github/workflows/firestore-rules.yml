@@ -38,8 +38,32 @@ jobs:
           open("/tmp/admin.json", "w").write(txt)
           PY
 
+      - name: Resolve google-services.json (storage bucket name)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -f app/google-services.json ]; then
+            echo "Using app/google-services.json from repository."
+          elif [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            GS_TRIMMED=$(printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '\n\r ')
+            case "$GS_TRIMMED" in
+              \{*) printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json ;;
+              *) printf '%s' "$GS_TRIMMED" | base64 -d > app/google-services.json ;;
+            esac
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 -d > app/google-services.json
+          else
+            echo "::warning::No google-services.json secret — storage bucket unknown."
+          fi
+          if [ -f app/google-services.json ]; then
+            BUCKET=$(python3 -c "import json;print(json.load(open('app/google-services.json')).get('project_info',{}).get('storage_bucket',''))" 2>/dev/null || true)
+            echo "STORAGE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+            echo "storage_bucket=$BUCKET"
+          fi
+
       - name: Run
-        run: timeout 300s python3 .github/scripts/firestore_rules.py --key /tmp/admin.json --mode "${{ inputs.mode }}"
+        run: timeout 300s python3 .github/scripts/firestore_rules.py --key /tmp/admin.json --mode "${{ inputs.mode }}" --bucket "${STORAGE_BUCKET:-}"
 
       - name: Cleanup
         if: always()

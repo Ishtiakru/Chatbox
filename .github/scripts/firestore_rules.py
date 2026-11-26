@@ -62,6 +62,8 @@ def main() -> None:
     ap.add_argument("--project", default="gen-lang-client-0251556445")
     ap.add_argument("--db", default="ai-studio-android-chatbox-bc1e3568-f7e2-4c12-b2b9-9c365ad43fb9")
     ap.add_argument("--rules", default="firestore.rules")
+    ap.add_argument("--storage-rules", default="storage.rules")
+    ap.add_argument("--bucket", default="", help="Cloud Storage bucket for the storage rules release")
     args = ap.parse_args()
 
     creds = service_account.Credentials.from_service_account_file(args.key, scopes=SCOPES)
@@ -128,13 +130,35 @@ def main() -> None:
         diff = list(difflib.unified_diff(
             deployed_src.splitlines(), repo_src.splitlines(), lineterm="", n=0))
         changed = [l for l in diff if l[:1] in "+-" and not l.startswith(("+++", "---"))]
-        notice(
+        lines = [
             f"inspect release={'present' if st == 200 else 'MISSING'} ruleset={deployed_ruleset.rsplit('/', 1)[-1]} "
             f"deployed_sha={sha(deployed_src) if deployed_src else '-'} deployed_lines={len(deployed_src.splitlines())} "
             f"repo_sha={sha(repo_src)} repo_lines={len(repo_src.splitlines())} "
-            f"deployed_has_aiKeyPool={'aiKeyPool' in deployed_src} changed_lines={len(changed)}\n"
-            + "\n".join(changed[:40])
-        )
+            f"deployed_has_aiKeyPool={'aiKeyPool' in deployed_src} changed_lines={len(changed)}"
+        ]
+        lines += changed[:40]
+        # Cloud Storage bucket + storage rules release (media uploads depend on both).
+        bucket = args.bucket
+        if bucket:
+            bst, bbody = call(token, "GET", f"https://storage.googleapis.com/storage/v1/b/{bucket}")
+            lines.append(f"storage_bucket={bucket} probe_http={bst}")
+            srel_name = f"projects/{project}/releases/cloud.storage/{bucket}"
+            sst, srel = call(token, "GET", f"{RULES_API}/{srel_name}")
+            ssrc = ""
+            if sst == 200:
+                srs_name = srel.get("rulesetName", "")
+                sst2, srs = call(token, "GET", f"{RULES_API}/{srs_name}")
+                if sst2 == 200:
+                    sfiles = srs.get("source", {}).get("files", [])
+                    ssrc = sfiles[0].get("content", "") if sfiles else ""
+            lines.append(
+                f"storage_release={'present' if sst == 200 else 'MISSING'} "
+                f"storage_deployed_sha={sha(ssrc) if ssrc else '-'} "
+                f"storage_repo_sha={sha(open(args.storage_rules, encoding='utf-8').read())}"
+            )
+        else:
+            lines.append("storage_bucket=UNKNOWN (no --bucket)")
+        notice("\n".join(lines))
         return
 
     # deploy
@@ -151,11 +175,41 @@ def main() -> None:
         st, out = call(token, "POST", f"{RULES_API}/projects/{project}/releases", body["release"])
     if st != 200:
         fail(f"release update HTTP {st}: {out}")
-    notice(
+    lines = [
         f"deploy OK release={release_name.rsplit('/', 1)[-1]} "
         f"old={deployed_ruleset.rsplit('/', 1)[-1] or '-'} new={new_ruleset.rsplit('/', 1)[-1]} "
         f"repo_sha={sha(repo_src)}"
-    )
+    ]
+
+    # Storage rules release (chat photo/video/voice uploads).
+    bucket = args.bucket
+    if bucket:
+        storage_src = open(args.storage_rules, encoding="utf-8").read()
+        storage_release = f"projects/{project}/releases/cloud.storage/{bucket}"
+        st, srel = call(token, "GET", f"{RULES_API}/{storage_release}")
+        storage_old = ""
+        if st == 200:
+            storage_old = srel.get("rulesetName", "").rsplit("/", 1)[-1]
+        st, srs = call(token, "POST", f"{RULES_API}/projects/{project}/rulesets", {
+            "source": {"files": [{"name": "storage.rules", "content": storage_src}]}
+        })
+        if st != 200:
+            fail(f"storage ruleset create HTTP {st}: {srs}")
+        storage_new = srs["name"]
+        sbody = {"name": storage_release, "rulesetName": storage_new}
+        if storage_old:
+            st, out = call(token, "PATCH", f"{RULES_API}/{storage_release}", {"release": sbody})
+        else:
+            st, out = call(token, "POST", f"{RULES_API}/projects/{project}/releases", sbody)
+        if st != 200:
+            fail(f"storage release update HTTP {st}: {out}")
+        lines.append(
+            f"storage deploy OK bucket={bucket} old={storage_old or '-'} new={storage_new.rsplit('/', 1)[-1]} "
+            f"repo_sha={sha(storage_src)}"
+        )
+    else:
+        lines.append("storage deploy SKIPPED (no --bucket)")
+    notice("\n".join(lines))
 
 
 if __name__ == "__main__":
