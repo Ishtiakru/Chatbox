@@ -486,8 +486,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 prefs.setHasCompletedLogin(true)
                 viewModelScope.launch { runCatching { gmailRecovery.refreshSecrets(password) } }
                 syncLocalProfileFromAccount(nameInput = r.user.displayName, identifier = r.user.phoneNumber ?: cleanId)
-                liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
-                    .onSuccess { profile -> _ownProfile.value = profile }
+                // Profile sync runs in the background: the app opens as soon as Firebase accepts the password.
+                viewModelScope.launch {
+                    liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
+                        .onSuccess { profile -> _ownProfile.value = profile }
+                }
                 Result.success(Unit)
             }
             is com.example.data.repository.AuthResult.Failure -> Result.failure(IllegalArgumentException(r.message))
@@ -577,7 +580,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             _gmailRequired.value = false
             prefs.setHasCompletedLogin(true)
             syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
-            liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            viewModelScope.launch {
+                liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            }
             return Result.success("পাসওয়ার্ড বদলে গেছে।")
         } finally {
             _authFlowActive.value = false
@@ -686,7 +691,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             _gmailRequired.value = false
             prefs.setHasCompletedLogin(true)
             syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
-            liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            viewModelScope.launch {
+                liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            }
             return Result.success("পাসওয়ার্ড বদলে গেছে।")
         } finally {
             _authFlowActive.value = false

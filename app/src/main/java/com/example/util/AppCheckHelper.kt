@@ -288,3 +288,16 @@ fun isAppCheckError(error: Throwable?): Boolean {
     }
     return false
 }
+
+/**
+ * Fetches (and caches) an App Check token in the background while the login
+ * screen is visible, so the first Firebase sign-in request doesn't wait for it.
+ */
+fun prewarmAppCheck() {
+    runCatching {
+        if (appCheckConfigured.get()) {
+            FirebaseAppCheck.getInstance().getAppCheckToken(false)
+                .addOnFailureListener { Log.w(TAG, "App Check prewarm failed: ${it.message}") }
+        }
+    }
+}

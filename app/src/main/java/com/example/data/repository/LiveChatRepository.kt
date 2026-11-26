@@ -24,6 +24,8 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -36,6 +38,11 @@ import kotlin.random.Random
 
 class LiveChatRepository(private val context: Context) {
     private val db: FirebaseFirestore = FirebaseProviders.firestore(context)
+
+    /** Best-effort index writes (phone directory, shortId index) that must never delay login. */
+    private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val ensureMutex = kotlinx.coroutines.sync.Mutex()
+    @Volatile private var lastEnsured: Triple<String, UserProfile, Long>? = null
     private val storage = FirebaseProviders.storage()
 
     companion object {
@@ -115,21 +122,52 @@ class LiveChatRepository(private val context: Context) {
             user.phoneNumber?.filter { it.isDigit() }
         ).filter { it.isNotEmpty() }
         val name = displayName.trim().take(80).ifEmpty { "Chatbox User" }
-        for (key in digits.flatMap { buildPhoneLookupCandidates(it) }.distinct()) {
-            runCatching {
-                val ref = db.collection("phoneDirectory").document(key)
-                val snap = ref.get(Source.SERVER).await()
-                if (!snap.exists()) {
-                    ref.set(mapOf("uid" to uid, "displayName" to name)).await()
-                } else if (snap.getString("uid") == uid && snap.getString("displayName") != name) {
-                    ref.update("displayName", name).await()
+        // All lookup keys in parallel (was one server round-trip after another).
+        kotlinx.coroutines.coroutineScope {
+            digits.flatMap { buildPhoneLookupCandidates(it) }.distinct().map { key ->
+                kotlinx.coroutines.async {
+                    runCatching {
+                        val ref = db.collection("phoneDirectory").document(key)
+                        val snap = ref.get(Source.SERVER).await()
+                        if (!snap.exists()) {
+                            ref.set(mapOf("uid" to uid, "displayName" to name)).await()
+                        } else if (snap.getString("uid") == uid && snap.getString("displayName") != name) {
+                            ref.update("displayName", name).await()
+                        }
+                    }.onFailure { android.util.Log.w("LiveChatRepository", "phone directory entry not saved", it) }
                 }
-            }.onFailure { android.util.Log.w("LiveChatRepository", "phone directory entry not saved", it) }
+            }.forEach { it.await() }
         }
     }
 
+    /**
+     * Returns the signed-in user's profile as soon as it is known. Index upkeep
+     * (phone directory + shortId index) runs in the background so login is fast.
+     * Concurrent/duplicate calls right after login share one result.
+     */
     suspend fun ensureOwnProfile(uid: String, rawDisplayName: String?): Result<UserProfile> =
-        ensureOwnProfileInner(uid, rawDisplayName).onSuccess { ensureOwnPhoneDirectory(uid, it.displayName) }
+        ensureMutex.withLock {
+            val cached = lastEnsured
+            if (cached != null && cached.first == uid && System.currentTimeMillis() - cached.third < 5_000L) {
+                Result.success(cached.second)
+            } else {
+                ensureOwnProfileInner(uid, rawDisplayName).onSuccess { profile ->
+                    lastEnsured = Triple(uid, profile, System.currentTimeMillis())
+                    backgroundScope.launch {
+                        runCatching { ensureShortIdIndex(uid, profile) }
+                        runCatching { ensureOwnPhoneDirectory(uid, profile.displayName) }
+                    }
+                }
+            }
+        }
+
+    private suspend fun ensureShortIdIndex(uid: String, profile: UserProfile) {
+        if (!ChatboxConstants.VALID_SHORT_ID_REGEX.matches(profile.shortId)) return
+        val idxRef = db.collection("shortIds").document(profile.shortId)
+        if (!idxRef.get().await().exists()) {
+            idxRef.set(mapOf("uid" to uid, "displayName" to profile.displayName)).await()
+        }
+    }
 
     private suspend fun ensureOwnProfileInner(uid: String, rawDisplayName: String?): Result<UserProfile> {
         if (!ChatboxConstants.VALID_ID_REGEX.matches(uid)) {
@@ -167,14 +205,8 @@ class LiveChatRepository(private val context: Context) {
                             "about" to about
                         )
                     ).await()
-                } else {
-                    runCatching {
-                        val idxRef = db.collection("shortIds").document(shortId)
-                        if (!idxRef.get().await().exists()) {
-                            idxRef.set(mapOf("uid" to uid, "displayName" to existingName)).await()
-                        }
-                    }
                 }
+                // shortId index check now runs in the background (see ensureShortIdIndex).
                 Result.success(UserProfile(uid, existingName, shortId, about))
             }
         } catch (e: CancellationException) {

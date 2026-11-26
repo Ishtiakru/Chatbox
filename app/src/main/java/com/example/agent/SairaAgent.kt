@@ -216,7 +216,7 @@ object SairaAgent {
                     }
                     post(
                         sairaMsg(
-                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“$instruction”$assetNote\n\nকোড লিখে, বিল্ড ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১৫–২৫ মিনিট)। শুরু করব?",
+                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“$instruction”$assetNote\n\nকোড লিখে, বিল্ড ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১০–১৫ মিনিট)। শুরু করব?",
                             confirm = AgentAction("app_change", instruction, "অ্যাপ পরিবর্তন", assets)
                         )
                     )
@@ -323,7 +323,7 @@ object SairaAgent {
                     setJob(null)
                     break
                 }
-                delay(20_000L)
+                delay(12_000L)
             }
         }
     }

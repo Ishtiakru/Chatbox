@@ -14,9 +14,13 @@ on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: 'Release version name (e.g. 1.0.1)'
+        description: 'Release version name (empty = automatic 1.0.0.<run number>)'
         required: false
-        default: '1.0.1'
+        default: ''
+      skip_tests:
+        description: 'true = skip unit tests (Saira agent already ran them on this exact code)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -117,6 +121,7 @@ jobs:
           done
 
       - name: Run unit tests
+        if: github.event.inputs.skip_tests != 'true'
         run: |
           gradle :app:testDebugUnitTest --no-daemon \
             -Drobolectric.offline=true \

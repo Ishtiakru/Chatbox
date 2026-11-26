@@ -61,8 +61,33 @@ def load_keys() -> list[str]:
 KEYS = load_keys()
 
 
+DEAD_MODELS: set[str] = set()
+
+
+def _call(model: str, key: str, body: bytes, timeout: int) -> dict:
+    req = urllib.request.Request(
+        f"{BASE}/{model}:generateContent?key={key}", data=body, method="POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        obj = json.loads(r.read().decode())
+    cands = obj.get("candidates") or []
+    if not cands:
+        raise ValueError("no candidates")
+    parts = (cands[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+    text = re.sub(r"^```(?:json)?|```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"bad json (finish={cands[0].get('finishReason')})") from exc
+
+
 def gemini(system: str, prompt: str, max_tokens: int = 32768) -> dict:
-    """JSON-mode call: strong models first (often busy → 503), lite fallback."""
+    """JSON-mode call, raced for speed: every strong model + one lite model are asked
+    at the same time on different keys. The first strong answer wins; a lite answer
+    is used if no strong model answers within a short grace period. Models that
+    return 404 are skipped for the rest of the run."""
+    import concurrent.futures as cf
     if not KEYS:
         raise RuntimeError("AI_KEY_POOL empty")
     body = json.dumps({
@@ -75,39 +100,48 @@ def gemini(system: str, prompt: str, max_tokens: int = 32768) -> dict:
         },
     }).encode()
     last = ""
-    for rnd in range(2):
-        for model in STRONG + LITE:
-            keys = random.sample(KEYS, min(len(KEYS), 5 if model in STRONG else 8))
-            for key in keys:
-                req = urllib.request.Request(
-                    f"{BASE}/{model}:generateContent?key={key}", data=body, method="POST",
-                    headers={"Content-Type": "application/json"})
-                try:
-                    with urllib.request.urlopen(req, timeout=240) as r:
-                        obj = json.loads(r.read().decode())
-                except urllib.error.HTTPError as e:
-                    last = f"{model} HTTP {e.code}"
-                    if e.code == 404:
-                        break
-                    continue
-                except Exception as e:  # noqa: BLE001
-                    last = f"{model} {type(e).__name__}"
-                    continue
-                cands = obj.get("candidates") or []
-                if not cands:
-                    last = f"{model} no candidates"
-                    continue
-                parts = (cands[0].get("content") or {}).get("parts") or []
-                text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
-                text = re.sub(r"^```(?:json)?|```$", "", text).strip()
-                try:
-                    out = json.loads(text)
-                    print(f"[gemini] model={model} ok")
-                    return out
-                except Exception:  # noqa: BLE001
-                    last = f"{model} bad json (finish={cands[0].get('finishReason')})"
-                    continue
-        time.sleep(15)
+    for wave in range(3):
+        strong = [m for m in STRONG if m not in DEAD_MODELS]
+        lite = [m for m in LITE if m not in DEAD_MODELS]
+        models = strong + lite[:1 if wave == 0 else 2]
+        keys = random.sample(KEYS, len(KEYS))
+        jobs = [(m, keys[i % len(keys)]) for i, m in enumerate(models)]
+        t0 = time.time()
+        lite_answer = None
+        pool = cf.ThreadPoolExecutor(max_workers=len(jobs))
+        futs = {pool.submit(_call, m, k, body, 150): m for m, k in jobs}
+        pending = set(futs)
+        try:
+            while pending:
+                # After a lite answer, wait at most 25 s more for a stronger model.
+                timeout = None if lite_answer is None else max(0.0, 25 - (time.time() - lite_answer[1]))
+                done, pending = cf.wait(pending, timeout=timeout, return_when=cf.FIRST_COMPLETED)
+                if not done:
+                    break
+                for f in done:
+                    m = futs[f]
+                    try:
+                        out = f.result()
+                    except urllib.error.HTTPError as e:
+                        last = f"{m} HTTP {e.code}"
+                        if e.code == 404:
+                            DEAD_MODELS.add(m)
+                        continue
+                    except Exception as e:  # noqa: BLE001
+                        last = f"{m} {type(e).__name__}: {str(e)[:80]}"
+                        continue
+                    if m in STRONG:
+                        print(f"[gemini] model={m} ok in {time.time() - t0:.0f}s (wave {wave + 1})")
+                        return out
+                    if lite_answer is None:
+                        lite_answer = (out, time.time(), m)
+            if lite_answer is not None:
+                print(f"[gemini] model={lite_answer[2]} (lite) used after {time.time() - t0:.0f}s")
+                return lite_answer[0]
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        print(f"[gemini] wave {wave + 1} failed: {last}")
+        time.sleep(5)
     raise RuntimeError(f"AI did not answer: {last}")
 
 
@@ -206,9 +240,36 @@ def apply_changes(change: dict) -> list[str]:
     return problems
 
 
+WARMUP: "subprocess.Popen | None" = None
+
+
+def start_warmup() -> None:
+    """Compile the untouched project on a Gradle daemon while Gemini is thinking, so the
+    real compile after the edits is incremental (seconds instead of minutes)."""
+    global WARMUP
+    try:
+        WARMUP = subprocess.Popen(["./gradlew", ":app:compileDebugKotlin", "-q"], cwd=ROOT,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] warm-up not started: {exc}")
+
+
+def wait_warmup() -> None:
+    global WARMUP
+    if WARMUP is not None:
+        t0 = time.time()
+        try:
+            WARMUP.wait(timeout=1200)
+        except Exception:  # noqa: BLE001
+            WARMUP.kill()
+        print(f"[agent] warm-up finished (+{time.time() - t0:.0f}s wait)")
+        WARMUP = None
+
+
 def compile_errors() -> list[str]:
+    wait_warmup()
     proc = subprocess.run(
-        ["./gradlew", ":app:compileDebugKotlin", "--no-daemon", "-q"],
+        ["./gradlew", ":app:compileDebugKotlin", "-q"],
         cwd=ROOT, capture_output=True, text=True, timeout=1500)
     out = proc.stdout + "\n" + proc.stderr
     if proc.returncode == 0:
@@ -271,6 +332,7 @@ def main() -> int:
         notice("কোনো নির্দেশ পাইনি।")
         set_output("changed", "false")
         return 1
+    start_warmup()
     assets = fetch_assets()
     if assets:
         refs = ", ".join(f"R.drawable.{n}" for n in assets)
@@ -319,6 +381,7 @@ Current files:
 
 {EDIT_RULES}""")
 
+    wait_warmup()  # never edit files while the warm-up compile is reading them
     problems = apply_changes(change)
     if problems:
         retry_files = sorted({p.split(" in ")[-1].split(" ")[0] for p in problems if " in " in p} & set(files)) or files
@@ -372,8 +435,12 @@ Fix the errors (keep the requested feature).
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        code = main()
     except Exception as exc:  # noqa: BLE001
         notice(f"Saira agent ব্যর্থ: {type(exc).__name__}: {str(exc)[:300]}")
         set_output("changed", "false")
-        sys.exit(1)
+        code = 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # Don't wait for slower losing AI requests still running in background threads.
+    os._exit(code)
