@@ -261,6 +261,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val _activeThreadId = MutableStateFlow<String?>(null)
     val activeThreadId: StateFlow<String?> = _activeThreadId.asStateFlow()
 
+    // Declared BEFORE init {}: stopLiveSync() runs from the init uid collector.
+    // ---------- Call signaling: rides the live-message pipeline (no new rules) ----------
+    private val _activeCall = MutableStateFlow<ActiveChatboxCall?>(null)
+    val activeCall: StateFlow<ActiveChatboxCall?> = _activeCall.asStateFlow()
+
     private val _showProfileDialog = MutableStateFlow(false)
     val showProfileDialog: StateFlow<Boolean> = _showProfileDialog.asStateFlow()
 
@@ -1885,10 +1890,6 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             prefs.saveChatboxMessages(currentMap)
         }
     }
-
-    // ---------- Call signaling: rides the live-message pipeline (no new rules) ----------
-    private val _activeCall = MutableStateFlow<ActiveChatboxCall?>(null)
-    val activeCall: StateFlow<ActiveChatboxCall?> = _activeCall.asStateFlow()
 
     /** Caller presses audio/video call: local dialog + ringing signal to the peer. */
     fun startCall(threadId: String, peerName: String, isVideo: Boolean) {
