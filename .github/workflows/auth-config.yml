@@ -9,7 +9,7 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, enable-phone, sha, enable-password, admin-password, old-inspect, old-remove-sha]
+        options: [inspect, enable-phone, sha, enable-password, admin-password, old-inspect, old-remove-sha, old-audit, old-copy, old-delete, dir-audit, dir-fix]
 
 jobs:
   auth:
@@ -31,8 +31,24 @@ jobs:
           json.loads(txt)
           open("/tmp/admin.json", "w").write(txt)
           PY
+      - name: Old project audit / copy / delete
+        if: inputs.mode == 'old-audit' || inputs.mode == 'old-copy' || inputs.mode == 'old-delete'
+        env:
+          OLD_RAW: ${{ secrets.FIREBASE_ADMIN_KEY_OLD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, re
+          raw = os.environ["OLD_RAW"]
+          txt = raw if raw.lstrip().startswith("{") else base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+          json.loads(txt)
+          open("/tmp/old.json", "w").write(txt)
+          PY
+          M="${{ inputs.mode }}"
+          timeout 1500s python3 .github/scripts/old_project.py --old-key /tmp/old.json --new-key /tmp/admin.json --mode "${M#old-}"
+          rm -f /tmp/old.json
       - name: Decode OLD project admin key (duplicate project)
-        if: startsWith(inputs.mode, 'old-')
+        if: inputs.mode == 'old-inspect' || inputs.mode == 'old-remove-sha'
         env:
           ADMIN_RAW: ${{ secrets.FIREBASE_ADMIN_KEY_OLD }}
         run: |
@@ -134,7 +150,13 @@ jobs:
           print("::notice title=GSJSON::" + " ;; ".join(out))
           PY2
 
+      - name: Search directory audit / fix
+        if: inputs.mode == 'dir-audit' || inputs.mode == 'dir-fix'
+        run: |
+          M="${{ inputs.mode }}"
+          timeout 600s python3 .github/scripts/directory_fix.py --key /tmp/admin.json --mode "${M#dir-}"
       - name: Run
+        if: inputs.mode != 'old-audit' && inputs.mode != 'old-copy' && inputs.mode != 'old-delete' && inputs.mode != 'dir-audit' && inputs.mode != 'dir-fix'
         run: |
           timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
             --mode "${{ inputs.mode }}" --test-number "+8801000000000" --test-code "123456" \

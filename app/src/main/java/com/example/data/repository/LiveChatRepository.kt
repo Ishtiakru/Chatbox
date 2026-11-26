@@ -103,7 +103,35 @@ class LiveChatRepository(private val context: Context) {
         return firstCandidate
     }
 
-    suspend fun ensureOwnProfile(uid: String, rawDisplayName: String?): Result<UserProfile> {
+    /**
+     * "Number + password" accounts must be findable by their number: make sure
+     * phoneDirectory has both forms (8801XXXXXXXXX and 01XXXXXXXXX) for this account.
+     */
+    private suspend fun ensureOwnPhoneDirectory(uid: String, displayName: String) {
+        val user = runCatching { FirebaseProviders.auth().currentUser }.getOrNull() ?: return
+        if (user.uid != uid) return
+        val digits = listOfNotNull(
+            user.email?.lowercase()?.takeIf { it.endsWith("@phone.chatbox.app") }?.substringBefore("@"),
+            user.phoneNumber?.filter { it.isDigit() }
+        ).filter { it.isNotEmpty() }
+        val name = displayName.trim().take(80).ifEmpty { "Chatbox User" }
+        for (key in digits.flatMap { buildPhoneLookupCandidates(it) }.distinct()) {
+            runCatching {
+                val ref = db.collection("phoneDirectory").document(key)
+                val snap = ref.get(Source.SERVER).await()
+                if (!snap.exists()) {
+                    ref.set(mapOf("uid" to uid, "displayName" to name)).await()
+                } else if (snap.getString("uid") == uid && snap.getString("displayName") != name) {
+                    ref.update("displayName", name).await()
+                }
+            }.onFailure { android.util.Log.w("LiveChatRepository", "phone directory entry not saved", it) }
+        }
+    }
+
+    suspend fun ensureOwnProfile(uid: String, rawDisplayName: String?): Result<UserProfile> =
+        ensureOwnProfileInner(uid, rawDisplayName).onSuccess { ensureOwnPhoneDirectory(uid, it.displayName) }
+
+    private suspend fun ensureOwnProfileInner(uid: String, rawDisplayName: String?): Result<UserProfile> {
         if (!ChatboxConstants.VALID_ID_REGEX.matches(uid)) {
             return Result.failure(IllegalArgumentException("Invalid Chatbox user ID."))
         }
