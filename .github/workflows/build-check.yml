@@ -119,7 +119,8 @@ jobs:
           done
           D=$(ls app/hang-dump.txt hang-dump.txt 2>/dev/null | head -1)
           if [ -n "$D" ] && [ "$status" -ne 0 ]; then
-            echo "::notice::HANG $(sed 's/^ *at //' "$D" | grep -E 'com\.example|runBlocking|THREAD|Firebase|firestore|DataStore' | cut -c1-140 | head -n 25 | tr '\n' '|')"
+            echo "::notice::HANG $(sed 's/^ *at //' "$D" | head -n 14 | sed -E 's/^java\.base@[0-9.]+\///' | cut -c1-110 | tr '\n' '|')"
+            echo "::notice::HANGX $(grep -oE 'com\.example[^ ]*\([A-Za-z]+\.kt:[0-9]+\)' "$D" | sed -E 's/.*\.([A-Za-z]+\.kt:[0-9]+)\)/\1/' | head -n 8 | tr '\n' '|')"
           fi
           if [ "$status" -ne 0 ]; then
             echo "::group::Failure highlights"
