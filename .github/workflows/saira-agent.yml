@@ -17,6 +17,10 @@ on:
         description: request id from the app
         required: false
         default: ''
+      dry_run:
+        description: 'true = build + verify only, never publish'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -148,8 +152,14 @@ jobs:
             exit 1
           fi
 
+      - name: Show diff (dry run)
+        if: steps.agent.outputs.changed == 'true' && inputs.dry_run == 'true'
+        run: |
+          git --no-pager diff --stat -- app/src/main
+          echo "::notice title=SAIRA::DRY RUN OK — $(git diff --shortstat -- app/src/main)"
+
       - name: Publish to main + start release
-        if: steps.agent.outputs.changed == 'true'
+        if: steps.agent.outputs.changed == 'true' && inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RID: ${{ inputs.request_id }}
