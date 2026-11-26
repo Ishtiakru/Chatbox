@@ -195,9 +195,11 @@ def main():
         import re as _re
         by_proj = {}
         for key in pool:
-            url = "https://translation.googleapis.com/language/translate/v2?q=a&target=bn&key=" + urllib.parse.quote(key, safe="")
+            url = ("https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent?key="
+                   + urllib.parse.quote(key, safe=""))
+            body = json.dumps({"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}).encode()
             try:
-                with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as r:
+                with urllib.request.urlopen(urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}), timeout=30) as r:
                     txt = r.read().decode(errors="replace")
             except urllib.error.HTTPError as e:
                 txt = e.read().decode(errors="replace")
