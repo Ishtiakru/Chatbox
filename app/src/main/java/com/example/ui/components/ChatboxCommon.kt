@@ -151,7 +151,7 @@ fun ChatboxLogoWithUpdateBadge(
             shadowElevation = 1.dp
         ) {
             Image(
-                painter = painterResource(R.drawable.chatbox_logo_lavender),
+                painter = painterResource(R.drawable.saira_asset_5733705484_1),
                 contentDescription = stringResource(R.string.app_name),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

@@ -224,7 +224,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                         shadowElevation = 8.dp
                     ) {
                         Image(
-                            painter = painterResource(R.drawable.chatbox_logo_lavender),
+                            painter = painterResource(R.drawable.saira_asset_5733705484_1),
                             contentDescription = stringResource(R.string.app_name),
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -763,7 +763,7 @@ private fun NavTabIcon(
             color = Color.White
         ) {
             Image(
-                painter = painterResource(R.drawable.chatbox_logo_lavender),
+                painter = painterResource(R.drawable.saira_asset_5733705484_1),
                 contentDescription = item.label,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
