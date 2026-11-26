@@ -186,6 +186,21 @@ def main() -> None:
     if bucket:
         storage_src = open(args.storage_rules, encoding="utf-8").read()
         storage_release = f"projects/{project}/releases/cloud.storage/{bucket}"
+        # Provision the default bucket if Firebase Storage was never enabled.
+        bst, _bbody = call(token, "GET", f"https://storage.googleapis.com/storage/v1/b/{bucket}")
+        if bst == 404:
+            st, out = call(
+                token, "POST",
+                f"https://storage.googleapis.com/storage/v1/b?project={project}",
+                {"name": bucket, "location": "US", "storageClass": "STANDARD"},
+            )
+            if st not in (200, 409):
+                fail(f"storage bucket create HTTP {st}: {out}")
+            lines.append(f"storage bucket CREATED ({bucket}) http={st}")
+        elif bst == 200:
+            lines.append(f"storage bucket exists ({bucket})")
+        else:
+            lines.append(f"storage bucket probe HTTP {bst} ({bucket})")
         st, srel = call(token, "GET", f"{RULES_API}/{storage_release}")
         storage_old = ""
         if st == 200:
