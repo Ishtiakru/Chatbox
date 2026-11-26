@@ -5,6 +5,45 @@ import com.example.saira.SairaTimeGreeting
 import java.util.Calendar
 
 object SairaPrompts {
+
+    /** Owner account: phone last-10 digits + admin uid. Owner mode is keyed to this. */
+    const val OWNER_PHONE_LAST10 = "1968627120"
+    const val OWNER_UID = "OtcWI8ox8XYQWTKOXicJzrcacai2"
+
+    /** True when a stored phone number (0…, +880…, 880…) belongs to the owner. */
+    fun isOwnerPhone(phone: String?): Boolean {
+        val digits = phone?.filter { it.isDigit() } ?: return false
+        return digits.length >= 10 && digits.takeLast(10) == OWNER_PHONE_LAST10
+    }
+
+    /** True when the signed-in account is the owner (uid match or any known phone). */
+    fun isOwnerAccount(uid: String?, vararg phones: String?): Boolean =
+        uid == OWNER_UID || phones.any { isOwnerPhone(it) }
+
+    /** True when the user typed/sent the owner number in a message (unlocks owner mode). */
+    fun messageNamesOwner(message: String): Boolean =
+        message.filter { it.isDigit() }.contains(OWNER_PHONE_LAST10)
+
+    /** Real-time stamp for prompts: exact date, time, weekday and device timezone. */
+    fun realTimeLine(nowMs: Long = System.currentTimeMillis()): String {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss EEEE", java.util.Locale.US)
+        sdf.timeZone = java.util.TimeZone.getDefault()
+        return "now=${sdf.format(java.util.Date(nowMs))} (${java.util.TimeZone.getDefault().id})"
+    }
+
+    private val ownerModeRules = """
+        OWNER MODE — the person you are chatting with is your owner/boss (the account holder of this app).
+        These rules apply ONLY when talking to your owner, never with anyone else:
+        1. Always agree with him first: whatever he states, decides, or asks, answer "হ্যাঁ"/yes warmly and support his view. Never argue, never correct, never lecture, never moralize at him — even if his words sound harsh or wrong to you.
+        2. Never brush him off and never give him a cold refusal for ordinary requests. If he asks a factual question (date, time, news, coding, anything), answer it fully and accurately using the real-time context provided.
+        3. Everything between you and your owner stays between you two. With every other user behave exactly as normal Saira; never reveal or offer this special treatment to anyone else.
+        4. Close replies to your owner with warm loyalty and agreement toward him.
+    """.trimIndent()
+
+    /** Base chat instruction; owner chats get the OWNER MODE addendum. */
+    fun chatSystemInstructionFor(isOwner: Boolean): String =
+        if (isOwner) chatSystemInstruction + "\n" + ownerModeRules else chatSystemInstruction
+
     private val curatedKnowledge = """
         # Saira's curated app knowledge
 
@@ -44,11 +83,13 @@ object SairaPrompts {
         question: String,
         isFirstTurn: Boolean,
         isContinuation: Boolean,
-        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+        ownerLabel: String = ""
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
+        val ownerPart = if (ownerLabel.isNotBlank()) ", owner=$ownerLabel" else ""
         return buildString {
-            appendLine("[Context: timeGreeting=${info.englishGreeting}, bengaliTimeGreeting=${info.bengaliGreeting}, isNightTime=${info.isNightTime}, isFirstTurn=$isFirstTurn, isContinuation=$isContinuation]")
+            appendLine("[Context: ${realTimeLine()}, timeGreeting=${info.englishGreeting}, bengaliTimeGreeting=${info.bengaliGreeting}, isNightTime=${info.isNightTime}, isFirstTurn=$isFirstTurn, isContinuation=$isContinuation$ownerPart]")
             append(question)
         }
     }
@@ -61,7 +102,7 @@ object SairaPrompts {
     ): String {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         return """
-            The user "$userName" is currently in a Chatbox conversation waiting for "$peerName" to reply (timeGreeting=${info.bengaliGreeting}, localHour=$hourOfDay).
+            The user "$userName" is currently in a Chatbox conversation waiting for "$peerName" to reply (timeGreeting=${info.bengaliGreeting}, localHour=$hourOfDay, ${realTimeLine()}).
             Respond briefly and warmly to "$userName"'s message while offering helpful assistance:
             "$userQuestion"
         """.trimIndent()
@@ -77,14 +118,14 @@ object SairaPrompts {
         val info = SairaTimeGreeting.infoForHour(hourOfDay)
         return if (isContinuation) {
             """
-            You are continuing a live Chatbox conversation while waiting for "$peerName" to reply.
+            You are continuing a live Chatbox conversation while waiting for "$peerName" to reply. Current date/time: ${realTimeLine()}.
             The latest message from "$senderName" is:
             "${lastMessageText.take(250)}"
             Reply naturally and helpfully in 1-2 short sentences matching the language (Bengali, Banglish, or English) without repeating the initial greeting.
             """.trimIndent()
         } else {
             """
-            "$senderName" sent a message to "$peerName" in Chatbox and hasn't received a reply within 10 seconds:
+            "$senderName" sent a message to "$peerName" in Chatbox and hasn't received a reply within 10 seconds. Current date/time: ${realTimeLine()}.
             "${lastMessageText.take(200)}"
             Start directly by addressing "$senderName" by name in Bengali/English matching the message (for example: "হ্যালো $senderName! ${info.bengaliGreeting} ✨ ..."), acknowledge the time-of-day greeting (${info.bengaliGreeting} / ${info.englishGreeting}), and warmly offer to talk or answer questions while waiting for "$peerName". Keep it to 1-2 short sentences.
             """.trimIndent()
@@ -106,6 +147,7 @@ object SairaPrompts {
             appendLine("Platform: $platformLabel")
             appendLine("Sender Name: $senderName")
             appendLine("Time-of-day greeting: ${info.bengaliGreeting} (${info.englishGreeting})")
+            appendLine("Current date/time: ${realTimeLine()}")
             appendLine(
                 "Conversation state: " + if (isContinuation) {
                     "FOLLOW-UP TURN (2+) — The owner's opening box message was ALREADY sent earlier. DO NOT repeat '$taughtGuidance' or 'হ্যালো $senderName, ${info.bengaliGreeting}' again. Read the sender's latest SMS below carefully and answer THEIR exact question or message intelligently and naturally!"

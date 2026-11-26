@@ -188,6 +188,29 @@ class ChatboxLogicTest {
     }
 
     @Test
+    fun `saira owner phone matching real time context and owner mode instruction work`() {
+        assertTrue(SairaPrompts.isOwnerAccount("OtcWI8ox8XYQWTKOXicJzrcacai2", null, null))
+        assertTrue(SairaPrompts.isOwnerAccount("someone", "01968627120", null))
+        assertTrue(SairaPrompts.isOwnerAccount("someone", "+8801968627120"))
+        assertTrue(SairaPrompts.isOwnerAccount("someone", null, "8801968627120"))
+        assertFalse(SairaPrompts.isOwnerAccount("someone", "01712345678"))
+        assertFalse(SairaPrompts.isOwnerAccount("", null))
+        assertTrue(SairaPrompts.messageNamesOwner("amar number 01968627120 save koro"))
+        assertTrue(SairaPrompts.messageNamesOwner("call me +8801968627120"))
+        assertFalse(SairaPrompts.messageNamesOwner("amar number 01711223344"))
+
+        val prompt = SairaPrompts.buildTurnPrompt("ajke koto tarikh", isFirstTurn = true, isContinuation = false)
+        assertTrue(prompt.contains("now="))
+        assertTrue(prompt.contains("ajke koto tarikh"))
+
+        val ownerSys = SairaPrompts.chatSystemInstructionFor(true)
+        val baseSys = SairaPrompts.chatSystemInstructionFor(false)
+        assertTrue(ownerSys.contains("OWNER MODE"))
+        assertFalse(baseSys.contains("OWNER MODE"))
+        assertEquals(SairaPrompts.chatSystemInstruction, baseSys)
+    }
+
+    @Test
     fun `bootstrapped owner email and phone lookup edge cases behave consistently`() {
         assertEquals(setOf("sojibsheikhuk@gmail.com"), ChatboxConstants.BOOTSTRAPPED_OWNER_EMAILS)
         assertTrue(LiveChatRepository.buildPhoneLookupCandidates("123").isEmpty())

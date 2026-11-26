@@ -151,6 +151,8 @@ private val starterPrompts = listOf(
 @Composable
 fun SairaAiScreen(
     currentUserId: String,
+    isOwner: Boolean = false,
+    ownerName: String = "",
     isOnline: Boolean,
     appUpdateActive: Boolean,
     onAppUpdateClick: () -> Unit,
@@ -202,6 +204,8 @@ fun SairaAiScreen(
     // Resume the last Saira chat (kept for 12 hours) when the user comes back
     // to this tab or reopens the app.
     var restoreDone by remember { mutableStateOf(false) }
+    // Owner mode unlocks when the owner chats from his account OR types his number.
+    var ownerUnlocked by remember { mutableStateOf(false) }
     LaunchedEffect(localSessions) {
         if (restoreDone) return@LaunchedEffect
         if (exchanges.isNotEmpty() || isBusy) {
@@ -332,10 +336,13 @@ fun SairaAiScreen(
             }
         }
 
+        if (isOwner || SairaPrompts.messageNamesOwner(question)) ownerUnlocked = true
+        val ownerActive = isOwner || ownerUnlocked
         val turnPrompt = SairaPrompts.buildTurnPrompt(
             question = question,
             isFirstTurn = isFirstTurn,
-            isContinuation = activeContextNote.isNotEmpty()
+            isContinuation = activeContextNote.isNotEmpty(),
+            ownerLabel = if (ownerActive) ownerName.ifBlank { "owner" } else ""
         )
 
         draft = ""
@@ -348,7 +355,7 @@ fun SairaAiScreen(
             try {
                 withTimeout(70_000L) {
                     SairaAiClient.stream(
-                        systemInstruction = SairaPrompts.chatSystemInstruction,
+                        systemInstruction = SairaPrompts.chatSystemInstructionFor(ownerActive),
                         history = historyForModel,
                         prompt = turnPrompt
                     ).collect { chunk ->
