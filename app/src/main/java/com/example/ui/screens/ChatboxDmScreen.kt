@@ -184,8 +184,8 @@ fun ChatboxDmScreen(
     onSearchPeer: suspend (String) -> PeerSearchState = { PeerSearchState.Idle },
     onOpenPeer: (UserProfile) -> String = { "" },
     onRequestLogin: () -> Unit = {},
-    sairaAutoReplyOn: Boolean = true,
-    onSairaAutoReplyChange: (Boolean) -> Unit = {}
+    sairaOffThreadIds: Set<String> = emptySet(),
+    onSetThreadSaira: (threadId: String, enabled: Boolean) -> Unit = { _, _ -> }
 ) {
     val selectedThread = remember(threads, activeThreadId) {
         threads.firstOrNull { it.id == activeThreadId } ?: threads.firstOrNull()
@@ -257,7 +257,9 @@ fun ChatboxDmScreen(
             onToggleBlock = { onToggleBlock(selectedThread.id) },
             onSubmitReport = { reason, note ->
                 onSubmitReport(selectedThread.id, selectedThread.name, reason, note)
-            }
+            },
+            sairaEnabled = selectedThread.id !in sairaOffThreadIds,
+            onSairaEnabledChange = { on -> onSetThreadSaira(selectedThread.id, on) }
         )
     } else {
         BoxWithConstraints(
@@ -313,9 +315,7 @@ fun ChatboxDmScreen(
                         onCreateDirectThread = onCreateDirectThread,
                         onSearchPeer = onSearchPeer,
                         onOpenPeer = onOpenPeer,
-                        onRequestLogin = onRequestLogin,
-                        sairaAutoReplyOn = sairaAutoReplyOn,
-                        onSairaAutoReplyChange = onSairaAutoReplyChange
+                        onRequestLogin = onRequestLogin
                     )
                     HorizontalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = DmHairlineBorder)
                     if (selectedThread != null) {
@@ -378,9 +378,7 @@ fun ChatboxDmScreen(
                         onCreateDirectThread = onCreateDirectThread,
                         onSearchPeer = onSearchPeer,
                         onOpenPeer = onOpenPeer,
-                        onRequestLogin = onRequestLogin,
-                        sairaAutoReplyOn = sairaAutoReplyOn,
-                        onSairaAutoReplyChange = onSairaAutoReplyChange
+                        onRequestLogin = onRequestLogin
                     )
                 } else {
                     ChatboxThreadPane(
@@ -750,9 +748,7 @@ private fun ChatboxInboxPane(
     onCreateDirectThread: (name: String, identifier: String) -> String,
     onSearchPeer: suspend (String) -> PeerSearchState = { PeerSearchState.Idle },
     onOpenPeer: (UserProfile) -> String = { "" },
-    onRequestLogin: () -> Unit = {},
-    sairaAutoReplyOn: Boolean = true,
-    onSairaAutoReplyChange: (Boolean) -> Unit = {}
+    onRequestLogin: () -> Unit = {}
 ) {
     val colors = LocalChatboxColors.current
     val activeContacts = remember(threads, blockedThreadIds) {
@@ -813,24 +809,6 @@ private fun ChatboxInboxPane(
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = DmInkDark
-                    )
-                }
-                // Small Saira on/off: ON = Saira answers for me only while I'm not on line.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.testTag("chatbox_saira_toggle_row")
-                ) {
-                    Text(
-                        text = "Saira",
-                        fontSize = 11.sp,
-                        color = if (sairaAutoReplyOn) DmLavenderAccent else DmInkDark.copy(alpha = 0.5f)
-                    )
-                    androidx.compose.material3.Switch(
-                        checked = sairaAutoReplyOn,
-                        onCheckedChange = onSairaAutoReplyChange,
-                        modifier = Modifier
-                            .scale(0.62f)
-                            .testTag("chatbox_saira_toggle")
                     )
                 }
                 IconButton(

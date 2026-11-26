@@ -129,6 +129,18 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val dmPeerNicknames: StateFlow<Map<String, String>> = prefs.dmPeerNicknames
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    val sairaOffThreads: StateFlow<Set<String>> = prefs.sairaOffThreads
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /** DM settings switch: Saira answers for me in this chat (only while I'm away). */
+    fun setThreadSairaEnabled(threadId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setThreadSairaOff(threadId, !enabled)
+            if (enabled && !prefs.sairaChatboxOneMinEnabled.first()) prefs.setSairaChatboxOneMinEnabled(true)
+            if (!enabled) pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
+        }
+    }
+
     val dmMutedPeers: StateFlow<Set<String>> = prefs.dmMutedPeers
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
@@ -263,12 +275,37 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun effectiveIsOnline(): Boolean = onlineOverride ?: isOnline.value
 
+    /** Messages that came while the owner was on line; answered if they leave without replying. */
+    private val deferredWhileOnline = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+
+    /** Owner left Chatbox: answer every message they saw but didn't reply to. */
+    private fun replyToPendingAfterOwnerLeft() {
+        viewModelScope.launch {
+            val messages = prefs.chatboxMessages.first()
+            val threads = chatboxThreads.value
+            for ((threadId, pair) in deferredWhileOnline.entries.toList()) {
+                val latest = messages[threadId].orEmpty().lastOrNull()
+                if (latest == null || latest.id != pair.first || latest.from != "them") {
+                    deferredWhileOnline.remove(threadId)
+                    continue
+                }
+                val thread = threads.firstOrNull { it.id == threadId } ?: continue
+                scheduleIncomingAutoReply(thread, pair.first, pair.second)
+            }
+        }
+    }
+
     /** Owner is using Chatbox right now (app on screen). Tests can override. */
     internal var ownerOnlineOverride: Boolean? = null
     private fun ownerOnline(): Boolean = ownerOnlineOverride ?: com.example.util.AppPresence.foreground
 
     init {
         syncSairaUserDirectory()
+        viewModelScope.launch {
+            com.example.util.AppPresence.foregroundFlow.collect { visible ->
+                if (!visible) replyToPendingAfterOwnerLeft()
+            }
+        }
         viewModelScope.launch {
             currentUser.collect { user ->
                 if (user == null) {
@@ -1200,8 +1237,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         pendingIncomingAutoReplyJobs.remove(threadId)?.cancel()
 
         val job = viewModelScope.launch {
-            // The owner's small "Saira" switch in Chatbox: OFF = Saira never answers for them.
+            // Saira master switch OFF, or OFF for this chat (DM settings) -> never answer.
             if (!prefs.sairaChatboxOneMinEnabled.first()) return@launch
+            if (threadId in prefs.sairaOffThreads.first()) return@launch
 
             val engagedAt = sairaAbsenceEngagedThreads[threadId]
             val isContinuation = engagedAt != null &&
@@ -1214,7 +1252,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             // Owner already replied manually in time -> do not auto-reply!
             if (latest.id != incomingMsgId || latest.from == "me") return@launch
             // Owner is on line (Chatbox open on screen) -> they answer themselves.
-            if (ownerOnline()) return@launch
+            // Remember it: if they leave without answering, Saira replies then.
+            if (ownerOnline()) {
+                deferredWhileOnline[threadId] = incomingMsgId to incomingText
+                return@launch
+            }
+            deferredWhileOnline.remove(threadId)
 
             val ownerName = ownProfile.value?.displayName?.ifBlank { null }
                 ?: localUserProfile.value.displayName
@@ -1235,9 +1278,13 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             // thinking: drop this reply so only ONE answer goes out, for the latest message.
             if (!isActive) return@launch
             val stillLatest = prefs.chatboxMessages.first()[threadId].orEmpty().lastOrNull()
-            if (stillLatest?.id != incomingMsgId || ownerOnline() ||
-                !prefs.sairaChatboxOneMinEnabled.first()
+            if (stillLatest?.id != incomingMsgId || !prefs.sairaChatboxOneMinEnabled.first() ||
+                threadId in prefs.sairaOffThreads.first()
             ) return@launch
+            if (ownerOnline()) {
+                deferredWhileOnline[threadId] = incomingMsgId to incomingText
+                return@launch
+            }
 
             val freshThread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: thread
             val myUid = currentUser.value?.uid
@@ -2236,7 +2283,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         const val DEFAULT_AUTO_REPLY_WAIT_MS = 10_000L
         /** Marks Saira-written live messages so the other side's Saira never answers them. */
         const val SAIRA_LIVE_PREFIX = "🤖 Saira: "
-        private const val LIVE_AUTO_REPLY_FRESH_MS = 120_000L
+        // Messages that arrived while the app was closed (up to 6h) still get Saira's reply.
+        private const val LIVE_AUTO_REPLY_FRESH_MS = 6 * 60 * 60 * 1000L
         const val DEFAULT_CONTINUATION_WAIT_MS = 1_500L
         private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
         /** Firebase's minimum password length. */
