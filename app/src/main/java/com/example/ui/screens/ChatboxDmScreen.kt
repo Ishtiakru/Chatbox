@@ -121,6 +121,8 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.NoticeBanner
 import com.example.ui.components.SairaMetaOrb
 import com.example.ui.components.VoiceNoteBubblePlayer
+import com.example.ui.components.ChatVideoTile
+import com.example.ui.components.ChatVideoPlayerDialog
 import com.example.ui.components.VoiceRecordingBar
 import com.example.ui.components.VoiceNoteRecorder
 import com.example.ui.theme.ChatboxErrorInk
@@ -927,6 +929,8 @@ private fun ChatboxInboxPane(
                             if (lastMsg.from == "me") "You sent a photo" else "Sent a photo"
                         lastMsg.kind == ChatboxMessageKind.VOICE ->
                             if (lastMsg.from == "me") "You sent a voice note" else "Sent a voice note"
+                        lastMsg.kind == ChatboxMessageKind.VIDEO ->
+                            if (lastMsg.from == "me") "You sent a video" else "Sent a video"
                         lastMsg.from == "me" -> "You: ${lastMsg.text}"
                         else -> lastMsg.text
                     }
@@ -1065,6 +1069,7 @@ private fun ChatboxThreadPane(
     var lastHandledSearchSignal by remember(thread.id) { mutableIntStateOf(openSearchSignal) }
     var showStickerTray by remember(thread.id) { mutableStateOf(false) }
     var lightboxImagePath by remember(thread.id) { mutableStateOf<String?>(null) }
+    var playingVideoSource by remember(thread.id) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(openSearchSignal, thread.id) {
         if (openSearchSignal > lastHandledSearchSignal) {
@@ -1601,7 +1606,7 @@ private fun ChatboxThreadPane(
                                         ) {
                                             if (!msg.imageUri.isNullOrBlank()) {
                                                 AsyncImage(
-                                                    model = File(msg.imageUri),
+                                                    model = mediaModel(msg.imageUri),
                                                     contentDescription = "Shared photo",
                                                     contentScale = ContentScale.Crop,
                                                     modifier = Modifier
@@ -1611,6 +1616,9 @@ private fun ChatboxThreadPane(
                                                         .clickable { lightboxImagePath = msg.imageUri }
                                                 )
                                             }
+                                            if (!msg.videoUrl.isNullOrBlank()) {
+                                                ChatVideoTile(onPlay = { playingVideoSource = msg.videoUrl })
+                                            }
                                             if (!msg.audioPath.isNullOrBlank()) {
                                                 VoiceNoteBubblePlayer(
                                                     audioUrl = msg.audioPath,
@@ -1618,7 +1626,10 @@ private fun ChatboxThreadPane(
                                                     isMe = isMe
                                                 )
                                             }
-                                            if (msg.text.isNotBlank() && msg.kind != ChatboxMessageKind.VOICE) {
+                                            if (msg.text.isNotBlank() && msg.kind != ChatboxMessageKind.VOICE &&
+                                                !(msg.kind == ChatboxMessageKind.VIDEO && msg.text == "🎬 Video") &&
+                                                !(msg.kind == ChatboxMessageKind.IMAGE && msg.text == "📷 Photo")
+                                            ) {
                                                 Text(
                                                     text = msg.text,
                                                     style = MaterialTheme.typography.bodyMedium,
@@ -1747,12 +1758,12 @@ private fun ChatboxThreadPane(
                 IconButton(
                     onClick = {
                         photoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                         )
                     },
                     modifier = Modifier.testTag("chatbox_composer_gallery")
                 ) {
-                    Icon(Icons.Rounded.Image, contentDescription = "Send photo", tint = DmLavenderAccent)
+                    Icon(Icons.Rounded.Image, contentDescription = "Send photo or video", tint = DmLavenderAccent)
                 }
                 IconButton(
                     onClick = {
@@ -1849,6 +1860,10 @@ private fun ChatboxThreadPane(
         }
     }
 
+    playingVideoSource?.let { src ->
+        ChatVideoPlayerDialog(source = src, onDismiss = { playingVideoSource = null })
+    }
+
     // Photo Lightbox Dialog
     lightboxImagePath?.let { path ->
         Dialog(onDismissRequest = { lightboxImagePath = null }) {
@@ -1859,7 +1874,7 @@ private fun ChatboxThreadPane(
             ) {
                 Box(modifier = Modifier.padding(8.dp)) {
                     AsyncImage(
-                        model = File(path),
+                        model = mediaModel(path),
                         contentDescription = "Full size photo",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
@@ -1958,3 +1973,7 @@ private fun PeerSearchResultCard(
         }
     }
 }
+
+/** Remote media (https) loads by URL; local media loads from the app's files. */
+private fun mediaModel(path: String): Any =
+    if (path.startsWith("http://") || path.startsWith("https://")) path else File(path)

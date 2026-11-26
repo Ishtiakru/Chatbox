@@ -1,5 +1,11 @@
 package com.example.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import com.example.BuildConfig
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -121,6 +127,31 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val selectedTab by viewModel.selectedTab.collectAsState()
     val activeThreadId by viewModel.activeThreadId.collectAsState()
     val activeCall by viewModel.activeCall.collectAsState()
+    val callEngine by viewModel.callEngine.collectAsState()
+    val callPermContext = LocalContext.current
+    var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val callPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        // Proceed either way: without mic/camera the call still rings, just no media.
+        pendingCallAction?.invoke()
+        pendingCallAction = null
+    }
+    fun withCallPermissions(isVideo: Boolean, action: () -> Unit) {
+        val needed = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (isVideo) add(Manifest.permission.CAMERA)
+        }.filter {
+            ContextCompat.checkSelfPermission(callPermContext, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isEmpty()) {
+            action()
+        } else {
+            pendingCallAction = action
+            runCatching { callPermLauncher.launch(needed.toTypedArray()) }
+                .onFailure { pendingCallAction = null; action() }
+        }
+    }
     val showProfileDialog by viewModel.showProfileDialog.collectAsState()
     val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
     val chatboxThreads by viewModel.chatboxThreads.collectAsState()
@@ -357,7 +388,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     val t = chatboxThreads.firstOrNull { it.id == activeThreadId }
                                     if (t != null) {
                                         val name = dmPeerNicknames[t.id]?.takeIf { it.isNotBlank() } ?: t.name
-                                        viewModel.startCall(t.id, name, isVideo)
+                                        withCallPermissions(isVideo) { viewModel.startCall(t.id, name, isVideo) }
                                     }
                                 },
                                 onAppUpdateClick = { viewModel.openUpdateDialog(true) },
@@ -416,7 +447,9 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     viewModel.openOrCreateDirectThread(query, "")
                                 },
                                 onLogCall = viewModel::logChatboxCall,
-                                onStartCall = viewModel::startCall,
+                                onStartCall = { tid, peer, video ->
+                                    withCallPermissions(video) { viewModel.startCall(tid, peer, video) }
+                                },
                                 onToggleFavorite = viewModel::toggleFavoriteThread,
                                 onScheduleCall = viewModel::scheduleCall,
                                 onRemoveScheduledCall = viewModel::removeScheduledCall,
@@ -642,7 +675,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 CallsIncomingCallDialog(
                     peerName = call.peerName,
                     isVideo = call.isVideo,
-                    onAccept = viewModel::acceptCall,
+                    onAccept = { withCallPermissions(call.isVideo) { viewModel.acceptCall() } },
                     onDecline = viewModel::declineCall
                 )
             } else {
@@ -650,6 +683,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     target = ActiveCallTarget(call.threadId, call.peerName, call.isVideo),
                     isConnected = call.phase == "connected",
                     connectedAtMs = call.connectedAtMs,
+                    engine = callEngine?.takeIf { it.callId == call.callId },
                     onMarkMissed = { viewModel.endCall(missed = true) },
                     onEndCall = { durationLabel -> viewModel.endCall(missed = false, durationLabel = durationLabel) },
                     onDismiss = { viewModel.endCall(missed = false, dismissed = true) }

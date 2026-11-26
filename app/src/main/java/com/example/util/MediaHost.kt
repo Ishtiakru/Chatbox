@@ -38,7 +38,10 @@ object MediaHost {
                 }
                 val input = context.contentResolver.openInputStream(uri)
                     ?: return@withContext Result.failure(IOException("Cannot open selected file."))
-                input.use { uploadStream(it) }
+                val ext = context.contentResolver.getType(uri)
+                    ?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+                    ?: "bin"
+                input.use { uploadStream(it, "chatbox_${System.currentTimeMillis()}.$ext", size) }
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -53,13 +56,13 @@ object MediaHost {
             if (file.length() > MAX_BYTES) {
                 return@withContext Result.failure(IOException("File exceeds the 50 MB limit."))
             }
-            file.inputStream().use { uploadStream(it) }
+            file.inputStream().use { uploadStream(it, file.name, file.length()) }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private fun uploadStream(input: java.io.InputStream): Result<String> {
+    private fun uploadStream(input: java.io.InputStream, fileName: String, length: Long?): Result<String> {
         val boundary = "----chatboxBoundary${System.currentTimeMillis()}"
         val conn = URL(ENDPOINT).openConnection() as HttpURLConnection
         return try {
@@ -67,17 +70,23 @@ object MediaHost {
             conn.connectTimeout = CONNECT_TIMEOUT_MS
             conn.readTimeout = READ_TIMEOUT_MS
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            conn.outputStream.use { out ->
-                out.write(
-                    ("--$boundary\r\n" +
+            val head = ("--$boundary\r\n" +
                         "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\n" +
                         "fileupload\r\n" +
                         "--$boundary\r\n" +
-                        "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"chatbox_upload\"\r\n" +
+                        "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"${fileName.replace("\"", "")}\"\r\n" +
                         "Content-Type: application/octet-stream\r\n\r\n").toByteArray(Charsets.UTF_8)
-                )
-                input.copyTo(out)
-                out.write("\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+            val tail = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
+            // Stream (never buffer a whole video in memory).
+            if (length != null && length >= 0) {
+                conn.setFixedLengthStreamingMode(head.size + length + tail.size)
+            } else {
+                conn.setChunkedStreamingMode(64 * 1024)
+            }
+            conn.outputStream.use { out ->
+                out.write(head)
+                input.copyTo(out, 64 * 1024)
+                out.write(tail)
                 out.flush()
             }
             val code = conn.responseCode
