@@ -196,12 +196,23 @@ def main():
 
     # ---- Firestore ----
     dbs = old.databases()
-    notice(f"old databases={dbs} new databases={new.databases()}")
+    notice(f"old databases={[d[-12:] for d in dbs]} new databases={[d[-12:] for d in new.databases()]}")
     total_missing = {}
     for db in dbs:
+        try:
+            fs_one(a, old, new, db)
+        except Exception as e:  # noqa: BLE001
+            notice(f"FS {db[-12:]} ERROR {type(e).__name__}: {str(e)[:300]}")
+    try:
+        auth_storage(a, old, new)
+    except Exception as e:  # noqa: BLE001
+        notice(f"AUTH/STORAGE ERROR {type(e).__name__}: {str(e)[:300]}")
+
+
+def fs_one(a, old, new, db):
+    if True:
         cols_old, cols_new, summary, p_old, p_new = audit_fs(old, new, db, DEST_DB)
-        notice(f"FS old_db={db[-12:]} root_cols={cols_old} new_root_cols={cols_new}")
-        notice(f"FS {db[-12:]} group=total/missing_in_new: {json.dumps(summary)}")
+        notice(f"FS old_db={db[-12:]} root_cols={cols_old} group=total/missing_in_new: {' '.join(f'{k}={v}' for k, v in summary.items()) or 'EMPTY'}")
         if a.mode == "copy":
             done = fail = exists = 0
             errs = []
@@ -221,6 +232,9 @@ def main():
                         fail += 1; errs.append(f"put {rel[:40]} {st2} {str(b2)[:80]}")
             notice(f"COPY {db[-12:]} created={done} already={exists} failed={fail} errs={errs[:5]}")
 
+
+
+def auth_storage(a, old, new):
     # ---- Auth ----
     ou, oerr = old.auth_users()
     nu, nerr = new.auth_users()
@@ -236,7 +250,7 @@ def main():
                 prov[p["providerId"]] = prov.get(p["providerId"], 0) + 1
         same_uid = sum(1 for u in ou if u["localId"] in new_ids)
         same_ident = sum(1 for u in ou if (u.get("email", "").lower() in new_emails) or (u.get("phoneNumber") in new_phones))
-        notice(f"AUTH old_users={len(ou)} providers={prov} same_uid_in_new={same_uid} same_email_or_phone_in_new={same_ident} new_users={len(nu)}")
+        notice(f"AUTH old_users={len(ou)} providers={' '.join(f'{k}:{v}' for k, v in prov.items()) or 'none'} same_uid_in_new={same_uid} same_email_or_phone_in_new={same_ident} new_users={len(nu)}")
 
     # ---- Storage ----
     for ob in old.buckets():
