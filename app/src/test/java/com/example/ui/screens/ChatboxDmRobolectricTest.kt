@@ -825,14 +825,39 @@ class ChatboxDmRobolectricTest {
                 }
             }
         }
+        composeRule.mainClock.advanceTimeBy(1_500)
         composeRule.waitForIdle()
-        // Opened the Gmail list automatically; user dismissed it -> popup stays.
+        // Opened the Gmail list automatically; user dismissed it -> popup stays, no fallback yet.
         assertEquals(1, calls)
         composeRule.onNodeWithTag("gmail_required_dialog").assertExists()
         composeRule.onNodeWithText("একটা Gmail বেছে নিন।").assertExists()
+        composeRule.onAllNodesWithTag("gmail_manual_input").assertCountEquals(0)
         composeRule.onNodeWithTag("gmail_required_pick_button").performClick()
         composeRule.waitForIdle()
         assertEquals(2, calls)
         assertTrue(linked)
+    }
+
+    @Test
+    fun `gmail popup offers typing the gmail when the device picker fails`() {
+        var saved: String? = null
+        composeRule.setContent {
+            ChatboxTheme {
+                GmailRequiredDialog(
+                    needsPassword = false,
+                    onLinkGmail = { _, _ -> Result.failure(IllegalStateException("Gmail যুক্ত করা যায়নি।\n(কোড: X)")) },
+                    onSaveTypedGmail = { g, _ ->
+                        if (g.endsWith("@gmail.com")) { saved = g; Result.success(g) }
+                        else Result.failure(IllegalArgumentException("সঠিক Gmail লিখুন"))
+                    }
+                )
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(1_500)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("gmail_manual_input").performScrollTo().performTextInput("me@gmail.com")
+        composeRule.onNodeWithTag("gmail_manual_save_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        assertEquals("me@gmail.com", saved)
     }
 }

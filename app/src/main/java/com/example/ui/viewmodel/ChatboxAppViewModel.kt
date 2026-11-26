@@ -410,7 +410,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         return when (val r = authRepo.signInWithPassword(cleanId, password)) {
             is com.example.data.repository.AuthResult.Success -> {
                 _authFlowActive.value = false
-                _gmailRequired.value = !authRepo.hasGoogle(r.user)
+                _gmailRequired.value = needsGmail(r.user)
                 prefs.setHasCompletedLogin(true)
                 syncLocalProfileFromAccount(nameInput = r.user.displayName, identifier = r.user.phoneNumber ?: cleanId)
                 liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
@@ -510,7 +510,17 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     // ---- Gmail (required once after login) -------------------------------
 
     /** True while the signed-in account has no Gmail linked: the home screen is blocked by the Gmail popup. */
-    private val _gmailRequired = MutableStateFlow(authRepo.currentUser()?.let { !authRepo.hasGoogle(it) } ?: false)
+    private val gmailPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("chatbox_gmail", android.content.Context.MODE_PRIVATE)
+    }
+
+    /** Gmail typed by hand (fallback for devices where Google's Gmail list cannot open). */
+    private fun typedGmailFor(uid: String): String? = gmailPrefs.getString("gmail_$uid", null)
+
+    private fun needsGmail(user: FirebaseUser?): Boolean =
+        user != null && !authRepo.hasGoogle(user) && typedGmailFor(user.uid) == null
+
+    private val _gmailRequired = MutableStateFlow(needsGmail(authRepo.currentUser()))
     val gmailRequired: StateFlow<Boolean> = _gmailRequired.asStateFlow()
 
     /** Account has no password yet (old SMS-code login): the Gmail popup also asks for one. */
@@ -531,6 +541,25 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 .onFailure { return Result.failure(IllegalArgumentException(it.message)) }
         }
         return authRepo.linkGmail(activityContext).onSuccess { _gmailRequired.value = false }
+    }
+
+    /** Fallback: save a typed Gmail address for this account and open the app. */
+    fun saveTypedGmail(raw: String, password: String?): Result<String> {
+        val user = authRepo.currentUser()
+            ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
+        val gmail = raw.trim().lowercase()
+        if (!Regex("^[a-z0-9][a-z0-9._%+-]{0,63}@gmail\\.com$").matches(gmail)) {
+            return Result.failure(IllegalArgumentException("সঠিক Gmail লিখুন, যেমন: name@gmail.com"))
+        }
+        if (currentAccountNeedsPassword() && (password == null || password.length < MIN_PASSWORD_LENGTH)) {
+            return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
+        }
+        gmailPrefs.edit().putString("gmail_${user.uid}", gmail).apply()
+        if (currentAccountNeedsPassword() && password != null) {
+            viewModelScope.launch { authRepo.setPasswordForVerifiedAccount(user.phoneNumber.orEmpty(), password) }
+        }
+        _gmailRequired.value = false
+        return Result.success(gmail)
     }
 
 

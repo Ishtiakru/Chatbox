@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -48,13 +49,17 @@ import kotlinx.coroutines.launch
 @Composable
 fun GmailRequiredDialog(
     needsPassword: Boolean,
-    onLinkGmail: suspend (activityContext: Context, password: String?) -> Result<String>
+    onLinkGmail: suspend (activityContext: Context, password: String?) -> Result<String>,
+    /** Fallback when the device cannot open Google's Gmail list: save a typed Gmail. */
+    onSaveTypedGmail: ((gmail: String, password: String?) -> Result<String>)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf("") }
+    var failures by remember { mutableStateOf(0) }
+    var typedGmail by remember { mutableStateOf("") }
 
     fun pick() {
         if (busy) return
@@ -62,13 +67,21 @@ fun GmailRequiredDialog(
         scope.launch {
             busy = true
             onLinkGmail(context, if (needsPassword) password else null)
-                .onFailure { e -> error = e.message ?: "আবার চেষ্টা করুন।" }
+                .onFailure { e ->
+                    error = e.message ?: "আবার চেষ্টা করুন।"
+                    if (!(e.message ?: "").startsWith("একটা Gmail বেছে নিন")) failures++
+                }
             busy = false
         }
     }
 
     // Open the Gmail list right away (old accounts first type a password).
-    LaunchedEffect(Unit) { if (!needsPassword) pick() }
+    LaunchedEffect(Unit) {
+        // Let the home screen finish appearing first; Google's sheet can fail if
+        // it is opened while the activity is still starting.
+        kotlinx.coroutines.delay(800)
+        if (!needsPassword) pick()
+    }
 
     Dialog(
         onDismissRequest = {},
@@ -80,7 +93,9 @@ fun GmailRequiredDialog(
             modifier = Modifier.fillMaxWidth().testTag("gmail_required_dialog")
         ) {
             Column(
-                modifier = Modifier.padding(22.dp),
+                modifier = Modifier
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    .padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -119,6 +134,35 @@ fun GmailRequiredDialog(
                         CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
                     } else {
                         Text("Gmail বেছে নিন", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (failures > 0 && onSaveTypedGmail != null) {
+                    Text(
+                        text = "Gmail-এর তালিকা না খুললে এখানে আপনার Gmail লিখুন:",
+                        color = LoginInkMuted,
+                        fontSize = 13.sp
+                    )
+                    OutlinedTextField(
+                        value = typedGmail,
+                        onValueChange = { typedGmail = it.trim().take(80); error = null },
+                        label = { Text("আপনার Gmail (name@gmail.com)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("gmail_manual_input")
+                    )
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            onSaveTypedGmail(typedGmail, if (needsPassword) password else null)
+                                .onFailure { e -> error = e.message ?: "সঠিক Gmail লিখুন।" }
+                        },
+                        enabled = !busy && typedGmail.isNotBlank(),
+                        shape = CircleShape,
+                        modifier = Modifier.fillMaxWidth().height(46.dp).testTag("gmail_manual_save_button")
+                    ) {
+                        Text("এই Gmail সেভ করুন", fontSize = 15.sp)
                     }
                 }
             }
