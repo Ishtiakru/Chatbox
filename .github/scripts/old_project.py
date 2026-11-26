@@ -212,7 +212,7 @@ def main():
                 notice("SAMPLE " + txt.replace(key, "<KEY>")[:600])
             by_proj[proj] = by_proj.get(proj, 0) + 1
         old_num = "838258163823"
-        notice(f"KEYS pool={len(pool)} keys_in_OLD_project={by_proj.get(old_num, 0)} projects={len(by_proj)} unknown={by_proj.get('unknown', 0)}")
+        notice(f"KEYS pool={len(pool)} keys_in_OLD_project={by_proj.get(old_num, 0)} by_project={by_proj}")
         # Second probe: Gemini API itself, an unsupported method reveals the consumer project.
         return
         keys = kb.get("keys", [])
