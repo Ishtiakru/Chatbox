@@ -538,6 +538,32 @@ fun AuthLoginScreen(
         var codeGmail by remember { mutableStateOf("") }
         var codeSent by remember { mutableStateOf(false) }
         var codeInfo by remember { mutableStateOf<String?>(null) }
+        val useLink = onSendResetCode != null && onResetWithCode != null
+        fun sendLink(gmail: String) {
+            val send = onSendResetCode ?: return
+            scope.launch {
+                resetBusy = true
+                resetError = null
+                send(gmail)
+                    .onSuccess { codeSent = true; codeInfo = it }
+                    .onFailure { resetError = it.message ?: "আবার চেষ্টা করুন।" }
+                resetBusy = false
+            }
+        }
+        val openChooser: (() -> Unit)? = if (useLink) {
+            rememberDeviceGmailChooser { result ->
+                when (result) {
+                    is DeviceGmailResult.Chosen -> {
+                        codeGmail = result.gmail
+                        codeSent = false
+                        codeInfo = null
+                        sendLink(result.gmail)
+                    }
+                    DeviceGmailResult.Cancelled -> resetError = "একটা Gmail বেছে নিন।"
+                    DeviceGmailResult.Unavailable -> resetError = "ফোনের Gmail তালিকা খুলছে না। নিচে Gmail লিখে লিংক পাঠান।"
+                }
+            }
+        } else null
         fun finishReset(res: Result<String>) {
             res.onSuccess { msg ->
                 identifier = resetIdentifier.trim()
@@ -562,7 +588,11 @@ fun AuthLoginScreen(
                         .testTag("forgot_password_dialog")
                 ) {
                     Text(
-                        text = "মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। তারপর এই নম্বরে যুক্ত যেকোনো একটা Gmail দিয়ে যাচাই করুন — মিললে পাসওয়ার্ড বদলে যাবে।",
+                        text = if (useLink) {
+                            "মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। তারপর এই নম্বরে যুক্ত যেকোনো একটা Gmail বেছে নিন — সেই Gmail-এ একটা লিংক যাবে, লিংকে চাপলেই পাসওয়ার্ড বদলানো যাবে।"
+                        } else {
+                            "মোবাইল নম্বর আর নতুন পাসওয়ার্ড দিন। তারপর এই নম্বরে যুক্ত যেকোনো একটা Gmail দিয়ে যাচাই করুন — মিললে পাসওয়ার্ড বদলে যাবে।"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = LoginInkMuted
                     )
@@ -596,7 +626,7 @@ fun AuthLoginScreen(
                     resetError?.let { NoticeBanner(text = it, isError = true) }
                     if (onSendResetCode != null && onResetWithCode != null) {
                         Text(
-                            text = "Gmail-টা এই ফোনে নেই? Gmail লিখুন, সেখানে একটা লিংক যাবে:",
+                            text = "অথবা Gmail লিখুন (ফোনে না থাকলেও চলবে):",
                             style = MaterialTheme.typography.bodySmall,
                             color = LoginInkMuted
                         )
@@ -648,6 +678,17 @@ fun AuthLoginScreen(
                     onClick = {
                         scope.launch {
                             resetBusy = true
+                            if (openChooser != null) {
+                                resetBusy = false
+                                if (codeSent && codeGmail.isNotBlank()) {
+                                    resetBusy = true
+                                    finishReset(onResetWithCode!!.invoke(resetIdentifier, codeGmail, newPassword))
+                                    resetBusy = false
+                                } else {
+                                    openChooser()
+                                }
+                                return@launch
+                            }
                             val res = onResetPassword(context, resetIdentifier, newPassword)
                             resetBusy = false
                             finishReset(res)
@@ -658,7 +699,7 @@ fun AuthLoginScreen(
                     if (resetBusy) {
                         CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                     } else {
-                        Text("ফোনের Gmail বেছে নিন")
+                        Text(if (openChooser != null && codeSent) "লিংকে চেপেছি — পাসওয়ার্ড বদলান" else "ফোনের Gmail বেছে নিন")
                     }
                 }
             },

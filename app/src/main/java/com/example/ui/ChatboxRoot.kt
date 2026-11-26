@@ -237,7 +237,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                 needsPassword = remember(currentUser) { viewModel.currentAccountNeedsPassword() },
                 onLinkGmail = viewModel::linkGmail,
                 onSaveTypedGmail = viewModel::saveTypedGmail,
-                knownGmails = viewModel.knownGmails.collectAsState().value
+                knownGmails = viewModel.knownGmails.collectAsState().value,
+                useDeviceAccountChooser = true
             )
         }
 
