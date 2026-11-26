@@ -9,13 +9,13 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, enable-phone, sha, enable-password]
+        options: [inspect, enable-phone, sha, enable-password, admin-password]
 
 jobs:
   auth:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m pip install --quiet google-auth
@@ -52,6 +52,48 @@ jobs:
           echo "sha256=$(echo "$OUT" | grep -m1 'SHA256:' | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           rm -f /tmp/ks.jks
 
+      # admin-password: the secret arrives encrypted with a throw-away key
+      # (same scheme as add-keys.yml); only ciphertext ever touches git.
+      - name: Ephemeral key pair + publish public key
+        if: inputs.mode == 'admin-password'
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out /tmp/ephemeral.pem 2>/dev/null
+          DIR=".github/incoming/${{ github.run_id }}"
+          mkdir -p "$DIR"
+          openssl pkey -in /tmp/ephemeral.pem -pubout -out "$DIR/pub.pem"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DIR/pub.pem"
+          git commit -q -m "ci(auth): ephemeral public key for run ${{ github.run_id }}"
+          for i in 1 2 3 4 5; do
+            git pull -q --rebase origin "${{ github.ref_name }}" && git push -q origin "HEAD:${{ github.ref_name }}" && break
+            sleep 5
+          done
+      - name: Wait for + decrypt secret
+        if: inputs.mode == 'admin-password'
+        env:
+          DIR: .github/incoming/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for i in $(seq 1 80); do
+            git fetch -q origin "${{ github.ref_name }}"
+            if git cat-file -e "FETCH_HEAD:$DIR/secret.enc" 2>/dev/null && git cat-file -e "FETCH_HEAD:$DIR/pass.enc" 2>/dev/null; then
+              git show "FETCH_HEAD:$DIR/secret.enc" > /tmp/secret.enc
+              git show "FETCH_HEAD:$DIR/pass.enc" | base64 -d > /tmp/pass.raw
+              openssl pkeyutl -decrypt -inkey /tmp/ephemeral.pem -pkeyopt rsa_padding_mode:oaep \
+                -pkeyopt rsa_oaep_md:sha256 -in /tmp/pass.raw -out /tmp/pass.bin
+              openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -a -pass file:/tmp/pass.bin \
+                -in /tmp/secret.enc -out /tmp/secret.txt
+              rm -f /tmp/ephemeral.pem /tmp/pass.raw /tmp/pass.bin /tmp/secret.enc
+              echo "decrypted after $i polls"; exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::secret never arrived"; exit 1
+
       - name: Run
         run: |
           timeout 120s python3 .github/scripts/auth_config.py --key /tmp/admin.json \
@@ -59,4 +101,4 @@ jobs:
             --sha1 "${{ steps.fp.outputs.sha1 }}" --sha256 "${{ steps.fp.outputs.sha256 }}"
       - name: Cleanup
         if: always()
-        run: rm -f /tmp/admin.json
+        run: rm -f /tmp/admin.json /tmp/secret.txt /tmp/ephemeral.pem /tmp/pass.*
