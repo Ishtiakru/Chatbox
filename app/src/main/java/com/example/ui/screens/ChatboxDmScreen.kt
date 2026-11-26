@@ -180,6 +180,8 @@ fun ChatboxDmScreen(
     onToggleBlock: (threadId: String) -> Unit,
     onSubmitReport: (threadId: String, peerName: String, reason: String, note: String) -> Unit,
     onLogCall: (threadId: String, peerName: String, isVideo: Boolean, isMissed: Boolean, durationLabel: String) -> Unit,
+    // 1.0.0.112: call buttons go through the global VM (peer gets a real ring signal).
+    onStartCall: (isVideo: Boolean) -> Unit = {},
     onAppUpdateClick: () -> Unit,
     onSearchPeer: suspend (String) -> PeerSearchState = { PeerSearchState.Idle },
     onOpenPeer: (UserProfile) -> String = { "" },
@@ -199,7 +201,6 @@ fun ChatboxDmScreen(
     var showPeerProfileDialog by remember { mutableStateOf(false) }
     var showE2eeInfoDialog by remember { mutableStateOf(false) }
     var showRestorePinDialog by remember { mutableStateOf(false) }
-    var activeCallDialogVideo by remember { mutableStateOf<Boolean?>(null) }
     var openThreadSearchSignal by remember { mutableIntStateOf(0) }
 
     val filteredThreads = remember(threads, searchQuery, inboxFilter, messagesByThread, peerNicknames) {
@@ -233,8 +234,8 @@ fun ChatboxDmScreen(
             isBlocked = selectedThread.id in blockedThreadIds,
             effectiveQuickReaction = effectiveQuickReaction,
             onClose = { showDetails = false },
-            onStartAudioCall = { activeCallDialogVideo = false },
-            onStartVideoCall = { activeCallDialogVideo = true },
+            onStartAudioCall = { onStartCall(false) },
+            onStartVideoCall = { onStartCall(true) },
             onOpenPeerProfile = { showPeerProfileDialog = true },
             onToggleMute = { muted -> onToggleMute(selectedThread.id, muted) },
             onMarkAsUnread = {
@@ -334,8 +335,8 @@ fun ChatboxDmScreen(
                             onViewProfile = { showPeerProfileDialog = true },
                             onLearnMoreE2ee = { showE2eeInfoDialog = true },
                             onEnterPin = { showRestorePinDialog = true },
-                            onStartAudioCall = { activeCallDialogVideo = false },
-                            onStartVideoCall = { activeCallDialogVideo = true },
+                            onStartAudioCall = { onStartCall(false) },
+                            onStartVideoCall = { onStartCall(true) },
                             onSendMessage = { body ->
                                 val now = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
                                 onSendMessage(selectedThread.id, body, now)
@@ -396,8 +397,8 @@ fun ChatboxDmScreen(
                         onViewProfile = { showPeerProfileDialog = true },
                         onLearnMoreE2ee = { showE2eeInfoDialog = true },
                         onEnterPin = { showRestorePinDialog = true },
-                        onStartAudioCall = { activeCallDialogVideo = false },
-                        onStartVideoCall = { activeCallDialogVideo = true },
+                        onStartAudioCall = { onStartCall(false) },
+                        onStartVideoCall = { onStartCall(true) },
                         onSendMessage = { body ->
                             val now = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
                             onSendMessage(selectedThread.id, body, now)
@@ -497,7 +498,7 @@ fun ChatboxDmScreen(
                     ) {
                         OutlinedButton(onClick = {
                             showPeerProfileDialog = false
-                            activeCallDialogVideo = false
+                            onStartCall(false)
                         }) {
                             Icon(Icons.Rounded.Phone, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
@@ -505,7 +506,7 @@ fun ChatboxDmScreen(
                         }
                         OutlinedButton(onClick = {
                             showPeerProfileDialog = false
-                            activeCallDialogVideo = true
+                            onStartCall(true)
                         }) {
                             Icon(Icons.Rounded.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
@@ -634,94 +635,6 @@ fun ChatboxDmScreen(
         )
     }
 
-    // Active Call Dialog
-    val isVideoCall = activeCallDialogVideo
-    if (isVideoCall != null && selectedThread != null) {
-        val shownName = peerNicknames[selectedThread.id]?.takeIf { it.isNotBlank() } ?: selectedThread.name
-        var elapsedSec by remember(selectedThread.id, isVideoCall) { mutableIntStateOf(0) }
-        LaunchedEffect(selectedThread.id, isVideoCall) {
-            while (true) {
-                delay(1000)
-                elapsedSec++
-            }
-        }
-        val statusText = if (elapsedSec < 3) {
-            "Ringing…"
-        } else {
-            val mins = (elapsedSec - 3) / 60
-            val secs = (elapsedSec - 3) % 60
-            String.format(Locale.US, "Connected · %d:%02d", mins, secs)
-        }
-
-        Dialog(onDismissRequest = { activeCallDialogVideo = null }) {
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = Color(0xFF1E1930),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    MessengerAvatar(
-                        label = shownName,
-                        size = 84.dp,
-                        showOnlineDot = true
-                    )
-                    Text(
-                        text = shownName,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "${if (isVideoCall) "Video call" else "Audio call"} · $statusText",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.8f)
-                    )
-                    Row(
-                        modifier = Modifier.padding(top = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                onLogCall(selectedThread.id, shownName, isVideoCall, true, "Missed")
-                                activeCallDialogVideo = null
-                            },
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                        ) {
-                            Text("Mark missed")
-                        }
-                        Surface(
-                            onClick = {
-                                val mins = (elapsedSec - 3).coerceAtLeast(1) / 60
-                                val secs = (elapsedSec - 3).coerceAtLeast(1) % 60
-                                val dur = String.format(Locale.US, "%d:%02d", mins, secs)
-                                onLogCall(selectedThread.id, shownName, isVideoCall, false, dur)
-                                activeCallDialogVideo = null
-                            },
-                            shape = CircleShape,
-                            color = Color(0xFFE53935),
-                            modifier = Modifier
-                                .size(56.dp)
-                                .testTag("call_dialog_end")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.CallEnd,
-                                    contentDescription = "End call",
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable

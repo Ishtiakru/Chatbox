@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
@@ -85,22 +86,30 @@ internal data class ActiveCallTarget(
 @Composable
 internal fun CallsActiveCallDialog(
     target: ActiveCallTarget,
+    /** false = still ringing; true = callee accepted, timer runs from [connectedAtMs]. */
+    isConnected: Boolean,
+    connectedAtMs: Long,
     onMarkMissed: () -> Unit,
     onEndCall: (durationLabel: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var elapsedSec by remember(target.threadId, target.isVideo) { mutableIntStateOf(0) }
-    LaunchedEffect(target.threadId, target.isVideo) {
+    // Tick every second: drives the Connected timer and the End-button duration.
+    var tick by remember(target.threadId, connectedAtMs) { mutableIntStateOf(0) }
+    LaunchedEffect(target.threadId, connectedAtMs) {
         while (true) {
             delay(1000)
-            elapsedSec++
+            tick++
         }
     }
-    val statusText = if (elapsedSec < 3) {
+    // Read tick during composition so every tick recomposes the dialog.
+    val now = remember(tick) { System.currentTimeMillis() }
+    val statusText = if (!isConnected) {
         "Ringing…"
     } else {
-        val mins = (elapsedSec - 3) / 60
-        val secs = (elapsedSec - 3) % 60
+        val totalSec = ((now - connectedAtMs) / 1000L)
+            .toInt().coerceAtLeast(0)
+        val mins = totalSec / 60
+        val secs = totalSec % 60
         String.format(Locale.US, "Connected · %d:%02d", mins, secs)
     }
 
@@ -147,9 +156,13 @@ internal fun CallsActiveCallDialog(
                     }
                     Surface(
                         onClick = {
-                            val mins = (elapsedSec - 3).coerceAtLeast(1) / 60
-                            val secs = (elapsedSec - 3).coerceAtLeast(1) % 60
-                            val dur = String.format(Locale.US, "%d:%02d", mins, secs)
+                            val totalSec = if (isConnected) {
+                                ((System.currentTimeMillis() - connectedAtMs) / 1000L)
+                                    .toInt().coerceAtLeast(1)
+                            } else {
+                                1
+                            }
+                            val dur = String.format(Locale.US, "%d:%02d", totalSec / 60, totalSec % 60)
                             onEndCall(dur)
                         },
                         shape = CircleShape,
@@ -881,6 +894,86 @@ private fun ContactCallPickerRow(
             }
             IconButton(onClick = onVideoCall) {
                 Icon(Icons.Rounded.Videocam, contentDescription = "Video call", tint = DmLavenderAccent, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+/** Callee side: rings with accept/decline (accept → caller connects). */
+@Composable
+internal fun CallsIncomingCallDialog(
+    peerName: String,
+    isVideo: Boolean,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    Dialog(onDismissRequest = onDecline) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = Color(0xFF1E1930),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("calls_incoming_call_dialog")
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                MessengerAvatar(
+                    label = peerName,
+                    size = 84.dp,
+                    showOnlineDot = true
+                )
+                Text(
+                    text = peerName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = if (isVideo) "ভিডিও কল · ইনকামিং…" else "অডিও কল · ইনকামিং…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+                Row(
+                    modifier = Modifier.padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onDecline,
+                        shape = CircleShape,
+                        color = Color(0xFFE53935),
+                        modifier = Modifier
+                            .size(56.dp)
+                            .testTag("calls_decline_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.CallEnd,
+                                contentDescription = "Decline",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                    Surface(
+                        onClick = onAccept,
+                        shape = CircleShape,
+                        color = Color(0xFF2BB673),
+                        modifier = Modifier
+                            .size(56.dp)
+                            .testTag("calls_accept_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Call,
+                                contentDescription = "Accept",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
             }
         }
     }

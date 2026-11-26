@@ -79,7 +79,10 @@ import com.example.ui.components.CustomMenuContentScreen
 import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.components.customMenuIconVector
+import com.example.ui.screens.ActiveCallTarget
 import com.example.ui.screens.AdminScreen
+import com.example.ui.screens.CallsActiveCallDialog
+import com.example.ui.screens.CallsIncomingCallDialog
 import com.example.ui.screens.AuthLoginScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.ChatboxDmScreen
@@ -117,6 +120,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val userAvatarPath by viewModel.userAvatarPath.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val activeThreadId by viewModel.activeThreadId.collectAsState()
+    val activeCall by viewModel.activeCall.collectAsState()
     val showProfileDialog by viewModel.showProfileDialog.collectAsState()
     val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
     val chatboxThreads by viewModel.chatboxThreads.collectAsState()
@@ -349,6 +353,13 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 onToggleBlock = viewModel::toggleThreadBlocked,
                                 onSubmitReport = viewModel::submitThreadReport,
                                 onLogCall = viewModel::logChatboxCall,
+                                onStartCall = { isVideo ->
+                                    val t = chatboxThreads.firstOrNull { it.id == activeThreadId }
+                                    if (t != null) {
+                                        val name = dmPeerNicknames[t.id]?.takeIf { it.isNotBlank() } ?: t.name
+                                        viewModel.startCall(t.id, name, isVideo)
+                                    }
+                                },
                                 onAppUpdateClick = { viewModel.openUpdateDialog(true) },
                                 onSearchPeer = viewModel::searchPeer,
                                 onOpenPeer = viewModel::openChatWithPeer,
@@ -405,6 +416,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                     viewModel.openOrCreateDirectThread(query, "")
                                 },
                                 onLogCall = viewModel::logChatboxCall,
+                                onStartCall = viewModel::startCall,
                                 onToggleFavorite = viewModel::toggleFavoriteThread,
                                 onScheduleCall = viewModel::scheduleCall,
                                 onRemoveScheduledCall = viewModel::removeScheduledCall,
@@ -621,6 +633,27 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                         mainContent(Modifier.fillMaxSize().padding(innerPadding))
                     }
                 }
+            }
+        }
+
+        // Global call UI: rings on the callee, connected timer on both sides.
+        activeCall?.let { call ->
+            if (call.isIncoming && call.phase == "ringing") {
+                CallsIncomingCallDialog(
+                    peerName = call.peerName,
+                    isVideo = call.isVideo,
+                    onAccept = viewModel::acceptCall,
+                    onDecline = viewModel::declineCall
+                )
+            } else {
+                CallsActiveCallDialog(
+                    target = ActiveCallTarget(call.threadId, call.peerName, call.isVideo),
+                    isConnected = call.phase == "connected",
+                    connectedAtMs = call.connectedAtMs,
+                    onMarkMissed = { viewModel.endCall(missed = true) },
+                    onEndCall = { durationLabel -> viewModel.endCall(missed = false, durationLabel = durationLabel) },
+                    onDismiss = { viewModel.endCall(missed = false, dismissed = true) }
+                )
             }
         }
 
