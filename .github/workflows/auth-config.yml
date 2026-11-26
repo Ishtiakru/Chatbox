@@ -99,6 +99,7 @@ jobs:
         env:
           GS: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GS64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          REL_SHA1: ${{ steps.fp.outputs.sha1 }}
         run: |
           python3 - <<'PY2'
           import base64, json, os
@@ -110,7 +111,8 @@ jobs:
           if not raw.strip():
               print("::notice title=GSJSON::secret empty"); raise SystemExit
           d = json.loads(raw)
-          out = [f"project={d['project_info'].get('project_id')}"]
+          rel = os.environ.get("REL_SHA1", "").replace(":", "").lower()
+          out = [f"project={d['project_info'].get('project_id')} release_sha1={rel[:12]}"]
           for c in d.get("client", []):
               pkg = c["client_info"]["android_client_info"]["package_name"]
               oc = [(o.get("client_type"), o.get("client_id", "")[:28], (o.get("android_info") or {}).get("certificate_hash", "")[:12]) for o in c.get("oauth_client", [])]
