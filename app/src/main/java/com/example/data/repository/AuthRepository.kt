@@ -252,8 +252,14 @@ class AuthRepository(private val context: Context) {
         } catch (e: CancellationException) {
             throw e
         } catch (first: Exception) {
-            Log.w(TAG, "Sign in with Google screen failed; trying the Gmail picker", first)
+            // Only when the screen could not open at all. If the user already chose a
+            // Gmail and it failed afterwards, do NOT show a second Gmail list.
+            val couldNotOpen = first is NoCredentialException ||
+                first is GetCredentialUnsupportedException ||
+                first is androidx.credentials.exceptions.GetCredentialProviderConfigurationException
             com.example.data.ai.AiDiagnostics.report("gmail_pick_1", first)
+            if (!couldNotOpen) throw first
+            Log.w(TAG, "Sign in with Google screen failed; trying the Gmail picker", first)
             val option = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setAutoSelectEnabled(false)
@@ -293,6 +299,8 @@ class AuthRepository(private val context: Context) {
             "এই Gmail অন্য একটি account-এ যুক্ত আছে। অন্য Gmail বেছে নিন।"
         e is com.google.firebase.FirebaseNetworkException -> "ইন্টারনেট সংযোগ নেই। নেট চালু করে আবার চেষ্টা করুন।"
         e is IllegalStateException && e.cause == null && !e.message.isNullOrBlank() -> e.message!!
+        (e.message ?: "").contains("28444") || ((e as? GetCredentialException)?.errorMessage?.toString() ?: "").contains("28444") ->
+            "Google এখনো এই অ্যাপের নতুন সেটিং পায়নি। কিছুক্ষণ পরে আবার \"Gmail বেছে নিন\" চাপুন, অথবা নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"
         e is GetCredentialException && (e.type.contains("PROVIDER_CONFIGURATION") || e.type.contains("UNSUPPORTED")) ->
             "এই ডিভাইসে Google-এর Gmail তালিকা খুলছে না (Google Play services পুরনো বা নেই)। Play Store থেকে \"Google Play services\" আপডেট করুন, অথবা নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"
         else -> "Gmail যুক্ত করা যায়নি। আবার চেষ্টা করুন, না হলে নিচে Gmail লিখে দিন।\n(কোড: ${errorCode(e)})"

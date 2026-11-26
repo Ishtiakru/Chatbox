@@ -65,7 +65,7 @@ def summarize(cfg: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", required=True)
-    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha", "enable-password", "admin-password"], required=True)
+    ap.add_argument("--mode", choices=["inspect", "enable-phone", "sha", "enable-password", "admin-password", "old-inspect", "old-remove-sha"], required=True)
     ap.add_argument("--sha1", default="")
     ap.add_argument("--sha256", default="")
     ap.add_argument("--package", default="com.aistudio.chatbox.kxmpzq")
@@ -79,6 +79,33 @@ def main():
     creds.refresh(AuthTransportRequest())
     tok = creds.token
     cfg_url = f"{IDT}/projects/{a.project}/config"
+
+    if a.mode in ("old-inspect", "old-remove-sha"):
+        # The duplicate project (gen-lang-client-0532609883) also registers our package
+        # + release SHA-1. Google then resolves the app to that project and Google
+        # sign-in fails with [28444] "Developer console is not set up correctly".
+        fb = "https://firebase.googleapis.com/v1beta1"
+        proj = creds.project_id or a.project
+        st_a, apps = call(tok, "GET", f"{fb}/projects/{proj}/androidApps?pageSize=100&showDeleted=false")
+        if st_a != 200:
+            notice(f"{a.mode} project={proj} androidApps HTTP {st_a}: {str(apps)[:300]}"); sys.exit(1)
+        want = {a.sha1.replace(":", "").lower(), a.sha256.replace(":", "").lower()} - {""}
+        out = []
+        for app in apps.get("apps", []):
+            st_s, shas = call(tok, "GET", f"{fb}/{app['name']}/sha")
+            certs = shas.get("certificates", []) if st_s == 200 else []
+            desc = [(c.get("certType"), c.get("shaHash", "")[:12]) for c in certs]
+            removed = []
+            if a.mode == "old-remove-sha" and app.get("packageName") == a.package:
+                for c in certs:
+                    if c.get("shaHash", "").lower() in want:
+                        st_d, res = call(tok, "DELETE", f"{fb}/{c['name']}")
+                        removed.append(f"{c.get('shaHash','')[:12]}:HTTP{st_d}" + ("" if st_d == 200 else f":{str(res)[:160]}"))
+            out.append(f"{app.get('packageName')} state={app.get('state')} shas={desc}" + (f" removed={removed}" if removed else "") + ("" if st_s == 200 else f" sha=HTTP{st_s}"))
+        st_g, g = call(tok, "GET", f"{IDT}/projects/{proj}/defaultSupportedIdpConfigs/google.com")
+        gdesc = f"google_enabled={g.get('enabled')} client={str(g.get('clientId',''))[:28]}" if st_g == 200 else f"google=HTTP{st_g}"
+        notice(f"{a.mode} project={proj} {gdesc} ;; " + " ;; ".join(out))
+        return
 
     if a.mode == "admin-password":
         # Attach "mobile number + password" login to the existing admin owner account
