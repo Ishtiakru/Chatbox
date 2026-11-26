@@ -372,6 +372,52 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidPhoneKey(phoneKey) && existing().uid == request.auth.uid;
     }
 
+    // ---- Gmails added to a number account (any number of them) ----
+    function validRecoveryGmail(value) {
+      return value is string && value.size() > 0 && value.size() <= 128
+        && value.matches('^[a-z0-9][a-z0-9._%+-]{0,63}@gmail[.]com$');
+    }
+
+    function signedInAsGmail(email) {
+      return request.auth != null
+        && 'email' in request.auth.token
+        && request.auth.token.email == email
+        && 'email_verified' in request.auth.token
+        && request.auth.token.email_verified == true;
+    }
+
+    match /users/{userId}/private/recovery {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow create, update: if isSignedIn()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && incoming().keys().hasAll(['emails', 'updatedAt'])
+        && incoming().keys().hasOnly(['emails', 'updatedAt'])
+        && incoming().emails is list
+        && incoming().emails.size() <= 500
+        && incoming().updatedAt == request.time;
+      allow list, delete: if false;
+    }
+
+    match /gmailRecovery/{email}/accounts/{userId} {
+      // Readable only by someone who proved they own this Gmail.
+      allow get, list: if validRecoveryGmail(email) && signedInAsGmail(email);
+      allow create, update: if isSignedIn()
+        && isPhonePasswordUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && validRecoveryGmail(email)
+        && incoming().keys().hasAll(['login', 'secret', 'updatedAt'])
+        && incoming().keys().hasOnly(['login', 'secret', 'updatedAt'])
+        && incoming().login == request.auth.token.email
+        && incoming().secret is string
+        && incoming().secret.size() > 0
+        && incoming().secret.size() <= 1024
+        && incoming().updatedAt == request.time;
+      allow delete: if request.auth != null
+        && (request.auth.uid == userId || signedInAsGmail(email));
+    }
+
     match /users/{userId}/private/profile {
       allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
       allow create: if isSignedIn()

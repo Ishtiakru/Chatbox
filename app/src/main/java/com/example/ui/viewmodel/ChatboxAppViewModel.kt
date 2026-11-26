@@ -410,8 +410,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         return when (val r = authRepo.signInWithPassword(cleanId, password)) {
             is com.example.data.repository.AuthResult.Success -> {
                 _authFlowActive.value = false
-                _gmailRequired.value = needsGmail(r.user)
+                lastLoginPassword = password
+                refreshKnownGmails()
+                // Every number + password login asks for a Gmail again (any one: old or new).
+                _gmailRequired.value = true
                 prefs.setHasCompletedLogin(true)
+                viewModelScope.launch { runCatching { gmailRecovery.refreshSecrets(password) } }
                 syncLocalProfileFromAccount(nameInput = r.user.displayName, identifier = r.user.phoneNumber ?: cleanId)
                 liveChatRepo.ensureOwnProfile(r.user.uid, r.user.displayName)
                     .onSuccess { profile -> _ownProfile.value = profile }
@@ -449,6 +453,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             return when (val r = authRepo.createPhonePasswordAccount(cleanId, password)) {
                 is com.example.data.repository.AuthResult.Success -> {
                     authRepo.updateDisplayName(cleanName)
+                    lastLoginPassword = password
+                    refreshKnownGmails()
                     _gmailRequired.value = true
                     prefs.setHasCompletedLogin(true)
                     completePhoneSignIn(r.user, cleanName, phoneOverride = e164)
@@ -497,6 +503,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         try {
             val user = authRepo.resetPasswordWithGmail(activityContext, cleanId, newPassword)
                 .getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
+            lastLoginPassword = newPassword
+            refreshKnownGmails()
             _gmailRequired.value = false
             prefs.setHasCompletedLogin(true)
             syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
@@ -509,19 +517,38 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     // ---- Gmail (required once after login) -------------------------------
 
-    /** True while the signed-in account has no Gmail linked: the home screen is blocked by the Gmail popup. */
-    private val gmailPrefs by lazy {
-        getApplication<Application>().getSharedPreferences("chatbox_gmail", android.content.Context.MODE_PRIVATE)
-    }
+    val gmailRecovery by lazy { com.example.data.repository.GmailRecoveryRepository(getApplication()) }
 
-    /** Gmail typed by hand (fallback for devices where Google's Gmail list cannot open). */
-    private fun typedGmailFor(uid: String): String? = gmailPrefs.getString("gmail_$uid", null)
+    /** Password typed at the last login (memory only) so a newly chosen Gmail can reset it later. */
+    private var lastLoginPassword: String? = null
 
     private fun needsGmail(user: FirebaseUser?): Boolean =
-        user != null && !authRepo.hasGoogle(user) && typedGmailFor(user.uid) == null
+        user != null && !authRepo.hasGoogle(user) && gmailRecovery.localGmails(user.uid).isEmpty()
 
+    /** Shown after every number + password login, and whenever the account has no Gmail yet. */
     private val _gmailRequired = MutableStateFlow(needsGmail(authRepo.currentUser()))
     val gmailRequired: StateFlow<Boolean> = _gmailRequired.asStateFlow()
+
+    private val _knownGmails = MutableStateFlow<List<String>>(emptyList())
+    /** Gmails already added to the signed-in account (shown in the popup). */
+    val knownGmails: StateFlow<List<String>> = _knownGmails.asStateFlow()
+
+    private fun refreshKnownGmails() {
+        val user = authRepo.currentUser() ?: return
+        _knownGmails.value = gmailRecovery.localGmails(user.uid)
+        viewModelScope.launch {
+            val cloud = gmailRecovery.cloudGmails()
+            _knownGmails.value = (cloud + gmailRecovery.localGmails(user.uid)).distinct().sorted()
+            if (cloud.isNotEmpty() && _gmailRequired.value && lastLoginPassword == null && needsGmail(user).not()) {
+                // Restored session (not a fresh login) that already has a Gmail: no popup.
+                _gmailRequired.value = false
+            }
+        }
+    }
+
+    init {
+        refreshKnownGmails()
+    }
 
     /** Account has no password yet (old SMS-code login): the Gmail popup also asks for one. */
     fun currentAccountNeedsPassword(): Boolean {
@@ -529,39 +556,73 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         return !authRepo.hasPassword(user) && !user.phoneNumber.isNullOrBlank()
     }
 
-    /** Links the chosen Gmail (and, for old accounts, sets the password). Returns the Gmail address. */
+    /** Opens the phone's Gmail list; the chosen Gmail is added to this account (no limit). */
     suspend fun linkGmail(activityContext: android.content.Context, password: String?): Result<String> {
-        val user = authRepo.currentUser()
-            ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
-        if (currentAccountNeedsPassword()) {
-            if (password == null || password.length < MIN_PASSWORD_LENGTH) {
-                return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
-            }
-            authRepo.setPasswordForVerifiedAccount(user.phoneNumber.orEmpty(), password)
-                .onFailure { return Result.failure(IllegalArgumentException(it.message)) }
-        }
-        return authRepo.linkGmail(activityContext).onSuccess { _gmailRequired.value = false }
-    }
-
-    /** Fallback: save a typed Gmail address for this account and open the app. */
-    fun saveTypedGmail(raw: String, password: String?): Result<String> {
-        val user = authRepo.currentUser()
-            ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
-        val gmail = raw.trim().lowercase()
-        if (!Regex("^[a-z0-9][a-z0-9._%+-]{0,63}@gmail\\.com$").matches(gmail)) {
-            return Result.failure(IllegalArgumentException("সঠিক Gmail লিখুন, যেমন: name@gmail.com"))
-        }
+        authRepo.currentUser() ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
         if (currentAccountNeedsPassword() && (password == null || password.length < MIN_PASSWORD_LENGTH)) {
             return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
         }
-        gmailPrefs.edit().putString("gmail_${user.uid}", gmail).apply()
-        if (currentAccountNeedsPassword() && password != null) {
-            viewModelScope.launch { authRepo.setPasswordForVerifiedAccount(user.phoneNumber.orEmpty(), password) }
-        }
-        _gmailRequired.value = false
-        return Result.success(gmail)
+        val gmail = authRepo.chooseGmailAddress(activityContext).getOrElse { return Result.failure(it) }
+        return addGmailToAccount(gmail, password)
     }
 
+    /** Typed Gmail (when the phone's Gmail list cannot open). Recovery then uses the emailed link. */
+    suspend fun saveTypedGmail(raw: String, password: String?): Result<String> {
+        authRepo.currentUser() ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
+        com.example.data.repository.GmailRecoveryRepository.normalize(raw)
+            ?: return Result.failure(IllegalArgumentException("সঠিক Gmail লিখুন, যেমন: name@gmail.com"))
+        if (currentAccountNeedsPassword() && (password == null || password.length < MIN_PASSWORD_LENGTH)) {
+            return Result.failure(IllegalArgumentException("পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
+        }
+        return addGmailToAccount(raw, password)
+    }
+
+    private suspend fun addGmailToAccount(gmail: String, password: String?): Result<String> {
+        val user = authRepo.currentUser() ?: return Result.failure(IllegalStateException("আগে Log in করুন।"))
+        if (currentAccountNeedsPassword() && password != null) {
+            authRepo.setPasswordForVerifiedAccount(user.phoneNumber.orEmpty(), password)
+                .onFailure { return Result.failure(IllegalArgumentException(it.message)) }
+            lastLoginPassword = password
+        }
+        return gmailRecovery.addGmail(gmail, lastLoginPassword)
+            .map { it.also { _gmailRequired.value = false; refreshKnownGmails() } }
+            .recoverCatching { throw IllegalArgumentException(it.message ?: "আবার চেষ্টা করুন।") }
+    }
+
+    /** Forgot password (Gmail not on this phone), step 1: email a link to [gmail]. */
+    suspend fun sendResetCodeToGmail(gmail: String): Result<String> {
+        _authFlowActive.value = true
+        return try {
+            authRepo.sendResetCodeToGmail(gmail)
+                .map { "$it-এ একটা লিংক পাঠানো হয়েছে। Gmail খুলে লিংকে চাপুন (না পেলে Spam দেখুন), তারপর এখানে \"পাসওয়ার্ড বদলান\" চাপুন।" }
+                .recoverCatching { throw IllegalArgumentException(it.message) }
+        } finally {
+            _authFlowActive.value = false
+        }
+    }
+
+    /** Forgot password, step 2: after the link was clicked, save the new password. */
+    suspend fun resetPasswordWithGmailCode(identifier: String, gmail: String, newPassword: String): Result<String> {
+        val cleanId = identifier.trim()
+        if (cleanId.isEmpty()) return Result.failure(IllegalArgumentException("মোবাইল নম্বর লিখুন।"))
+        if (newPassword.length < MIN_PASSWORD_LENGTH) {
+            return Result.failure(IllegalArgumentException("নতুন পাসওয়ার্ড কমপক্ষে $MIN_PASSWORD_LENGTH অক্ষরের দিন।"))
+        }
+        _authFlowActive.value = true
+        try {
+            val user = authRepo.resetPasswordWithGmailCode(cleanId, gmail, newPassword)
+                .getOrElse { return Result.failure(IllegalArgumentException(it.message)) }
+            lastLoginPassword = newPassword
+            refreshKnownGmails()
+            _gmailRequired.value = false
+            prefs.setHasCompletedLogin(true)
+            syncLocalProfileFromAccount(nameInput = user.displayName, identifier = user.phoneNumber ?: cleanId)
+            liveChatRepo.ensureOwnProfile(user.uid, user.displayName).onSuccess { _ownProfile.value = it }
+            return Result.success("পাসওয়ার্ড বদলে গেছে।")
+        } finally {
+            _authFlowActive.value = false
+        }
+    }
 
     suspend fun signInWithGoogleFromLogin(activityContext: android.content.Context): com.example.data.repository.AuthResult {
         val result = authRepo.signInWithGoogleInteractive(activityContext)
