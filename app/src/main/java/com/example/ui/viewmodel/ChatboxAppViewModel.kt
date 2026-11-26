@@ -1544,93 +1544,50 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Number / 6-digit ID → ONLY a real Chatbox account. Never creates a fake
+     * "Chatbox Friend (…)" contact. Returns an existing real chat's id right away;
+     * otherwise looks the account up: found → opens a real chat with their name,
+     * not found → shows "no Chatbox account on this number/ID".
+     */
     fun openOrCreateDirectThread(name: String, identifier: String = ""): String {
-        val rawName = name.trim()
-        val rawId = identifier.trim()
-
-        // If the user typed a 6-digit ID or phone number into the name field with identifier blank,
-        // promote it to identifier automatically so 6-digit lookup always works.
-        val resolvedIdentifier = when {
-            rawId.isNotEmpty() -> rawId
-            ChatboxConstants.VALID_SHORT_ID_REGEX.matches(rawName) -> rawName
-            rawName.filter { it.isDigit() }.length >= 7 && rawName.none { it.isLetter() } -> rawName
-            else -> ""
-        }
-        val cleanNameInput = if (resolvedIdentifier == rawName && rawId.isEmpty()) "" else rawName
-        val isSixDigitId = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(resolvedIdentifier)
-        val phoneDigits = resolvedIdentifier.filter { it.isDigit() }
-        val isPhone = !isSixDigitId && phoneDigits.length >= 7
-
-        val cleanName = cleanNameInput
-            .take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
-            .ifEmpty {
-                when {
-                    isSixDigitId -> "Chatbox Friend ($resolvedIdentifier)"
-                    isPhone -> "Chatbox Friend (${phoneDigits.takeLast(4)})"
-                    resolvedIdentifier.isNotEmpty() -> resolvedIdentifier.take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH)
-                    else -> "Chatbox Friend"
-                }
-            }
-
-        val existing = chatboxThreads.value.firstOrNull { thread ->
-            !thread.isGroup && (
-                (cleanNameInput.isNotEmpty() && thread.name.equals(cleanNameInput, ignoreCase = true)) ||
-                    (isSixDigitId && thread.shortId == resolvedIdentifier) ||
-                    (isPhone && thread.phoneNumber.filter { it.isDigit() } == phoneDigits)
+        val query = identifier.trim().ifEmpty { name.trim() }
+        if (query.isEmpty()) return ""
+        val compact = query.removePrefix("#").replace(" ", "")
+        val isId = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(compact)
+        val digits = query.filter { it.isDigit() }
+        val isPhone = !isId && digits.length >= 7 && query.none { it.isLetter() }
+        val existing = chatboxThreads.value.firstOrNull { t ->
+            !t.isGroup && t.id != "saira" && t.peerUid.isNotBlank() && (
+                (isId && t.shortId == compact) ||
+                    (isPhone && t.phoneNumber.filter { it.isDigit() }.let { it.isNotEmpty() && (it == digits || it.takeLast(10) == digits.takeLast(10)) }) ||
+                    (!isId && !isPhone && t.name.equals(query, ignoreCase = true))
                 )
         }
         if (existing != null) return existing.id
-
-        val newId = "dm_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
-        val shortId = if (isSixDigitId) {
-            resolvedIdentifier
-        } else {
-            LiveChatRepository.deterministicSixDigitSeed(
-                resolvedIdentifier.ifBlank { newId }
-            )
+        if (!isId && !isPhone) {
+            showUserNotice("নম্বর বা ৬-সংখ্যার ID লিখে খুঁজুন।")
+            return ""
         }
-        val phone = if (isPhone) resolvedIdentifier else ""
-        val initials = if (isSixDigitId && cleanNameInput.isEmpty()) {
-            resolvedIdentifier.take(2)
-        } else {
-            cleanName.split(" ").filter { it.isNotBlank() }.take(2)
-                .joinToString("") { it.take(1).uppercase() }.ifEmpty { cleanName.take(2).uppercase() }
-        }
-
-        val thread = ChatboxThread(
-            id = newId,
-            name = cleanName,
-            shortId = shortId,
-            phoneNumber = phone,
-            role = "Active now",
-            connectionLabel = "You're connected on Chatbox",
-            locationText = "On Chatbox",
-            workBio = "Chatbox member · ID $shortId",
-            avatarLabel = initials,
-            style = AvatarStyle.entries[Random.nextInt(AvatarStyle.entries.size)],
-            online = true,
-            readReceiptsEnabled = true
-        )
-        _pendingCreatedThreads.value = listOf(thread) + _pendingCreatedThreads.value.filterNot { it.id == newId }
         viewModelScope.launch {
-            chatboxThreadsMutex.withLock {
-                val currentStored = prefs.chatboxThreads.first()
-                if (currentStored.none { it.id == newId }) {
-                    prefs.saveChatboxThreads(listOf(thread) + currentStored)
+            when (val state = searchPeer(query)) {
+                is PeerSearchState.Found -> {
+                    val threadId = openChatWithPeer(state.profile)
+                    if (isPhone) updateThreadNow(threadId) { it.copy(phoneNumber = query) }
+                    selectThread(threadId)
+                    selectTab(AppTab.Core(CoreAppTab.CHATBOX))
                 }
-                _pendingCreatedThreads.value = _pendingCreatedThreads.value.filterNot { it.id == newId }
-            }
-            val me = currentUser.value
-            if ((isSixDigitId || isPhone) && me != null && isOnline.value) {
-                linkThreadToRealPeer(
-                    threadId = newId,
-                    identifier = resolvedIdentifier,
-                    keepCustomName = cleanNameInput.isNotEmpty(),
-                    myUid = me.uid
-                )
+                is PeerSearchState.NotFound -> showUserNotice(state.message)
+                is PeerSearchState.Failed -> showUserNotice(state.message)
+                PeerSearchState.NeedsLogin -> showUserNotice("আগে Log in করুন।")
+                else -> Unit
             }
         }
-        return newId
+        return ""
+    }
+
+    private fun showUserNotice(text: String) {
+        android.widget.Toast.makeText(getApplication(), text, android.widget.Toast.LENGTH_LONG).show()
     }
 
     fun createGroupWithContact(baseThreadId: String, groupName: String, memberNames: List<String>): String {
@@ -1927,9 +1884,23 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Older searches created local-only "Chatbox Friend (…)" threads; link them now. */
     private suspend fun relinkLocalOnlyThreads(uid: String) {
-        val candidates = prefs.chatboxThreads.first().filter { t ->
-            t.id != "saira" && !t.isGroup && t.conversationId.isBlank() &&
-                t.name.startsWith("Chatbox Friend") &&
+        val all = prefs.chatboxThreads.first()
+        // Fake contacts (never linked to a real account and nothing to look up): remove.
+        val fakeIds = all.filter { t ->
+            t.id != "saira" && !t.isGroup && t.peerUid.isBlank() && t.conversationId.isBlank() &&
+                t.phoneNumber.isBlank() && !ChatboxConstants.VALID_SHORT_ID_REGEX.matches(t.shortId)
+        }.map { it.id }.toSet()
+        if (fakeIds.isNotEmpty()) {
+            chatboxThreadsMutex.withLock {
+                prefs.saveChatboxThreads(prefs.chatboxThreads.first().filterNot { it.id in fakeIds })
+            }
+            chatboxMessagesMutex.withLock {
+                prefs.saveChatboxMessages(prefs.chatboxMessages.first() - fakeIds)
+            }
+        }
+        val candidates = all.filter { t ->
+            t.id != "saira" && !t.isGroup && t.id !in fakeIds &&
+                (t.conversationId.isBlank() || t.peerUid.isBlank() || t.name.startsWith("Chatbox Friend")) &&
                 (t.phoneNumber.isNotBlank() || ChatboxConstants.VALID_SHORT_ID_REGEX.matches(t.shortId))
         }
         for (t in candidates) {
@@ -1998,7 +1969,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         val q = query.trim()
         if (!isRemoteSearchQuery(q)) return PeerSearchState.Idle
         val isId = ChatboxConstants.VALID_SHORT_ID_REGEX.matches(q.removePrefix("#").replace(" ", ""))
-        val what = if (isId) "এই ID" else "এই নম্বর"
+        val what = if (isId) "এই ID-তে" else "এই নম্বরে"
         val me = currentUser.value ?: return PeerSearchState.NeedsLogin
         if (!effectiveIsOnline()) {
             return PeerSearchState.Failed("ইন্টারনেট নেই। সংযোগ চালু করে আবার খুঁজুন।")
@@ -2010,7 +1981,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             return PeerSearchState.Failed("খোঁজা যায়নি। একটু পরে আবার চেষ্টা করুন।")
         }
         val peer = result.getOrNull()
-            ?: return PeerSearchState.NotFound("$what-তে কোনো Chatbox account নেই")
+            ?: return PeerSearchState.NotFound("$what কোনো Chatbox user নেই")
         if (peer.uid == me.uid) return PeerSearchState.NotFound("এটি আপনার নিজের account")
         return PeerSearchState.Found(peer)
     }
