@@ -95,12 +95,114 @@ def load(raw: str | None = None) -> list[dict]:
 
 PRO = load()
 _DEAD: set[tuple[str, str]] = set()          # (key, model) pairs that 404'd
+
+# ---- Free "power" brain: the shared Gemini pool on the strongest free models ----
+# Measured on the pool (CI probe, Nov 2026): gemini-3.6-flash and gemini-4-hydrogen answer
+# on free keys; 3.8/3.5-flash are mostly 503 (overloaded); pro/4-argon/neon have no free quota.
+FREE_MODELS = ["gemini-4-hydrogen", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.7-flash",
+               "gemini-3.5-flash", "gemini-flash-latest"]
+POOL_KEYS: list[str] = []
+_POOL_DEAD_MODELS: set[str] = set()
+_POOL_COOL: dict[tuple[str, str], float] = {}   # (key, model) → retry-after (epoch s) after 429
+_POOL_SCORE: dict[str, int] = {}                # model → recent wins (successes) minus failures
+
+
+def enable_pool(keys: list[str]) -> None:
+    """Let the agent use the free Gemini pool when no paid key exists."""
+    POOL_KEYS[:] = [k for k in dict.fromkeys(keys) if k]
+
+
+def pool_ready() -> bool:
+    return bool(POOL_KEYS)
+
+
+def _pool_models() -> list[str]:
+    alive = [m for m in FREE_MODELS if m not in _POOL_DEAD_MODELS]
+    # Keep the preference order, but demote a model that keeps failing this run.
+    return sorted(alive, key=lambda m: (_POOL_SCORE.get(m, 0) < -4, FREE_MODELS.index(m)))
+
+
+def _pool_keys(model: str, n: int) -> list[str]:
+    import random
+    now = time.time()
+    ready = [k for k in POOL_KEYS if _POOL_COOL.get((k, model), 0) <= now]
+    random.shuffle(ready)
+    return ready[:n]
+
+
+def _pool_chat(system: str, messages: list[dict], max_tokens: int, timeout: int) -> tuple[str, str]:
+    """Race the strongest free models on several pool keys at once. The best-ranked model
+    that answers wins; a lower-ranked answer is accepted after a short grace period."""
+    import concurrent.futures as cf
+    last = ""
+    deadline = time.time() + 6 * 60
+    wave = 0
+    while time.time() < deadline:
+        wave += 1
+        models = _pool_models()[:2 if wave == 1 else 3]
+        if not models:
+            break
+        jobs = [(m, k) for m in models for k in _pool_keys(m, 2)]
+        if not jobs:
+            time.sleep(10)
+            continue
+        rank = {m: i for i, m in enumerate(models)}
+        ex = cf.ThreadPoolExecutor(max_workers=len(jobs))
+        futs = {ex.submit(_gemini, {"key": k}, m, system, messages, max_tokens, timeout): (m, k) for m, k in jobs}
+        pending, best, best_at = set(futs), None, 0.0
+        t0 = time.time()
+        try:
+            while pending:
+                wait_for = None if best is None else max(0.0, 12 - (time.time() - best_at))
+                done, pending = cf.wait(pending, timeout=wait_for, return_when=cf.FIRST_COMPLETED)
+                if not done:
+                    break
+                for f in done:
+                    m, k = futs[f]
+                    try:
+                        text = f.result()
+                        if not text.strip():
+                            raise ProError("empty answer")
+                    except urllib.error.HTTPError as h:
+                        last = f"pool/{m} HTTP {h.code}"
+                        _POOL_SCORE[m] = _POOL_SCORE.get(m, 0) - 1
+                        if h.code == 404:
+                            _POOL_DEAD_MODELS.add(m)
+                        elif h.code == 429:
+                            _POOL_COOL[(k, m)] = time.time() + 90
+                        elif h.code in (400, 401, 403):
+                            _POOL_COOL[(k, m)] = time.time() + 3600
+                        continue
+                    except Exception as exc:  # noqa: BLE001
+                        last = f"pool/{m} {type(exc).__name__}: {str(exc)[:100]}"
+                        _POOL_SCORE[m] = _POOL_SCORE.get(m, 0) - 1
+                        continue
+                    _POOL_SCORE[m] = max(0, _POOL_SCORE.get(m, 0)) + 1
+                    if best is None or rank[m] < rank[best[1]]:
+                        best, best_at = (text, m), time.time()
+                    if rank[m] == 0:
+                        pending = set()
+                        break
+            if best is not None:
+                print(f"[brain] pool/{best[1]} answered in {time.time() - t0:.0f}s (wave {wave})")
+                return best[0], f"gemini-pool/{best[1]}"
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+        print(f"[brain] pool wave {wave} failed: {last}")
+        time.sleep(min(15, 3 * wave))
+    raise ProError(last or "free pool did not answer")
 _GOOD: dict[str, str] = {}                   # key → model that worked
 _DISCOVERED: dict[str, list[str]] = {}
 
 
 def available() -> bool:
+    """A paid (pro) key exists."""
     return bool(PRO)
+
+
+def agent_ready() -> bool:
+    """Agentic coding possible: paid keys, or the free pool's strong models."""
+    return bool(PRO) or bool(POOL_KEYS)
 
 
 def describe() -> str:
@@ -221,9 +323,10 @@ def _models_for(e, fast: bool) -> list[str]:
 def chat(system: str, messages: list[dict], max_tokens: int = 16000, fast: bool = False,
          timeout: int = 600, need_vision: bool = False) -> tuple[str, str]:
     """messages: [{"role": "user"|"assistant", "text": str, "images": [(mime, b64)]?}].
-    Returns (text, "provider/model"). Raises ProError when no pro key answers."""
-    if not PRO:
-        raise ProError("no pro keys")
+    Returns (text, "provider/model"). Paid keys first, then the free pool's strong models.
+    Raises ProError when nothing answers."""
+    if not PRO and not POOL_KEYS:
+        raise ProError("no keys")
     last = ""
     for e in PRO:
         if need_vision and e["provider"] not in VISION:
@@ -276,6 +379,10 @@ def chat(system: str, messages: list[dict], max_tokens: int = 16000, fast: bool 
                 if extra:
                     print(f"[brain] {e['provider']}: trying discovered models {extra}")
                     models += extra
+    if POOL_KEYS:
+        if PRO:
+            print(f"[brain] paid keys failed ({last[:120]}) → free Gemini pool")
+        return _pool_chat(system, messages, min(max_tokens, 32000), min(timeout, 240))
     raise ProError(last or "no provider answered")
 
 
