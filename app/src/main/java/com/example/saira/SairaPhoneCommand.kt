@@ -108,9 +108,21 @@ object SairaPhoneCommandParser {
             "স্ক্রিন ?(অফ|বন্ধ|নিভাও|লক)|ফোন ?(লক|বন্ধ করো)"
     )
     private val OPEN_APP = rx(
-        "^(?:please |plz |saira |সায়রা )?(.{2,30}?) ?(?:app )?(?:kholo|khulo|kholo to|open koro|open kor|chalu koro|খোলো|খুলো|চালু করো|ওপেন করো)$|" +
-            "^(?:please |plz )?open (?:the )?(.{2,30}?)(?: app)?$"
+        "^(?:please |plz |saira |সায়রা )?(.{2,30}?)(?: app| অ্যাপ| এপ)?(?: ta| টা| ti| টি)?(?: e| te| এ| তে)? " +
+            "(kholo|khulo|khol|khule dao|khule daw|open koro|open kor|open karo|open kore dao|open|chalu koro|chalu kor|on koro|on kor|" +
+            "jao|jaw|dhuko|launch koro|খোলো|খুলো|খোল|খুলে দাও|ওপেন করো|ওপেন কর|ওপেন করে দাও|চালু করো|চালু কর|অন করো|অন কর|যাও|ঢোকো)$|" +
+            "^(?:please |plz )?(?:open|launch|start|go to) (?:the )?(.{2,30}?)(?: app)?$"
     )
+    private val OPEN_TAIL = rx("(?:[ ,]+(?:to|toh|na|please|plz|ektu|একটু|তো|না|প্লিজ|এখনই|ekhon|ekhoni))+$")
+    private val GO_VERBS = setOf("jao", "jaw", "dhuko", "যাও", "ঢোকো")
+    /** Apps "… e jao" may refer to (a go-verb alone is too common in normal speech). */
+    private val KNOWN_APPS = rx(
+        "^(youtube|youtub|facebook|fb|settings?|chrome|camera|gallery|maps?|google maps|play ?store|tiktok|instagram|insta|gmail|bkash|nagad|" +
+            "rocket|upay|telegram|whatsapp|imo|viber|messenger|chatbox|x|twitter|snapchat|zoom|drive|calculator|clock|calendar|files?|music|" +
+            "ইউটিউব|ফেসবুক|সেটিংস|সেটিং|ক্রোম|ক্যামেরা|গ্যালারি|গ্যালারী|ম্যাপ|ম্যাপস|প্লে স্টোর|টিকটক|ইনস্টাগ্রাম|জিমেইল|বিকাশ|নগদ|" +
+            "চ্যাটবক্স|ক্যালকুলেটর|ঘড়ি|ক্যালেন্ডার|ফাইল|মিউজিক|হোয়াটসঅ্যাপ|টেলিগ্রাম|ইমো|ভাইবার|মেসেঞ্জার)$"
+    )
+    private val NOT_APPS = setOf("screen", "স্ক্রিন", "call", "কল", "phone call", "light", "ফোন কল")
 
     private val YES = rx(
         "^(ha+|haa+|hya+|hyaa+|ji+|jee|hm+|hmm+|yes|yeah|yep|ok|okay|okey|sure|thik ache|thik ase|thikache|koro|kor|dao|daw|confirm|" +
@@ -231,13 +243,7 @@ object SairaPhoneCommandParser {
             else -> null
         }
         if (action == null) {
-            val open = OPEN_APP.find(low)
-            if (open != null && !hasCall && !strongMsg) {
-                val appName = (open.groupValues[1].ifBlank { open.groupValues[2] }).trim()
-                if (appName.isNotEmpty() && appName.split(' ').size <= 3) {
-                    return PhoneCommand(PhoneAction.OPEN_APP, app ?: PhoneApp.OTHER, target = appName)
-                }
-            }
+            if (!hasCall && !strongMsg) parseOpenApp(low)?.let { return it }
             return null
         }
 
@@ -266,6 +272,33 @@ object SairaPhoneCommandParser {
             !ANSWER.containsMatchIn(low.replace(rx("\\b(dao|daw|dew)\\b|দাও"), ""))
 
     /** Maps the AI extractor's JSON fields to a command (null for "none"). */
+    /** "whatsapp kholo", "হোয়াটসঅ্যাপে যাও", "open youtube.", "ইউটিউব খুলে দাও তো" → OPEN_APP. */
+    fun parseOpenApp(lowRaw: String): PhoneCommand? {
+        val low = lowRaw.trim().trimEnd('.', '!', '।', '?', ',', ' ').replace(OPEN_TAIL, "").trimEnd('.', '!', '।', ',', ' ')
+        val m = OPEN_APP.find(low) ?: return null
+        var name = m.groupValues[1].ifBlank { m.groupValues[3] }.trim().trim(',', '.')
+        val verb = m.groupValues[2]
+        // "হোয়াটসঅ্যাপে" / "whatsapp-e" → the app name without the locative ending
+        name = name.replace(rx("(?:-e|-te)$"), "")
+        // fillers / classifiers: "ক্যামেরাটা একটু" → "ক্যামেরা", "youtube ta ektu" → "youtube"
+        name = name.split(' ').filterNot { it in setOf("ektu", "একটু", "ta", "টা", "ti", "টি", "amar", "আমার") }
+            .joinToString(" ").replace(rx("(টা|টি)$"), "").trim()
+        if (name.any { it in '\u0980'..'\u09FF' }) {
+            val bnApp = detectApp(name)
+            if (bnApp != null && name.endsWith("ে")) name = name.dropLast(1)
+        }
+        if (name.isEmpty() || name.split(' ').size > 3 || name in NOT_APPS) return null
+        if (verb in GO_VERBS && !KNOWN_APPS.matches(name) && detectApp(name) == null) return null
+        val detected = detectApp(name)
+        val facebook = name.contains("facebook") || name.contains("ফেসবুক") || name == "fb"
+        val app = when {
+            facebook && !name.contains("messenger") && !name.contains("মেসেঞ্জার") -> PhoneApp.OTHER
+            detected != null && detected != PhoneApp.PHONE && detected != PhoneApp.SMS -> detected
+            else -> PhoneApp.OTHER
+        }
+        return PhoneCommand(PhoneAction.OPEN_APP, app, target = name)
+    }
+
     fun fromFields(action: String?, app: String?, target: String?, text: String?): PhoneCommand? {
         val act = when (action?.trim()?.lowercase()) {
             "call" -> PhoneAction.CALL

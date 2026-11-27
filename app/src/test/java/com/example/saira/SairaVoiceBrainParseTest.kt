@@ -29,4 +29,18 @@ class SairaVoiceBrainParseTest {
         )
         assertEquals("Aaj shukrobar!", SairaVoiceBrain.parse("T: x\nR: Aaj shukrobar, Saira!", true).reply)
     }
+
+    @Test
+    fun `command json comes with the transcript`() {
+        val u = SairaVoiceBrain.parse(
+            "T: Saira WhatsApp open karo\nR: -\nC: {\"action\":\"open_app\",\"app\":\"whatsapp\",\"target\":\"whatsapp\",\"text\":\"\"}",
+            wantReply = true
+        )
+        assertEquals("Saira WhatsApp open karo", u.transcript)
+        assertNull(u.reply)
+        assertEquals("{\"action\":\"open_app\",\"app\":\"whatsapp\",\"target\":\"whatsapp\",\"text\":\"\"}", u.commandJson)
+        val q = SairaVoiceBrain.parse("T: সায়রা আজ কি বার?\nR: আজ শুক্রবার।\nC: -", wantReply = true)
+        assertEquals("আজ শুক্রবার।", q.reply)
+        assertNull(q.commandJson)
+    }
 }

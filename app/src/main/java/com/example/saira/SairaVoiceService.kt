@@ -128,6 +128,8 @@ class SairaVoiceService : Service() {
     private data class Pending(val cmd: PhoneCommand, val number: String?, val who: String, val until: Long)
     @Volatile private var pending: Pending? = null
     @Volatile private var followUpUntil = 0L
+    /** The command the hearing request itself read from the speech (JSON), used when local rules miss. */
+    @Volatile private var aiCommand: String? = null
     @Volatile private var needsWho: PhoneCommand? = null
     @Volatile private var needsWhoUntil = 0L
     private val history = ArrayDeque<AiChatMessage>()
@@ -260,7 +262,7 @@ class SairaVoiceService : Service() {
                         if (r > speechPeak) speechPeak = r
                         // Quiet = well below the speaker's own level too (so a noisy room can't keep the segment open).
                         if (r < maxOf(noise * 2.0, 260.0, speechPeak * 0.12)) silence++ else silence = 0
-                        val tooLong = speech.size >= 450 // 9 s
+                        val tooLong = speech.size >= 750 // 15 s
                         if (silence >= END_SILENCE_FRAMES || tooLong) {
                             // Drop most of the trailing silence: less to upload = faster answer.
                             repeat((silence - 8).coerceAtLeast(0)) { if (speech.isNotEmpty()) speech.removeAt(speech.size - 1) }
@@ -323,6 +325,7 @@ class SairaVoiceService : Service() {
             SairaVoiceMode.setStatus("পরিষ্কার কথা শুনিনি — আবার বলুন")
             return
         }
+        aiCommand = understood.commandJson
         handleTranscript(heard, understood.reply)
     }
 
@@ -374,7 +377,17 @@ class SairaVoiceService : Service() {
                 .replace(Regex("(কে|ke|কেই)$", RegexOption.IGNORE_CASE), "").trim()
             parsed = waiting.copy(target = n ?: name)
         }
+        val fromHearing = aiCommand?.let { SairaPhoneActions.parseAiJson(it) }
+        aiCommand = null
+        if (parsed == null && fromHearing != null) parsed = fromHearing
+        // Gemini writes app names in English ("YouTube", "camera") — easier to find on the launcher.
+        if (parsed?.action == PhoneAction.OPEN_APP && fromHearing?.action == PhoneAction.OPEN_APP &&
+            fromHearing.target.isNotBlank() && fromHearing.target.all { it.code < 128 }
+        ) parsed = parsed.copy(target = fromHearing.target, app = if (parsed.app == PhoneApp.OTHER) fromHearing.app else parsed.app)
         if (parsed == null && SairaPhoneCommandParser.mightBeCommand(command)) parsed = SairaPhoneActions.extractWithAi(command)
+        if (parsed != null && parsed.needsText && fromHearing != null && fromHearing.text.isNotBlank()) {
+            parsed = parsed.copy(text = fromHearing.text)
+        }
         if (parsed != null && parsed.needsText) {
             val ai = SairaPhoneActions.extractWithAi(command)
             if (ai != null && ai.text.isNotBlank()) parsed = parsed.copy(text = ai.text)
@@ -586,8 +599,8 @@ class SairaVoiceService : Service() {
         /** Saira's fixed lines — generated once in her cloud voice and cached, so they play instantly. */
         val PHRASES = listOf(P_WHO, P_SENT, P_CANCELLED, P_SORRY, P_WHAT, "জি, বলুন।")
 
-        /** 0.5 s of quiet ends a sentence (was 0.8 s) — Saira starts working sooner. */
-        private const val END_SILENCE_FRAMES = 25
+        /** 1.1 s of quiet ends what the owner is saying — short pauses inside a command don't cut it. */
+        private const val END_SILENCE_FRAMES = 55
         private const val VOICE_SYSTEM =
             "You are Saira, a warm female voice assistant on the user's phone. Reply in the user's language " +
                 "(Bengali, Banglish or English) in 1–3 short spoken sentences. No markdown, lists, emojis or links."
