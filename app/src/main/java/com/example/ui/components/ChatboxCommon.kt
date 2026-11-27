@@ -210,41 +210,40 @@ fun SairaMetaOrb(
     animate: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val transition = rememberInfiniteTransition(label = "saira_orb")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (animate) 1800 else 9000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orb_rotation"
-    )
-    Canvas(modifier = modifier.size(size)) {
-        val strokeWidth = (this.size.minDimension * 0.14f).coerceAtLeast(2.5f)
-        val radius = (this.size.minDimension - strokeWidth) / 2f
-        rotate(degrees = rotation) {
-            drawCircle(
-                brush = Brush.sweepGradient(
-                    colors = listOf(
-                        MetaOrbPurple,
-                        MetaOrbIndigo,
-                        MetaOrbPink,
-                        MetaOrbCyan,
-                        MetaOrbPurple
-                    )
+    // Saira's logo; a spinning gradient ring shows while she's thinking.
+    Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
+        if (animate) {
+            val transition = rememberInfiniteTransition(label = "saira_orb")
+            val rotation by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 1400, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
                 ),
-                radius = radius,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                label = "orb_rotation"
             )
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokeWidth = (this.size.minDimension * 0.08f).coerceAtLeast(2f)
+                rotate(degrees = rotation) {
+                    drawCircle(
+                        brush = Brush.sweepGradient(
+                            colors = listOf(MetaOrbPurple, MetaOrbIndigo, MetaOrbPink, MetaOrbCyan, MetaOrbPurple)
+                        ),
+                        radius = (this.size.minDimension - strokeWidth) / 2f,
+                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                    )
+                }
+            }
         }
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(Color(0xFFA78BFA), MetaOrbIndigo, MetaOrbCyan),
-                center = Offset(this.size.width * 0.42f, this.size.height * 0.42f),
-                radius = this.size.minDimension * 0.34f
-            ),
-            radius = this.size.minDimension * 0.25f
+        Image(
+            painter = painterResource(R.drawable.saira_ai_icon),
+            contentDescription = "Saira",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(if (animate) size * 0.1f else 0.dp)
+                .clip(CircleShape)
         )
     }
 }

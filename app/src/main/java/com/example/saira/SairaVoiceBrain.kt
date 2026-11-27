@@ -19,6 +19,7 @@ import java.net.URL
 class SairaVoiceBrain(context: Context) {
     private val pool = GeminiKeyPool(context.applicationContext)
 
+    /** Text of the speech ("" = no clear speech), or null when no model could be reached. */
     suspend fun transcribe(pcm: ShortArray): String? = withContext(Dispatchers.IO) {
         val wav = SairaVoiceprint.toWav(pcm)
         val b64 = Base64.encodeToString(wav, Base64.NO_WRAP)
@@ -35,31 +36,53 @@ class SairaVoiceBrain(context: Context) {
                     )
                 )
             )
-            put("generationConfig", JSONObject().put("maxOutputTokens", 300))
+            put("generationConfig", JSONObject().put("maxOutputTokens", 400).put("temperature", 0))
         }.toString()
 
-        val keys = runCatching { pool.availableKeys() }.getOrDefault(emptyList()).take(6)
+        // Measured live (CI probe, Nov 2026): flash-lite models transcribe Bengali/English in ~1 s,
+        // while 3.6-flash / 4-hydrogen are mostly quota (429) / overloaded (503) on the free pool.
+        val keys = runCatching { pool.availableKeys() }.getOrDefault(emptyList()).shuffled().take(8)
+        if (keys.isEmpty()) { lastError = "no keys"; return@withContext null }
+        val started = System.currentTimeMillis()
+        var tries = 0
         for (model in MODELS) {
+            var failures = 0
             for (key in keys) {
+                if (System.currentTimeMillis() - started > BUDGET_MS || tries >= MAX_TRIES) break
+                tries++
                 val (code, raw) = post("$BASE/$model:generateContent?key=$key", body)
                 when {
-                    code in 200..299 -> return@withContext parseText(raw)?.let { cleanTranscript(it) }
-                    code == 429 || raw.contains("RESOURCE_EXHAUSTED") -> pool.markCooling(key, 60_000L)
-                    code == 404 -> break // model unavailable → next model
-                    code >= 500 -> continue
-                    else -> Log.w(TAG, "transcribe HTTP $code ${raw.take(160)}")
+                    code in 200..299 -> {
+                        lastError = null
+                        return@withContext parseText(raw)?.let { cleanTranscript(it) }.orEmpty()
+                    }
+                    code == 404 || raw.contains("is not found", ignoreCase = true) -> break
+                    code == 429 || raw.contains("RESOURCE_EXHAUSTED") -> {
+                        // Only cool the shared pool for the model Saira chat also uses.
+                        if (model == GeminiAiProvider.DEFAULT_MODEL) pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
+                        lastError = "quota"
+                    }
+                    else -> {
+                        lastError = "HTTP $code"
+                        Log.w(TAG, "transcribe $model HTTP $code ${raw.take(160)}")
+                        if (++failures >= 2) break // overloaded / timing out → next model
+                    }
                 }
             }
         }
         null
     }
 
+    /** Short reason for the last failed [transcribe] (for the status line). */
+    @Volatile var lastError: String? = null
+        private set
+
     private fun post(url: String, body: String): Pair<Int, String> = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
-            conn.connectTimeout = 6_000
-            conn.readTimeout = 20_000
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 9_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.outputStream.use { it.write(body.toByteArray()) }
@@ -80,7 +103,9 @@ class SairaVoiceBrain(context: Context) {
     companion object {
         private const val TAG = "SairaVoiceBrain"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        private val MODELS = listOf("gemini-3.6-flash", GeminiAiProvider.DEFAULT_MODEL, "gemini-4-hydrogen")
+        private val MODELS = listOf(GeminiAiProvider.DEFAULT_MODEL, GeminiAiProvider.FALLBACK_MODEL, "gemini-3.6-flash")
+        private const val BUDGET_MS = 18_000L
+        private const val MAX_TRIES = 8
 
         private const val SYSTEM =
             "You are a speech-to-text engine for a phone assistant named Saira (Bengali: সায়রা). " +
