@@ -340,7 +340,7 @@ fun ProfileScreen(
                     "Chatbox v${ChatboxConstants.APP_VERSION} · Up to date"
                 },
                 icon = Icons.Rounded.SystemUpdate,
-                showGreenDot = false,
+                showGreenDot = appUpdate.active,
                 onClick = {
                     onAppUpdateClick()
                 }
