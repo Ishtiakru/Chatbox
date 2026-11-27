@@ -1,0 +1,30 @@
+# Re-announce a release to all installed apps (settings/sparkUpdate).
+# release-apk does this automatically; use this to (re)announce by hand.
+name: Announce app update
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag (blank = latest)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Announce
+        env:
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          TAG_IN: ${{ inputs.tag }}
+        run: |
+          python3 -m pip install --quiet google-auth
+          TAG="${TAG_IN:-$(gh api repos/${{ github.repository }}/releases/latest -q .tag_name)}"
+          python3 .github/scripts/announce_update.py "$TAG"
