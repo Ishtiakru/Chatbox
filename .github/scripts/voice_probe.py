@@ -19,6 +19,8 @@ def note(m):
 keys = [k.strip() for k in open("/tmp/pool.txt", encoding="utf-8").read().splitlines() if k.strip() and not k.startswith("#")]
 note(f"keys={len(keys)}")
 from gtts import gTTS
+import imageio_ffmpeg
+FF = imageio_ffmpeg.get_ffmpeg_exe()
 wavs = []
 for i, (lang, text) in enumerate(PHRASES):
     try:
@@ -28,7 +30,7 @@ for i, (lang, text) in enumerate(PHRASES):
         note(f"gtts failed: {str(e)[:150]} -> espeak")
         subprocess.run(["espeak-ng", "-v", lang, "-w", f"/tmp/p{i}_e.wav", text], check=True)
         src = f"/tmp/p{i}_e.wav"
-    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", f"/tmp/p{i}.wav"], capture_output=True, text=True)
+    r = subprocess.run([FF, "-loglevel", "error", "-y", "-i", src, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", f"/tmp/p{i}.wav"], capture_output=True, text=True)
     if r.returncode: note("ffmpeg: " + r.stderr[:200])
     wavs.append(base64.b64encode(open(f"/tmp/p{i}.wav", "rb").read()).decode())
 

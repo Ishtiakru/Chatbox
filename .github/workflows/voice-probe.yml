@@ -23,7 +23,7 @@ jobs:
               raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
           open("/tmp/pool.txt", "w", encoding="utf-8").write(raw)
           PY
-          pip install --quiet gTTS
+          pip install --quiet gTTS imageio-ffmpeg
           sudo apt-get install -y -qq espeak-ng ffmpeg >/dev/null 2>&1 || true
           timeout 600s python3 .github/scripts/voice_probe.py
       - name: Cleanup
