@@ -207,6 +207,16 @@ class SairaFeatureSuiteRobolectricTest {
         // Admin's layout: no Privacy / Chats rows; Edit picture + Edit name rows; Account = ID, Gmail, phone only.
         composeRule.onAllNodesWithTag("profile_row_privacy").assertCountEquals(0)
         composeRule.onAllNodesWithTag("profile_row_chats").assertCountEquals(0)
+        // Header: no ID chip / Gmail / pencil (full editor) — those live in Account only.
+        composeRule.onAllNodesWithTag("profile_copy_id_chip").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("profile_edit_button").assertCountEquals(0)
+        composeRule.onNodeWithTag("profile_status_bubble").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("profile_about_input").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("profile_name_input").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("profile_phone_input").assertCountEquals(0)
+        composeRule.onNodeWithText("Close").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("profile_row_edit_profile_picture").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("profile_row_edit_name").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("profile_row_account").performScrollTo().performClick()

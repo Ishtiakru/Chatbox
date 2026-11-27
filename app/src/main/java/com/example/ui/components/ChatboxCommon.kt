@@ -499,7 +499,7 @@ fun AppUpdateDetailsDialog(
 }
 
 /** FULL = everything (old dialog); ACCOUNT = ID + Gmail + phone only; NAME = just the display name. */
-enum class ProfileDialogMode { FULL, ACCOUNT, NAME }
+enum class ProfileDialogMode { FULL, ACCOUNT, NAME, ABOUT }
 
 @Composable
 fun ProfileModalDialog(
@@ -582,6 +582,7 @@ fun ProfileModalDialog(
                             text = when (mode) {
                                 ProfileDialogMode.ACCOUNT -> "Account"
                                 ProfileDialogMode.NAME -> "Edit name"
+                                ProfileDialogMode.ABOUT -> "About"
                                 ProfileDialogMode.FULL -> "Profile"
                             },
                             style = MaterialTheme.typography.titleMedium,
@@ -591,6 +592,7 @@ fun ProfileModalDialog(
                             text = when (mode) {
                                 ProfileDialogMode.ACCOUNT -> "6-digit ID, phone number & Gmail"
                                 ProfileDialogMode.NAME -> "The name friends see"
+                                ProfileDialogMode.ABOUT -> "The status line above your photo"
                                 ProfileDialogMode.FULL -> "Your 6-digit ID & phone discovery"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -643,7 +645,7 @@ fun ProfileModalDialog(
                         }
 
                         // 6-digit Chatbox ID card
-                        if (mode != ProfileDialogMode.NAME) Surface(
+                        if (mode == ProfileDialogMode.FULL || mode == ProfileDialogMode.ACCOUNT) Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = Color(0xFFF7F5FB),
                             border = BorderStroke(1.dp, Color(0xFFE3DCF2)),
@@ -743,7 +745,7 @@ fun ProfileModalDialog(
                             }
                         }
 
-                        if (mode != ProfileDialogMode.ACCOUNT) OutlinedTextField(
+                        if (mode == ProfileDialogMode.FULL || mode == ProfileDialogMode.NAME) OutlinedTextField(
                             value = displayName,
                             onValueChange = { displayName = it.take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH) },
                             label = { Text("Name") },
@@ -753,7 +755,7 @@ fun ProfileModalDialog(
                                 .testTag("profile_name_input")
                         )
 
-                        if (mode == ProfileDialogMode.FULL) OutlinedTextField(
+                        if (mode == ProfileDialogMode.FULL || mode == ProfileDialogMode.ABOUT) OutlinedTextField(
                             value = about,
                             onValueChange = { about = it.take(ChatboxConstants.MAX_ABOUT_LENGTH) },
                             label = { Text("About (WhatsApp-style)") },
@@ -763,7 +765,7 @@ fun ProfileModalDialog(
                                 .testTag("profile_about_input")
                         )
 
-                        if (mode == ProfileDialogMode.FULL) Row(
+                        if (mode == ProfileDialogMode.FULL || mode == ProfileDialogMode.ABOUT) Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .horizontalScroll(rememberScrollState()),
@@ -782,7 +784,7 @@ fun ProfileModalDialog(
                             }
                         }
 
-                        if (mode != ProfileDialogMode.NAME) OutlinedTextField(
+                        if (mode == ProfileDialogMode.FULL || mode == ProfileDialogMode.ACCOUNT) OutlinedTextField(
                             value = phoneNumber,
                             onValueChange = { phoneNumber = it.take(ChatboxConstants.MAX_PHONE_LENGTH) },
                             label = {
