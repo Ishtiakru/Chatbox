@@ -413,7 +413,8 @@ Use "none" when the user is not asking the phone to do one of these actions righ
         SairaNotificationListenerService.fireCallAction(context, answer = false)?.let { app ->
             return PhoneOutcome(true, "📵 $app কল কেটে দিয়েছি।")
         }
-        if (granted(context, Manifest.permission.ANSWER_PHONE_CALLS)) {
+        // TelecomManager.endCall exists only on Android 9+.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && granted(context, Manifest.permission.ANSWER_PHONE_CALLS)) {
             val ended = runCatching {
                 val tm = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
                 @Suppress("DEPRECATION") tm.endCall()

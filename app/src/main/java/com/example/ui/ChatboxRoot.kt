@@ -182,24 +182,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val hasCompletedLogin by viewModel.hasCompletedLogin.collectAsState()
     val storedAccountIdentifier by viewModel.storedAccountIdentifier.collectAsState()
 
-    var splashDone by remember { mutableStateOf(false) }
-    var splashAppeared by remember { mutableStateOf(false) }
-    val splashAlpha by animateFloatAsState(
-        targetValue = if (splashAppeared) 1f else 0f,
-        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "splashAlpha"
-    )
-    val splashScale by animateFloatAsState(
-        targetValue = if (splashAppeared) 1f else 0.88f,
-        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
-        label = "splashScale"
-    )
-
-    LaunchedEffect(Unit) {
-        splashAppeared = true
-        delay(1200)
-        splashDone = true
-    }
+    // Survives rotation / theme changes: the intro plays once per app start.
+    var splashDone by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     // Whole-app language: translate fixed UI texts into the language the user picked.
     val chosenLanguage by viewModel.chosenLanguage.collectAsState()
@@ -232,50 +216,11 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         ChatboxTheme(useLavenderTheme = appearance.theme == "lavender") {
         val colors = LocalChatboxColors.current
         if (!splashDone) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.White)
-                    .testTag("launch_splash_screen"),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .alpha(splashAlpha)
-                        .scale(splashScale)
-                        .padding(horizontal = 32.dp)
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .size(112.dp)
-                            .border(2.dp, Color(0xFF10B981).copy(alpha = 0.40f), CircleShape),
-                        shape = CircleShape,
-                        color = Color.White,
-                        shadowElevation = 8.dp
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.saira_asset_5733705484_1),
-                            contentDescription = stringResource(R.string.app_name),
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    Spacer(Modifier.height(18.dp))
-                    Text(
-                        text = dynamicConfig.appTitle.ifBlank { stringResource(R.string.app_name) },
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.ink
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.app_tagline),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.inkSubtle
-                    )
-                }
-            }
+            com.example.ui.components.ChatboxSplash(
+                title = dynamicConfig.appTitle.ifBlank { stringResource(R.string.app_name) },
+                tagline = com.example.ui.i18n.tr(stringResource(R.string.app_tagline)),
+                onFinished = { splashDone = true }
+            )
             return@ChatboxTheme
         }
 

@@ -79,7 +79,8 @@ class ChatboxDmRobolectricTest {
     }
 
     private fun advancePastSplashAndEnterChatbox() {
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        // the launch intro runs ≈ 2.7 s of animation clock
+        composeRule.waitUntil(timeoutMillis = 12_000) {
             Shadows.shadowOf(Looper.getMainLooper()).idleFor(300, TimeUnit.MILLISECONDS)
             composeRule.mainClock.advanceTimeBy(300)
             composeRule.onAllNodesWithTag("login_back_button").fetchSemanticsNodes().isNotEmpty() ||

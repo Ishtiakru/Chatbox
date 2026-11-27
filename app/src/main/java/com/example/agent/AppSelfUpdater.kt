@@ -5,7 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -151,6 +153,8 @@ object AppSelfUpdater {
         var hops = 0
         while (conn == null) {
             if (hops++ > 5) throw IOException("too many redirects")
+            // Updates only over HTTPS — a redirect may never downgrade to plain http.
+            if (!current.startsWith("https://")) throw IOException("insecure update link")
             val c = URL(current).openConnection() as HttpURLConnection
             c.instanceFollowRedirects = false
             c.connectTimeout = 20_000
@@ -158,7 +162,8 @@ object AppSelfUpdater {
             c.setRequestProperty("User-Agent", "Chatbox-Updater")
             val code = c.responseCode
             if (code in 300..399) {
-                current = c.getHeaderField("Location") ?: throw IOException("bad redirect")
+                current = c.getHeaderField("Location")?.let { URL(URL(current), it).toString() }
+                    ?: throw IOException("bad redirect")
                 c.disconnect()
             } else {
                 if (code !in 200..299) {
@@ -189,14 +194,52 @@ object AppSelfUpdater {
                             }
                         }
                     }
+                    if (total > 0 && done != total) throw IOException("ফাইল অসম্পূর্ণ — আবার চেষ্টা করুন")
                 }
             }
         } finally {
             c.disconnect()
         }
         if (out.length() < 1_000_000) throw IOException("ফাইল অসম্পূর্ণ")
+        verifyApk(context, out)
         out
     }
+
+    /**
+     * The downloaded file must be Chatbox itself, signed with the same key as the installed app.
+     * Android also refuses a differently signed update, but checking first gives a clear message
+     * and never hands a foreign APK to the installer.
+     */
+    private fun verifyApk(context: Context, apk: File) {
+        val pm = context.packageManager
+        @Suppress("DEPRECATION")
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES
+        else PackageManager.GET_SIGNATURES
+        val info = pm.getPackageArchiveInfo(apk.path, flags)
+        if (info == null) {
+            apk.delete()
+            throw IOException("ডাউনলোড করা ফাইলটা ঠিক APK নয়")
+        }
+        if (info.packageName != context.packageName) {
+            apk.delete()
+            throw IOException("এটা Chatbox-এর APK নয়")
+        }
+        val theirs = signerSet(info)
+        val mine = runCatching { signerSet(pm.getPackageInfo(context.packageName, flags)) }.getOrDefault(emptySet())
+        // Some Android versions can't read an archive's signer — then the system installer decides.
+        if (theirs.isNotEmpty() && mine.isNotEmpty() && theirs.intersect(mine).isEmpty()) {
+            apk.delete()
+            throw IOException("APK-র সাইন মেলেনি — নিরাপত্তার জন্য ইনস্টল করিনি")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun signerSet(p: PackageInfo): Set<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val si = p.signingInfo ?: return emptySet()
+            val certs = if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            certs?.map { it.toCharsString() }?.toSet().orEmpty()
+        } else p.signatures?.map { it.toCharsString() }?.toSet().orEmpty()
 
     private suspend fun install(context: Context, apk: File) = withContext(Dispatchers.IO) {
         val installer = context.packageManager.packageInstaller
