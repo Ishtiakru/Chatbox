@@ -66,7 +66,7 @@ class CallEngine(
 
     private val _micMuted = MutableStateFlow(false)
     val micMuted: StateFlow<Boolean> = _micMuted.asStateFlow()
-    private val _speakerOn = MutableStateFlow(isVideo)
+    private val _speakerOn = MutableStateFlow(false)
     val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
     private val _cameraOff = MutableStateFlow(false)
     val cameraOff: StateFlow<Boolean> = _cameraOff.asStateFlow()

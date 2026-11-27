@@ -62,6 +62,7 @@ object ChatboxNotifier {
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .build()
                         )
+                        setBypassDnd(true)
                         enableVibration(vibrate)
                         vibrationPattern = if (vibrate) longArrayOf(0, 1000, 500, 1000, 500, 1000) else null
                     }
@@ -97,10 +98,12 @@ object ChatboxNotifier {
         ensureChannels(context)
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val id = ("call::$callKey").hashCode()
+        val tone = ChatboxSounds.tone(context, ChatboxSounds.Kind.CALL)
         val notification = Notification.Builder(context, callChannel(context))
             .setSmallIcon(R.drawable.ic_stat_saira)
             .setContentTitle(title)
             .setContentText(body)
+            .setSound(tone)
             .setOngoing(true)
             .setAutoCancel(false)
             .setCategory(Notification.CATEGORY_CALL)
