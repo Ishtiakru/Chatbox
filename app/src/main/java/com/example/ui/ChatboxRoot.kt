@@ -51,7 +51,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.example.ui.i18n.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -198,11 +198,34 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
         splashDone = true
     }
 
+    // Whole-app language: translate fixed UI texts into the language the user picked.
+    val chosenLanguage by viewModel.chosenLanguage.collectAsState()
+    val i18nContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(chosenLanguage) { com.example.ui.i18n.UiTranslator.setLanguage(i18nContext, chosenLanguage) }
+    val uiDictionary by com.example.ui.i18n.UiTranslator.dictionary.collectAsState()
     androidx.compose.runtime.CompositionLocalProvider(
-        androidx.compose.ui.platform.LocalConfiguration provides androidx.compose.ui.platform.LocalConfiguration.current.also {
-            it.setLocales(android.os.LocaleList.forLanguageTags(loginLanguage))
-        }
+        com.example.ui.i18n.LocalUiDictionary provides uiDictionary,
+        androidx.compose.ui.platform.LocalLayoutDirection provides
+            if (com.example.ui.i18n.UiTranslator.isRtl(chosenLanguage)) androidx.compose.ui.unit.LayoutDirection.Rtl
+            else androidx.compose.ui.platform.LocalLayoutDirection.current
     ) {
+        val i18nProgress by com.example.ui.i18n.UiTranslator.progress.collectAsState()
+        if (i18nProgress >= 0) {
+            androidx.compose.ui.window.Popup(alignment = Alignment.TopCenter) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF2A2340),
+                    modifier = Modifier.padding(top = 48.dp)
+                ) {
+                    androidx.compose.material3.Text(
+                        text = "🌐 ${com.example.data.model.WorldLanguages.displayLabel(chosenLanguage)} — $i18nProgress%",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
         ChatboxTheme(useLavenderTheme = appearance.theme == "lavender") {
         val colors = LocalChatboxColors.current
         if (!splashDone) {

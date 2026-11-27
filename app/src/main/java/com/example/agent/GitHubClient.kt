@@ -94,8 +94,12 @@ class GitHubClient(private val token: String?, val repo: String = DEFAULT_REPO) 
                 request("GET", "https://api.github.com/repos/$repo/check-runs/$jobId/annotations").second
             )
             for (j in 0 until ann.length()) {
-                val msg = ann.getJSONObject(j).optString("message")
-                if (msg.isNotBlank() && !msg.contains("Node.js")) out += msg
+                val a = ann.getJSONObject(j)
+                val msg = a.optString("message")
+                // Only Saira's own notices — never GitHub's generic warnings ("setup-java v4 is deprecated" …).
+                if (msg.isNotBlank() && a.optString("annotation_level") == "notice" &&
+                    (a.optString("title") == "SAIRA" || a.optString("title").isBlank())
+                ) out += msg
             }
         }
         out

@@ -27,9 +27,13 @@ ROOT = os.getcwd()
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 STRONG = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
 LITE = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
-ALLOWED_PREFIXES = ("app/src/main/java/", "app/src/main/res/", "app/src/main/AndroidManifest.xml")
+ALLOWED_PREFIXES = ("app/src/main/java/", "app/src/main/res/", "app/src/main/AndroidManifest.xml", "app/src/test/")
 FORBIDDEN = ("google-services.json", "saira_pool.dat", "firebase_applet_config.xml")
-MAX_FIX_ROUNDS = 3
+MAX_FIX_ROUNDS = 4
+MAX_TEST_ROUNDS = 2
+ROBO = ["-Drobolectric.offline=true",
+        "-Drobolectric.dependency.dir=" + os.path.expanduser(
+            "~/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7")]
 
 
 def notice(msg: str) -> None:
@@ -82,7 +86,7 @@ def _call(model: str, key: str, body: bytes, timeout: int) -> dict:
         raise ValueError(f"bad json (finish={cands[0].get('finishReason')})") from exc
 
 
-def gemini(system: str, prompt: str, max_tokens: int = 32768) -> dict:
+def gemini(system: str, prompt: str, max_tokens: int = 32768, images: "list | None" = None) -> dict:
     """JSON-mode call, raced for speed: every strong model + one lite model are asked
     at the same time on different keys. The first strong answer wins; a lite answer
     is used if no strong model answers within a short grace period. Models that
@@ -92,7 +96,9 @@ def gemini(system: str, prompt: str, max_tokens: int = 32768) -> dict:
         raise RuntimeError("AI_KEY_POOL empty")
     body = json.dumps({
         "system_instruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": [
+            {"inline_data": {"mime_type": m, "data": d}} for m, d in (images or [])
+        ] + [{"text": prompt}]}],
         "generationConfig": {
             "maxOutputTokens": max_tokens,
             "temperature": 0.2,
@@ -195,8 +201,8 @@ Rules:
 - "search" must be copied EXACTLY (same whitespace/indentation) from the given file and must occur exactly ONCE. Keep it short (3-15 lines) but unique.
 - Make the smallest correct change. Keep all existing behaviour that the admin did not ask to change.
 - The code must compile: Kotlin 2.2, Jetpack Compose Material3, minSdk 26. Add every import you use. Do not invent library APIs or new Gradle dependencies — only use what the project already imports.
-- Only paths under app/src/main/java/, app/src/main/res/ or app/src/main/AndroidManifest.xml.
-- User-facing text may be Bengali.
+- Only paths under app/src/main/java/, app/src/main/res/, app/src/main/AndroidManifest.xml (or app/src/test/ when told to fix a unit test).
+- User-facing text may be Bengali. For Text composables use `import com.example.ui.i18n.Text` (NOT androidx.compose.material3.Text) so the app-wide language switch can translate it.
 """
 
 
@@ -326,6 +332,79 @@ def fetch_assets() -> list[str]:
     return names
 
 
+def fetch_refs() -> list:
+    """Screenshots / photos the admin attached to SHOW what to change (marked areas etc.).
+    They are given to the AI as images — never added to the app."""
+    out = []
+    for url in (os.environ.get("REFS") or "").split()[:4]:
+        if not ASSET_URL.match(url):
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Saira agent)"})
+            data = urllib.request.urlopen(req, timeout=90).read()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[agent] ref download failed: {exc}")
+            continue
+        mime = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg" if data[:3] == b"\xff\xd8\xff" else ""
+        if mime:
+            out.append((mime, base64.b64encode(data).decode()))
+    print(f"[agent] reference images: {len(out)}")
+    return out
+
+
+def run_tests() -> list[dict]:
+    """Runs the unit tests; returns failures [{cls, name, msg}] ([] = all green)."""
+    import glob
+    import xml.etree.ElementTree as ET
+    res_dir = os.path.join(ROOT, "app/build/test-results/testDebugUnitTest")
+    for f in glob.glob(os.path.join(res_dir, "*.xml")):
+        os.remove(f)
+    try:
+        proc = subprocess.run(["./gradlew", ":app:testDebugUnitTest", "-q", *ROBO], cwd=ROOT,
+                              capture_output=True, text=True, timeout=1500)
+    except subprocess.TimeoutExpired:
+        return [{"cls": "gradle", "name": "timeout", "msg": "unit tests timed out"}]
+    if proc.returncode == 0:
+        return []
+    fails = []
+    for f in glob.glob(os.path.join(res_dir, "*.xml")):
+        try:
+            root = ET.parse(f).getroot()
+        except Exception:  # noqa: BLE001
+            continue
+        for tc in root.iter("testcase"):
+            for node in list(tc.findall("failure")) + list(tc.findall("error")):
+                msg = (node.get("message") or "") + "\n" + (node.text or "")[:1500]
+                fails.append({"cls": tc.get("classname", ""), "name": tc.get("name", ""), "msg": msg[:1800]})
+    if not fails:
+        out = proc.stdout + "\n" + proc.stderr
+        errs = [l for l in out.splitlines() if l.startswith("e: ")]
+        fails.append({"cls": "gradle", "name": "build", "msg": "\n".join(errs[:15]) or out[-2000:]})
+    return fails[:6]
+
+
+def test_source(cls: str, name: str) -> tuple[str, str]:
+    """(path, excerpt) of the failing test function."""
+    simple = cls.split(".")[-1].split("$")[0]
+    for dp, _, files in os.walk(os.path.join(ROOT, "app/src/test")):
+        for f in files:
+            if not f.endswith(".kt"):
+                continue
+            full = os.path.join(dp, f)
+            src = open(full, encoding="utf-8").read()
+            if f"class {simple}" not in src:
+                continue
+            rel = os.path.relpath(full, ROOT)
+            i = src.find(f"fun `{name}`")
+            if i < 0:
+                i = src.find(name)
+            if i < 0:
+                return rel, src[:6000]
+            start = src.rfind("\n", 0, max(0, i - 200)) + 1
+            return rel, src[start:start + 9000]
+    return "", ""
+
+
 def main() -> int:
     instruction = (os.environ.get("INSTRUCTION") or "").strip()
     if not instruction:
@@ -333,6 +412,11 @@ def main() -> int:
         set_output("changed", "false")
         return 1
     start_warmup()
+    refs = fetch_refs()
+    if refs:
+        instruction += (f"\n\n[The admin attached {len(refs)} reference screenshot(s)/photo(s) (given to you as images). "
+                        "They SHOW what to change — e.g. a marked/circled area of a screen. Find that screen in the "
+                        "code and change it. Do NOT add these images to the app.]")
     assets = fetch_assets()
     if assets:
         refs = ", ".join(f"R.drawable.{n}" for n in assets)
@@ -358,8 +442,9 @@ Project source index (path, line count, declarations):
 {index()}
 
 Decide which existing files must be read/edited (max 8, most relevant first) to implement the request.
+The request may be Banglish (Bengali in Latin letters) — understand it exactly as the admin meant it.
 Return ONLY JSON: {{"feasible": true|false, "reason_bn": "<why not, if not feasible>", "files": ["path", ...], "plan": "<short English plan>"}}
-Not feasible = needs a paid service, a server, new third-party libraries, or is harmful.""", max_tokens=4096)
+Not feasible = needs a paid service, a server, new third-party libraries, or is harmful.""", max_tokens=4096, images=refs)
 
     if not plan.get("feasible", True):
         notice("এই পরিবর্তনটা অ্যাপের কোডে করা সম্ভব নয়: " + str(plan.get("reason_bn") or ""))
@@ -379,7 +464,7 @@ Plan: {plan.get('plan')}
 Current files:
 {ctx}
 
-{EDIT_RULES}""")
+{EDIT_RULES}""", images=refs)
 
     wait_warmup()  # never edit files while the warm-up compile is reading them
     problems = apply_changes(change)
@@ -425,6 +510,59 @@ Current files:
 Fix the errors (keep the requested feature).
 {EDIT_RULES}""")
         apply_changes(fix)
+
+    # Unit tests: fix the code, or update a test that still expects the OLD behaviour the
+    # admin explicitly asked to change (e.g. "no sign-out inside the app" → admin wants logout).
+    for trnd in range(MAX_TEST_ROUNDS + 1):
+        fails = run_tests()
+        if not fails:
+            print("[agent] unit tests green")
+            break
+        print(f"[agent] test round {trnd + 1}: {[f['cls'].split('.')[-1] + '.' + f['name'] for f in fails]}")
+        if trnd == MAX_TEST_ROUNDS:
+            f0 = fails[0]
+            notice("টেস্ট পাস করেনি, তাই অ্যাপে কিছু বদলাইনি। ব্যর্থ টেস্ট: "
+                   f"{f0['name'][:120]} — {f0['msg'].strip().splitlines()[0][:200] if f0['msg'].strip() else ''}")
+            set_output("changed", "false")
+            return 1
+        diff = subprocess.run(["git", "diff", "--", "app/src/main"], cwd=ROOT, capture_output=True, text=True).stdout[:40000]
+        blocks, tfiles = [], []
+        for f in fails:
+            path, excerpt = test_source(f["cls"], f["name"])
+            if path and path not in tfiles:
+                tfiles.append(path)
+            blocks.append(f"--- FAILED: {f['cls']} > {f['name']}\n{f['msg']}\n--- test source ({path}):\n{excerpt}")
+        main_files = sorted(set(files + files_from_errors([l for l in diff.splitlines() if l.startswith("+++ b/")])))
+        fixt = gemini(system, f"""The admin's request:
+<<<{instruction}>>>
+
+Your change (git diff):
+{diff}
+
+These unit tests now FAIL:
+{chr(10).join(blocks)}
+
+Decide for each failure:
+(a) the test checks behaviour the admin did NOT ask to change → your change broke it → fix the app code;
+(b) the test encodes the OLD behaviour that the admin explicitly asked to change → update that test (in app/src/test/) so it checks the NEW behaviour instead. Never just delete a test; keep its other checks.
+
+Current app files:
+{chr(10).join(numbered(f) for f in main_files if os.path.exists(os.path.join(ROOT, f)))[:300000]}
+
+{EDIT_RULES}
+Edits to test files must use "search" text copied exactly from the test source shown above.""", images=refs)
+        apply_changes(fixt)
+        errs = compile_errors()
+        if errs:
+            fix = gemini(system, f"""Your last edit does not compile:
+{chr(10).join(errs)}
+
+Current files:
+{chr(10).join(numbered(f) for f in (files_from_errors(errs) or main_files))}
+
+Fix the errors (keep the requested feature).
+{EDIT_RULES}""")
+            apply_changes(fix)
 
     summary = str(change.get("summary_bn") or plan.get("plan") or "অ্যাপ আপডেট করা হয়েছে")
     open("/tmp/agent_summary.txt", "w", encoding="utf-8").write(summary)

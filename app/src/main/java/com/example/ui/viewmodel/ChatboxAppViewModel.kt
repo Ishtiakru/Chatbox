@@ -124,6 +124,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     val loginLanguage: StateFlow<String> = prefs.loginLanguage
         .stateIn(viewModelScope, SharingStarted.Eagerly, "en-US")
 
+    val chosenLanguage: StateFlow<String?> = prefs.chosenLanguage
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val quickReaction: StateFlow<String> = prefs.quickReaction
         .stateIn(viewModelScope, SharingStarted.Eagerly, "👍")
 

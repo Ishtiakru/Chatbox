@@ -178,6 +178,9 @@ jobs:
           echo "key_pass=$KEY_PASS" >> "$GITHUB_OUTPUT"
           keytool -list -v -keystore "$STORE_PATH" -alias "$KEY_ALIAS" -storepass "$STORE_PASS" | grep -E "SHA1:|SHA256:"
 
+      - name: Collect UI texts for in-app language switching
+        run: python3 .github/scripts/gen_ui_strings.py
+
       - name: Bundle Saira key pool into APK assets (never committed)
         env:
           POOL_RAW: ${{ secrets.AI_KEY_POOL }}

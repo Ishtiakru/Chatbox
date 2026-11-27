@@ -22,7 +22,11 @@ on:
         required: false
         default: 'false'
       assets:
-        description: space-separated image URLs attached by the admin (files.catbox.moe)
+        description: space-separated image URLs to ADD to the app (logo etc., files.catbox.moe)
+        required: false
+        default: ''
+      refs:
+        description: space-separated reference screenshot URLs (shown to the AI, not added to the app)
         required: false
         default: ''
 
@@ -136,18 +140,16 @@ jobs:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
           INSTRUCTION: ${{ inputs.instruction }}
           ASSETS: ${{ inputs.assets }}
+          REFS: ${{ inputs.refs }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: python3 .github/scripts/saira_agent.py
 
-      - name: Verify (unit tests + release build)
+      - name: Verify (release build + lint; unit tests already passed in the agent step)
         if: steps.agent.outputs.changed == 'true'
         run: |
           set +e
           # One Gradle invocation on the daemon the agent step already warmed up.
-          ./gradlew :app:testDebugUnitTest :app:assembleRelease \
-            -Drobolectric.offline=true \
-            -Drobolectric.dependency.dir="$HOME/.m2/repository/org/robolectric/android-all-instrumented/15-robolectric-12650502-i7" \
-            2>&1 | tee verify.txt
+          ./gradlew :app:assembleRelease 2>&1 | tee verify.txt
           s=${PIPESTATUS[0]}
           if [ "$s" -ne 0 ]; then
             first=$( { grep -E "^e: " verify.txt; grep -B3 -E "FAILED$" verify.txt; grep -B20 "Lint found fatal" verify.txt; } | head -n 6 | tr '\n' ' ' | cut -c1-500)
@@ -158,8 +160,8 @@ jobs:
       - name: Show diff (dry run)
         if: steps.agent.outputs.changed == 'true' && inputs.dry_run == 'true'
         run: |
-          git --no-pager diff --stat -- app/src/main
-          echo "::notice title=SAIRA::DRY RUN OK — $(git diff --shortstat -- app/src/main)"
+          git --no-pager diff --stat -- app/src/main app/src/test
+          echo "::notice title=SAIRA::DRY RUN OK — $(git diff --shortstat -- app/src/main app/src/test)"
 
       - name: Publish to main + start release
         if: steps.agent.outputs.changed == 'true' && inputs.dry_run != 'true'
@@ -170,7 +172,7 @@ jobs:
           set -e
           git config user.name "Saira (Chatbox agent)"
           git config user.email "saira-agent@users.noreply.github.com"
-          git add -A app/src/main
+          git add -A app/src/main app/src/test
           git reset -q app/google-services.json 2>/dev/null || true
           git reset -q app/src/main/assets/saira_pool.dat 2>/dev/null || true
           if git diff --cached --quiet; then
