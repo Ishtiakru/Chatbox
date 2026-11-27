@@ -49,6 +49,17 @@ class SairaPhoneCommandTest {
     }
 
     @Test
+    fun `real speech-to-text transcripts`() {
+        // Exactly what Gemini flash-lite returned for spoken commands (CI probe).
+        fun voice(t: String) = SairaWakeWord.extract(t)?.let { p(it) }
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.PHONE, "আম্মু"), voice("Saira, আম্মুকে কল দাও।"))
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.WHATSAPP, "mom"), voice("Saira, call my mom on WhatsApp."))
+        assertEquals(PhoneAction.SCREEN_OFF, voice("Saira screen bondho koro")?.action)
+        assertEquals(PhoneAction.SCREEN_OFF, voice("Saira স্ক্রিন বন্ধ করো")?.action)
+        assertEquals("কল ধরো", SairaWakeWord.extract("Okay Saira, কল ধরো"))
+    }
+
+    @Test
     fun `ordinary chat is never treated as a phone command`() {
         listOf(
             "বাংলায় একটি সুন্দর সময় অনুযায়ী সম্ভাষণ ও বার্তা লিখে দাও",

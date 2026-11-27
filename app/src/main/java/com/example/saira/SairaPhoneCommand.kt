@@ -461,8 +461,8 @@ object SairaPhoneCommandParser {
 /** Wake word handling for voice mode: "Saira, …" at the start of what the user said. */
 object SairaWakeWord {
     private val WAKE = rx(
-        "^(?:(?:hey|hi|oi|ei|ay|ওই|এই|হেই|শোনো|shono|acha|আচ্ছা)[ ,!.।]+)?" +
-            "(saira|sayra|saera|shaira|shayra|sahira|sairah|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ)" +
+        "^(?:(?:hey|hi|hello|ok|okay|oi|ei|ay|ji|জি|ওই|এই|হেই|হ্যালো|ওকে|শোনো|shono|acha|আচ্ছা)[ ,!.।]+){0,2}" +
+            "(saira|sayra|saera|shaira|shayra|sahira|sairah|syra|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা)" +
             "(?:[ ,!.।:-]+|$)",
         RegexOption.IGNORE_CASE
     )

@@ -802,6 +802,17 @@ private fun NavTabIcon(
                 modifier = Modifier.fillMaxSize()
             )
         }
+    } else if (item.tab is AppTab.Core && item.tab.tab == CoreAppTab.SAIRA) {
+        val ringColor = if (selected) ChatboxPrimary else DmLavenderAccent.copy(alpha = 0.55f)
+        Image(
+            painter = painterResource(R.drawable.saira_ai_icon),
+            contentDescription = item.label,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .border(if (selected) 2.dp else 1.dp, ringColor, CircleShape)
+        )
     } else {
         Icon(
             imageVector = item.icon,

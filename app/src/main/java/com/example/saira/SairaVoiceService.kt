@@ -110,6 +110,7 @@ class SairaVoiceService : Service() {
     @Volatile private var mutedUntil = 0L
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
+    @Volatile private var currentUtterance: String? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var brain: SairaVoiceBrain
 
@@ -128,6 +129,7 @@ class SairaVoiceService : Service() {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) = finishedSpeaking(utteranceId)
+                override fun onStop(utteranceId: String?, interrupted: Boolean) = finishedSpeaking(utteranceId)
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) = finishedSpeaking(utteranceId)
             })
@@ -261,7 +263,11 @@ class SairaVoiceService : Service() {
     // ------------------------------------------------------------------ understanding
     private suspend fun handleSegment(pcm: ShortArray) {
         val vp = SairaVoiceMode.voiceprint(this) ?: return
-        val match = SairaVoiceprint.match(vp, pcm, SairaVoiceMode.sensitivity(this))
+        // A short "হ্যাঁ" / "না" right after Saira asks gets the relaxed check (it's still the owner's turn).
+        val waitingForAnswer = pending?.let { System.currentTimeMillis() < it.until } == true ||
+            System.currentTimeMillis() < followUpUntil
+        val sens = if (waitingForAnswer) SairaVoiceprint.RELAXED else SairaVoiceMode.sensitivity(this)
+        val match = SairaVoiceprint.match(vp, pcm, sens)
         if (!match.ok) {
             SairaVoiceMode.setStatus("অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি")
             return
@@ -271,11 +277,19 @@ class SairaVoiceService : Service() {
             return
         }
         SairaVoiceMode.setStatus("আপনার কণ্ঠ চিনেছি — বুঝে নিচ্ছি…")
-        val text = brain.transcribe(pcm)?.takeIf { it.isNotBlank() } ?: run {
-            SairaVoiceMode.setStatus("শুনছি — \"Saira, …\" বলুন")
+        val heard = withTimeoutOrNull(22_000L) { brain.transcribe(pcm) }
+        if (heard == null) {
+            SairaVoiceMode.setStatus(
+                if (brain.lastError == "quota") "AI এখন ব্যস্ত (limit) — একটু পরে আবার বলুন"
+                else "বুঝতে পারিনি (নেটওয়ার্ক ধীর) — আবার বলুন"
+            )
             return
         }
-        handleTranscript(text)
+        if (heard.isBlank()) {
+            SairaVoiceMode.setStatus("পরিষ্কার কথা শুনিনি — আবার বলুন")
+            return
+        }
+        handleTranscript(heard)
     }
 
     private suspend fun handleTranscript(text: String) {
@@ -299,7 +313,7 @@ class SairaVoiceService : Service() {
         }
         val command = addressed ?: if (now < followUpUntil) text else null
         if (command == null) {
-            SairaVoiceMode.setStatus("শুনছি — \"Saira, …\" বলুন")
+            SairaVoiceMode.setStatus("শুনেছি: “${text.take(60)}” — শুরুতে \"Saira\" বলুন")
             return
         }
         followUpUntil = 0
@@ -401,15 +415,31 @@ class SairaVoiceService : Service() {
             }
         } else Locale.US
         locale?.let { engine.language = it }
+        if (bengali && locale == null) {
+            // No Bengali voice on this phone: don't read Bengali with an English voice — just act.
+            then?.let { f -> main.post { f() } }
+            return
+        }
         val id = "saira_${System.nanoTime()}"
         then?.let { synchronized(afterSpeak) { afterSpeak[id] = it } }
+        currentUtterance = id
         speaking.set(true)
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        val result = runCatching { engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) }.getOrDefault(TextToSpeech.ERROR)
+        if (result != TextToSpeech.SUCCESS) {
+            finishedSpeaking(id)
+            return
+        }
+        // Safety net: some TTS engines never report onDone — never stay deaf because of it.
+        main.postDelayed({ if (currentUtterance == id) finishedSpeaking(id) },
+            4_000L + text.length * 90L)
     }
 
     private fun finishedSpeaking(id: String?) {
-        mutedUntil = System.currentTimeMillis() + 400
-        speaking.set(false)
+        if (id == null || id == currentUtterance) {
+            currentUtterance = null
+            mutedUntil = System.currentTimeMillis() + 400
+            speaking.set(false)
+        }
         val next = id?.let { synchronized(afterSpeak) { afterSpeak.remove(it) } }
         if (next != null) main.post { next() }
     }

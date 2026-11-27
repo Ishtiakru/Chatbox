@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -217,8 +216,8 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.GraphicEq, contentDescription = null, tint = ChatboxPrimary)
-                    Spacer(Modifier.width(8.dp))
+                    com.example.ui.components.SairaMetaOrb(size = 32.dp, animate = running)
+                    Spacer(Modifier.width(10.dp))
                     Text(
                         "Saira ভয়েস মোড",
                         style = MaterialTheme.typography.titleLarge,
