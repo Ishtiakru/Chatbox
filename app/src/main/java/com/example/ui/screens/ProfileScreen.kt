@@ -340,13 +340,9 @@ fun ProfileScreen(
                     "Chatbox v${ChatboxConstants.APP_VERSION} · Up to date"
                 },
                 icon = Icons.Rounded.SystemUpdate,
-                showGreenDot = appUpdate.active,
+                showGreenDot = false,
                 onClick = {
-                    if (appUpdate.active) {
-                        onAppUpdateClick()
-                    } else {
-                        activeSheet = ProfileSheet.HELP
-                    }
+                    onAppUpdateClick()
                 }
             ),
             ProfileMenuRow(
@@ -700,6 +696,26 @@ fun ProfileScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                    if (row.id == "updates") {
+                        androidx.compose.material3.Button(
+                            onClick = row.onClick,
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = ChatboxUpdateGreen),
+                            modifier = Modifier.testTag("profile_update_action_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SystemUpdate,
+                                contentDescription = "Update",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (appUpdate.active) "আপডেট" else "চেক আপডেট",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                     }
                 }
             }
