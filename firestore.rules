@@ -645,12 +645,37 @@ service cloud.firestore {
       allow list, delete: if false;
     }
 
-    // Gemini API key pool (GeminiKeyPool.kt). Written only by the CI service
-    // account (sync-keypool.yml, bypasses rules); any signed-in app user may
-    // read it so Saira can rotate through the pool.
+    // The app owner (or the Spark admin) may hand Saira new AI keys from the app.
+    function isKeyManager() {
+      return isSignedIn()
+        && (request.auth.uid == 'OtcWI8ox8XYQWTKOXicJzrcacai2' || isSparkAdmin());
+    }
+
+    // Gemini API key pool (GeminiKeyPool.kt). Written by the CI service account
+    // (sync-keypool.yml / add-keys.yml, bypasses rules) or by the owner when he
+    // sends Saira new keys in the app — the pool can only grow that way. Any
+    // signed-in app user may read it so Saira can rotate through the pool.
     match /settings/aiKeyPool {
       allow get: if isSignedIn();
-      allow list, create, update, delete: if false;
+      allow update: if isKeyManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['keys', 'count', 'updatedAt', 'updatedBy'])
+        && incoming()['keys'] is list
+        && incoming()['keys'].size() <= 2000
+        && incoming()['keys'].size() >= existing()['keys'].size()
+        && incoming()['updatedBy'] == request.auth.uid;
+      allow list, create, delete: if false;
+    }
+
+    // Owner-only vault: the owner's own paid AI keys (Claude / GPT …) that power
+    // Saira's coding agent on GitHub (read there with the service account).
+    match /adminVault/{docId} {
+      allow get: if isKeyManager() && docId == 'sairaProKeys';
+      allow create, update: if isKeyManager() && docId == 'sairaProKeys'
+        && incoming().keys().hasOnly(['keys', 'updatedAt', 'updatedBy'])
+        && incoming()['keys'] is string
+        && incoming()['keys'].size() <= 20000
+        && incoming()['updatedBy'] == request.auth.uid;
+      allow list, delete: if false;
     }
 
     // Last Saira failure per user (AiDiagnostics.kt) so the maintainer can see

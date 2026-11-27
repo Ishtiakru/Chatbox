@@ -68,6 +68,29 @@ def load_keys() -> list[str]:
 KEYS = load_keys()
 
 
+def _merge_firestore_keys() -> None:
+    """Keys the admin added from the app (Saira chat) live in Firestore — use them too."""
+    global KEYS
+    try:
+        import firestore_keys
+        gem, pro = firestore_keys.load()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] firestore keys skipped: {type(exc).__name__}")
+        return
+    KEYS = KEYS + [k for k in gem if k not in KEYS]
+    if pro.strip():
+        extra = brain.load(pro)
+        brain.PRO.extend(e for e in extra if all(e["key"] != p["key"] for p in brain.PRO))
+        brain.PRO.sort(key=lambda e: brain.ORDER.index(e["provider"]))
+    print(f"[agent] gemini keys={len(KEYS)} pro={brain.describe()}")
+
+
+_merge_firestore_keys()
+# AI-written code is compiled and its tests are run by subprocesses — never let them see secrets.
+for _secret in ("AI_KEY_POOL", "SAIRA_PRO_KEYS", "FIREBASE_ADMIN_KEY"):
+    os.environ.pop(_secret, None)
+
+
 DEAD_MODELS: set[str] = set()
 
 

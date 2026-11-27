@@ -1048,7 +1048,16 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         conversationOverride: String?,
         videoPath: String? = null
     ) {
-        val trimmed = body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
+        // Owner sending Saira API keys: cut them out before the message is saved anywhere.
+        val ownerKeyIntake = if (
+            threadId == "saira" && kind == ChatboxMessageKind.TEXT &&
+            SairaPrompts.isOwnerAccount(currentUser.value?.uid, currentUser.value?.phoneNumber, localUserProfile.value.phoneNumber)
+        ) com.example.agent.KeyIntake.extract(body.trim()).takeIf { it.keys.isNotEmpty() } else null
+        val trimmed = if (ownerKeyIntake != null) {
+            ("🔑 ${ownerKeyIntake.keys.size}টা key (লুকানো)" +
+                ownerKeyIntake.redacted.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty())
+                .take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
+        } else body.trim().take(ChatboxConstants.MAX_MESSAGE_BODY_LENGTH)
         if (trimmed.isEmpty() && imageUri.isNullOrBlank() && audioPath.isNullOrBlank() && videoPath.isNullOrBlank()) return
         val mediaPath = when (kind) {
             ChatboxMessageKind.IMAGE -> imageUri
@@ -1132,7 +1141,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
-            if (threadId == "saira" && trimmed.isNotEmpty()) {
+            if (threadId == "saira" && ownerKeyIntake != null) {
+                val report = runCatching {
+                    com.example.agent.KeyIntake.install(getApplication<Application>(), ownerKeyIntake.keys)
+                }.getOrElse { "key বসাতে সমস্যা হয়েছে: ${it.message}" }
+                appendSairaMessageToThread(threadId, report, SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()))
+            } else if (threadId == "saira" && trimmed.isNotEmpty()) {
                 val sairaReply = generateSairaDirectDmReply(
                     userMessage = trimmed,
                     historyMessages = historySnapshot.dropLast(1)
