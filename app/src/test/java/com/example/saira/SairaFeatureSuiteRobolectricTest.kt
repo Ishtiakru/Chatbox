@@ -204,11 +204,6 @@ class SairaFeatureSuiteRobolectricTest {
         composeRule.onNodeWithTag("nav_profile").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("profile_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile_row_chats").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Quick reaction emoji").assertIsDisplayed()
-        composeRule.onNodeWithText("Saira 10-second companion").assertIsDisplayed()
-        composeRule.onNodeWithText("Done").performClick()
         composeRule.waitForIdle()
 
         // Saira tab -> Auto-Reply card visible

@@ -252,39 +252,20 @@ fun ProfileScreen(
 
     val rows = remember(
         effectiveShortId,
-        blockedIds.size,
-        quickReaction,
         appearance,
         appUpdate,
         languageLabel,
         userEmail,
-        isAdmin
+        isAdmin,
+        localProfile.phoneNumber
     ) {
         listOf(
             ProfileMenuRow(
                 id = "account",
                 title = "Account",
-                subtitle = if (effectiveShortId.isNotBlank()) {
-                    "6-digit ID ($effectiveShortId), display name, phone number"
-                } else {
-                    "Display name, 6-digit Chatbox ID, phone discovery"
-                },
+                subtitle = "6-digit ID: $effectiveShortId, Phone: ${localProfile.phoneNumber.ifBlank { "Not set" }}, Email: ${userEmail ?: "Not connected"}",
                 icon = Icons.Rounded.Key,
                 onClick = { activeSheet = ProfileSheet.EDIT_PROFILE }
-            ),
-            ProfileMenuRow(
-                id = "privacy",
-                title = "Privacy",
-                subtitle = "Blocked accounts (${blockedIds.size}), live location sharing",
-                icon = Icons.Rounded.Lock,
-                onClick = { activeSheet = ProfileSheet.PRIVACY }
-            ),
-            ProfileMenuRow(
-                id = "chats",
-                title = "Chats",
-                subtitle = "Quick reaction ($quickReaction), Saira 10-second companion",
-                icon = Icons.Rounded.ChatBubbleOutline,
-                onClick = { activeSheet = ProfileSheet.CHATS }
             ),
             ProfileMenuRow(
                 id = "notifications",
@@ -320,6 +301,24 @@ fun ProfileScreen(
                 subtitle = "About Chatbox, Saira AI & GitHub releases",
                 icon = Icons.AutoMirrored.Rounded.HelpOutline,
                 onClick = { activeSheet = ProfileSheet.HELP }
+            ),
+            ProfileMenuRow(
+                id = "edit_profile_picture",
+                title = "এডিট প্রোফাইল পিকচার",
+                subtitle = "Tap to change profile photo",
+                icon = Icons.Rounded.Edit,
+                onClick = {
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
+            ),
+            ProfileMenuRow(
+                id = "edit_name",
+                title = "এডিট নাম",
+                subtitle = "Change your display name",
+                icon = Icons.Rounded.Edit,
+                onClick = { activeSheet = ProfileSheet.EDIT_PROFILE }
             ),
             ProfileMenuRow(
                 id = "invite",
