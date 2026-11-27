@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.GroupAdd
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Key
@@ -99,6 +100,7 @@ import com.example.data.model.WorldLanguages
 import com.example.data.repository.LiveChatRepository
 import com.example.ui.components.ChatboxSearchField
 import com.example.ui.components.MessengerAvatar
+import com.example.ui.components.ProfileDialogMode
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
@@ -114,6 +116,8 @@ import java.io.File
 private enum class ProfileSheet {
     NONE,
     EDIT_PROFILE,
+    ACCOUNT,
+    EDIT_NAME,
     PRIVACY,
     CHATS,
     NOTIFICATIONS,
@@ -263,9 +267,9 @@ fun ProfileScreen(
             ProfileMenuRow(
                 id = "account",
                 title = "Account",
-                subtitle = "6-digit ID: $effectiveShortId, Phone: ${localProfile.phoneNumber.ifBlank { "Not set" }}, Email: ${userEmail ?: "Not connected"}",
+                subtitle = "6-digit ID, phone number & Gmail",
                 icon = Icons.Rounded.Key,
-                onClick = { activeSheet = ProfileSheet.EDIT_PROFILE }
+                onClick = { activeSheet = ProfileSheet.ACCOUNT }
             ),
             ProfileMenuRow(
                 id = "notifications",
@@ -304,9 +308,9 @@ fun ProfileScreen(
             ),
             ProfileMenuRow(
                 id = "edit_profile_picture",
-                title = "এডিট প্রোফাইল পিকচার",
-                subtitle = "Tap to change profile photo",
-                icon = Icons.Rounded.Edit,
+                title = "Edit profile picture",
+                subtitle = "Choose a new photo from your gallery",
+                icon = Icons.Rounded.PhotoCamera,
                 onClick = {
                     photoPicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -315,10 +319,10 @@ fun ProfileScreen(
             ),
             ProfileMenuRow(
                 id = "edit_name",
-                title = "এডিট নাম",
-                subtitle = "Change your display name",
+                title = "Edit name",
+                subtitle = "Change the name friends see",
                 icon = Icons.Rounded.Edit,
-                onClick = { activeSheet = ProfileSheet.EDIT_PROFILE }
+                onClick = { activeSheet = ProfileSheet.EDIT_NAME }
             ),
             ProfileMenuRow(
                 id = "invite",
@@ -728,7 +732,12 @@ fun ProfileScreen(
 
     when (activeSheet) {
         ProfileSheet.NONE -> Unit
-        ProfileSheet.EDIT_PROFILE -> ProfileModalDialog(
+        ProfileSheet.EDIT_PROFILE, ProfileSheet.ACCOUNT, ProfileSheet.EDIT_NAME -> ProfileModalDialog(
+            mode = when (activeSheet) {
+                ProfileSheet.ACCOUNT -> ProfileDialogMode.ACCOUNT
+                ProfileSheet.EDIT_NAME -> ProfileDialogMode.NAME
+                else -> ProfileDialogMode.FULL
+            },
             uid = currentUserId,
             email = userEmail,
             fallbackDisplayName = effectiveName,
