@@ -15,16 +15,17 @@ import urllib.error
 import urllib.request
 
 MODELS = [
+    "gemini-4-hydrogen",
     "gemini-pro-latest",
     "gemini-3.5-pro",
-    "gemini-3.5-flash",
     "gemini-3.8-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
     "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
 ]
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-TRIES_PER_MODEL = 6
+TRIES_PER_MODEL = 8
 SYSTEM = "You are Saira, a friendly Bengali/English assistant inside the Chatbox app. Keep answers short."
 
 
@@ -112,7 +113,24 @@ def main() -> None:
     if not re.search(r"AQ\.|AIza", raw):
         raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
     keys = [k.strip() for k in raw.splitlines() if k.strip() and not k.startswith("#")]
+    keys = list(dict.fromkeys(keys))
     lines = [f"keys={len(keys)}"]
+    # Which models does the API list for these keys? (newest names, generateContent only)
+    try:
+        req = urllib.request.Request(f"{BASE}?pageSize=200&key={keys[0]}")
+        with urllib.request.urlopen(req, timeout=25) as r:
+            listed = json.loads(r.read().decode()).get("models", [])
+        names = [m["name"].split("/")[-1] for m in listed
+                 if "generateContent" in (m.get("supportedGenerationMethods") or [])
+                 and "gemini" in m["name"] and not re.search(r"tts|image|embedding|audio|live", m["name"])]
+        lines.append("listed=" + ",".join(names))
+        for n in names:
+            if (re.search(r"gemini-(4|3\.[5-9])", n) and n not in MODELS
+                    and not n.endswith(("-001", "-002"))):
+                MODELS.insert(0, n)
+        del MODELS[14:]
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"listed=ERR {type(exc).__name__}")
     offset = 0
     for model in MODELS:
         results = []

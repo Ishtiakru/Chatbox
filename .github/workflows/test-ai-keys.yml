@@ -44,8 +44,12 @@ jobs:
       - name: Probe keys against generativelanguage.googleapis.com
         env:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
         run: |
           set -euo pipefail
+          python3 -m pip install --quiet google-auth || true
+          # Add the keys the admin installed in-app (Firestore settings/aiKeyPool).
+          python3 .github/scripts/firestore_keys.py /tmp/pool.txt || true
           if [ "${{ inputs.mode }}" = "latency" ]; then
             timeout 900s python3 .github/scripts/latency_probe.py
           else

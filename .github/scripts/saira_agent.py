@@ -28,7 +28,8 @@ import saira_brain as brain  # noqa: E402
 
 ROOT = os.getcwd()
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-STRONG = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+# Strongest free models that actually answer on the pool (CI probe Nov 2026); 3.8/3.5-flash are often 503.
+STRONG = ["gemini-4-hydrogen", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
 LITE = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
 ALLOWED_PREFIXES = ("app/src/main/java/", "app/src/main/res/", "app/src/main/AndroidManifest.xml", "app/src/test/")
 FORBIDDEN = ("google-services.json", "saira_pool.dat", "firebase_applet_config.xml")
@@ -86,6 +87,7 @@ def _merge_firestore_keys() -> None:
 
 
 _merge_firestore_keys()
+brain.enable_pool(KEYS)   # free strong Gemini models drive the agentic loop when no paid key exists
 # AI-written code is compiled and its tests are run by subprocesses — never let them see secrets.
 for _secret in ("AI_KEY_POOL", "SAIRA_PRO_KEYS", "FIREBASE_ADMIN_KEY"):
     os.environ.pop(_secret, None)
@@ -150,8 +152,8 @@ def gemini(system: str, prompt: str, max_tokens: int = 32768, images: "list | No
         pending = set(futs)
         try:
             while pending:
-                # After a lite answer, wait at most 25 s more for a stronger model.
-                timeout = None if lite_answer is None else max(0.0, 25 - (time.time() - lite_answer[1]))
+                # After a lite answer, wait at most 10 s more for a stronger model.
+                timeout = None if lite_answer is None else max(0.0, 10 - (time.time() - lite_answer[1]))
                 done, pending = cf.wait(pending, timeout=timeout, return_when=cf.FIRST_COMPLETED)
                 if not done:
                     break
@@ -442,6 +444,9 @@ def test_source(cls: str, name: str) -> tuple[str, str]:
 
 AGENT_MAX_STEPS = 45
 AGENT_BUDGET_S = 40 * 60
+# Free pool: tighter limits so a stuck run falls back to the classic pipeline quickly.
+POOL_AGENT_MAX_STEPS = 32
+POOL_AGENT_BUDGET_S = 16 * 60
 SEARCH_ROOTS = ("app/src/main", "app/src/test")
 
 AGENT_RULES = """
@@ -574,10 +579,10 @@ def _revert(before: set) -> None:
             pass
 
 
-def _trim(history: list) -> None:
+def _trim(history: list, limit: int = 500_000) -> None:
     total = sum(len(m["text"]) for m in history)
     i = 1
-    while total > 500_000 and i < len(history) - 6:
+    while total > limit and i < len(history) - 6:
         m = history[i]
         if m["role"] == "user" and len(m["text"]) > 1500:
             total -= len(m["text"]) - 300
@@ -585,7 +590,8 @@ def _trim(history: list) -> None:
         i += 1
 
 
-def agent_loop(instruction: str, refs: list, system: str) -> "tuple[str, str]":
+def agent_loop(instruction: str, refs: list, system: str, max_steps: int = AGENT_MAX_STEPS,
+               budget_s: int = AGENT_BUDGET_S, trim_limit: int = 500_000) -> "tuple[str, str]":
     """Returns ("ok", summary) | ("give_up", reason) | ("error", why)."""
     before = _snapshot_untracked()
     t0 = time.time()
@@ -599,15 +605,15 @@ Project source index (path, line count, declarations):
 Explore what you need, implement the request, compile, run the tests, then call done."""}]
     compiled_ok = tested_ok = False
     model_used = ""
-    for step in range(1, AGENT_MAX_STEPS + 1):
-        if time.time() - t0 > AGENT_BUDGET_S:
+    for step in range(1, max_steps + 1):
+        if time.time() - t0 > budget_s:
             break
-        _trim(history)
+        _trim(history, trim_limit)
         try:
             text, model_used = brain.chat(sys_prompt, history, max_tokens=24000, need_vision=bool(refs))
         except Exception as exc:  # noqa: BLE001
             _revert(before)
-            return "error", f"pro model failed: {str(exc)[:200]}"
+            return "error", f"model failed: {str(exc)[:200]}"
         try:
             obj = brain.parse_json(text)
         except ValueError:
@@ -656,7 +662,7 @@ Explore what you need, implement the request, compile, run the tests, then call 
                 continue
             print(f"[agent] finished in {step} steps, {time.time() - t0:.0f}s with {model_used}")
             return "ok", finished
-        left = AGENT_MAX_STEPS - step
+        left = max_steps - step
         history.append({"role": "user", "text": ("\n\n".join(results) or "(no valid actions)") +
                         (f"\n\n[{left} turns left]" if left <= 8 else "")})
     _revert(before)
@@ -693,10 +699,15 @@ def main() -> int:
               "(Jetpack Compose, Firebase Firestore/Auth, package com.example). You change the real "
               "source code to fulfil the admin's request, carefully and minimally.")
 
-    if brain.available():
-        print(f"[agent] pro brain: {brain.describe()} → agentic mode")
+    if brain.agent_ready():
+        if brain.available():
+            print(f"[agent] pro brain: {brain.describe()} → agentic mode")
+            limits = {}
+        else:
+            print(f"[agent] free pool ({len(KEYS)} keys, {brain.FREE_MODELS[:2]}) → agentic mode")
+            limits = {"max_steps": POOL_AGENT_MAX_STEPS, "budget_s": POOL_AGENT_BUDGET_S, "trim_limit": 260_000}
         wait_warmup()
-        status, msg = agent_loop(instruction, refs, system)
+        status, msg = agent_loop(instruction, refs, system, **limits)
         if status == "ok":
             open("/tmp/agent_summary.txt", "w", encoding="utf-8").write(msg)
             notice("পরিবর্তন তৈরি ও কম্পাইল সফল: " + msg)

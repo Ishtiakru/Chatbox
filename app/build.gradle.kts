@@ -57,6 +57,9 @@ android {
                 signingConfig = releaseKs
             }
             isMinifyEnabled = false
+            // Real phones only (64- and 32-bit ARM). x86/x86_64 copies of the WebRTC
+            // native library are for emulators and roughly doubled the download.
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -67,6 +70,12 @@ android {
     // Full edition (WhatsApp/Messenger auto-reply): ./gradlew assembleRelease -Pchatbox.autoReply=true
     if (project.findProperty("chatbox.autoReply")?.toString() == "true") {
         sourceSets.getByName("release").manifest.srcFile("src/autoreply/AndroidManifest.xml")
+    }
+
+    // Store native libraries compressed inside the APK: much smaller download for
+    // in-app updates (Android extracts them once at install time).
+    packaging {
+        jniLibs { useLegacyPackaging = true }
     }
 
     compileOptions {
