@@ -120,7 +120,7 @@ object SairaAgent {
         loadJob(s)?.let { j ->
             _job.value = j
             if (AppSelfUpdater.installedBuildNumber() > j.baseBuild && j.phase in setOf("releasing", "installing")) {
-                post(sairaMsg("✅ নতুন ভার্সন v${BuildConfig.VERSION_NAME} চালু হয়েছে — \"${j.instruction.take(80)}\" এখন অ্যাপে আছে।"))
+                post(sairaMsg("✅ নতুন ভার্সন v${BuildConfig.VERSION_NAME} চালু হয়েছে।\nপরিবর্তন: ${taskSummary(j.instruction)}"))
                 setJob(null)
             } else {
                 startWatcher()
@@ -588,3 +588,12 @@ object SairaAgent {
         action you did not do. The admin is the owner — never hide anything from him.
     """.trimIndent()
 }
+
+/** Human-readable task line from a stored job instruction (drops the "Admin's exact words" wrapper). */
+internal fun taskSummary(instruction: String): String {
+    val understood = instruction.substringAfter("Saira's understanding:", "").trim()
+    val text = understood.ifBlank { instruction.removePrefix("Admin's exact words:").trim() }
+    val oneLine = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
+    return if (oneLine.length > 220) oneLine.take(217).trimEnd() + "…" else oneLine
+}
+

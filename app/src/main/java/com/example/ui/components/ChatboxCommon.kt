@@ -397,19 +397,23 @@ fun AppUpdateDetailsDialog(
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
-                                text = "NEW UPDATE AVAILABLE",
+                                text = if (appUpdate.active) "NEW UPDATE AVAILABLE" else "UP TO DATE",
                                 color = Color(0xFF15803D),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                         Text(
-                            text = "Chatbox v${appUpdate.version}",
+                            text = if (appUpdate.active) "Chatbox v${appUpdate.version}" else "Chatbox v${ChatboxConstants.APP_VERSION}",
                             style = MaterialTheme.typography.titleLarge,
                             color = Color(0xFF2A2340)
                         )
                         Text(
-                            text = "Installed version: v${ChatboxConstants.APP_VERSION}",
+                            text = if (appUpdate.active) {
+                                "Installed version: v${ChatboxConstants.APP_VERSION}"
+                            } else {
+                                "আপনি সর্বশেষ ভার্সনেই আছেন। নতুন ভার্সন এলে এখানে সবুজ চিহ্ন দেখাবে।"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF8F89A3)
                         )
@@ -419,7 +423,7 @@ fun AppUpdateDetailsDialog(
                     }
                 }
 
-                if (appUpdate.note.isNotBlank()) {
+                if (appUpdate.active && appUpdate.note.isNotBlank()) {
                     Surface(
                         color = Color(0xFFF7F5FB),
                         shape = RoundedCornerShape(14.dp),
@@ -457,12 +461,14 @@ fun AppUpdateDetailsDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveUrl)))
+                    if (appUpdate.active) {
+                        TextButton(onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveUrl)))
+                            }
+                        }) {
+                            Text("Browser")
                         }
-                    }) {
-                        Text("Browser")
                     }
                     TextButton(onClick = onDismiss) {
                         Text("Close")
@@ -480,11 +486,11 @@ fun AppUpdateDetailsDialog(
                     ) {
                         Icon(
                             Icons.Rounded.Download,
-                            contentDescription = "Update now",
+                            contentDescription = if (appUpdate.active) "Update now" else "Check for update",
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("এখনই আপডেট")
+                        Text(if (appUpdate.active) "এখনই আপডেট" else "আপডেট খুঁজুন")
                     }
                 }
             }

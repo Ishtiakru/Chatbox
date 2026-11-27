@@ -239,10 +239,23 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SparkDynamicConfig())
 
-    val appUpdate: StateFlow<SparkAppUpdate> = currentUser
+    /** Admin-written update notice in Firestore (optional extra note / manual push). */
+    val adminAppUpdate: StateFlow<SparkAppUpdate> = currentUser
         .flatMapLatest { user ->
             if (user != null) sparkAdminRepo.observeSparkAppUpdate() else flowOf(SparkAppUpdate())
         }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SparkAppUpdate())
+
+    /**
+     * What the green "App updates" button shows — for EVERY user, not just the admin.
+     * Every GitHub release counts automatically; the admin's Firestore notice only adds
+     * a note (or announces a build GitHub hasn't reported yet). Stale notices for a
+     * version the phone already has are ignored.
+     */
+    val appUpdate: StateFlow<SparkAppUpdate> = combine(
+        adminAppUpdate,
+        com.example.agent.AppSelfUpdater.latest
+    ) { admin, release -> mergeAppUpdate(admin, release) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SparkAppUpdate())
 
     val userAvatarPath: StateFlow<String?> = currentUser
@@ -331,6 +344,14 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         syncSairaUserDirectory()
+        // Regular users learn about new releases straight from GitHub (no admin step).
+        viewModelScope.launch {
+            delay(3_000)
+            while (isActive) {
+                com.example.agent.AppSelfUpdater.refreshLatest()
+                delay(20 * 60_000L)
+            }
+        }
         viewModelScope.launch {
             com.example.util.AppPresence.foregroundFlow.collect { visible ->
                 if (!visible) replyToPendingAfterOwnerLeft()
@@ -418,6 +439,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     fun openUpdateDialog(open: Boolean) {
         _showUpdateDialog.value = open
+        if (open) viewModelScope.launch { com.example.agent.AppSelfUpdater.refreshLatest(force = true) }
     }
 
     fun updateOwnProfile(profile: UserProfile) {
@@ -2718,5 +2740,28 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         private const val ACTIVE_SAIRA_WINDOW_MS = 15 * 60_000L
         /** Firebase's minimum password length. */
         const val MIN_PASSWORD_LENGTH = 6
+    }
+}
+
+internal fun mergeAppUpdate(
+    admin: SparkAppUpdate,
+    release: com.example.agent.GitHubRelease?,
+    installedBuild: Int = com.example.agent.AppSelfUpdater.installedBuildNumber()
+): SparkAppUpdate {
+    val au = com.example.agent.AppSelfUpdater
+    val adminBuild = au.buildNumberOf(admin.version.trim().removePrefix("v"))
+    val releaseBuild = release?.let { au.buildNumberOf(it.tag) } ?: 0
+    val defaultNote = "নতুন ফিচার ও উন্নতি এসেছে। \"এখনই আপডেট\" চাপুন — অ্যাপের ভেতরেই বসে যাবে।"
+    return when {
+        release != null && releaseBuild > installedBuild -> SparkAppUpdate(
+            active = true,
+            version = release.tag.trim().removePrefix("v"),
+            note = admin.note.takeIf { admin.active && adminBuild == releaseBuild && it.isNotBlank() } ?: defaultNote,
+            downloadUrl = ChatboxConstants.GITHUB_RELEASES_BASE_URL + "/latest"
+        )
+        admin.active && adminBuild > installedBuild -> admin.copy(
+            note = admin.note.ifBlank { defaultNote }
+        )
+        else -> SparkAppUpdate(active = false)
     }
 }

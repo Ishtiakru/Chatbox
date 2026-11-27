@@ -121,6 +121,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val dynamicConfig by viewModel.dynamicConfig.collectAsState()
     val publicWelcome by viewModel.publicWelcome.collectAsState()
     val appUpdate by viewModel.appUpdate.collectAsState()
+    val adminAppUpdate by viewModel.adminAppUpdate.collectAsState()
     val isAdmin by viewModel.isAdmin.collectAsState()
     val ownProfile by viewModel.ownProfile.collectAsState()
     val localUserProfile by viewModel.localUserProfile.collectAsState()
@@ -526,7 +527,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 isOnline = isOnline,
                                 appearance = appearance,
                                 welcomeBanner = publicWelcome,
-                                appUpdate = appUpdate,
+                                appUpdate = adminAppUpdate,
                                 dynamicConfig = dynamicConfig,
                                 authRepo = viewModel.authRepo,
                                 sparkAdminRepo = viewModel.sparkAdminRepo,
@@ -727,7 +728,7 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
             )
         }
 
-        if (showUpdateDialog && appUpdate.active) {
+        if (showUpdateDialog) {
             AppUpdateDetailsDialog(
                 appUpdate = appUpdate,
                 onDismiss = { viewModel.openUpdateDialog(false) }

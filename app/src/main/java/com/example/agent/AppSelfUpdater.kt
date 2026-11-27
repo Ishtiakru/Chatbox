@@ -36,6 +36,31 @@ object AppSelfUpdater {
     private val _state = MutableStateFlow("idle")
     val state: StateFlow<String> = _state.asStateFlow()
 
+    /** Newest GitHub release seen by [refreshLatest] — drives the green update button for every user. */
+    private val _latest = MutableStateFlow<GitHubRelease?>(null)
+    val latest: StateFlow<GitHubRelease?> = _latest.asStateFlow()
+    @Volatile private var lastCheckAt = 0L
+
+    /**
+     * Asks GitHub (public, no token) for the newest release. Cached for 10 minutes
+     * unless [force]. Never throws; returns the last known release on failure.
+     */
+    suspend fun refreshLatest(force: Boolean = false): GitHubRelease? {
+        val now = System.currentTimeMillis()
+        if (!force && _latest.value != null && now - lastCheckAt < 10 * 60_000L) return _latest.value
+        GitHubClient(null).latestRelease()
+            .onSuccess { rel ->
+                lastCheckAt = now
+                if (buildNumberOf(rel.tag) > 0) _latest.value = rel
+            }
+            .onFailure { Log.w(TAG, "latest release check failed: ${it.message}") }
+        return _latest.value
+    }
+
+    /** True when GitHub has a build newer than the one installed. */
+    fun hasNewerRelease(release: GitHubRelease? = _latest.value): Boolean =
+        release != null && buildNumberOf(release.tag) > installedBuildNumber()
+
     fun installedBuildNumber(): Int =
         BuildConfig.VERSION_NAME.substringAfterLast('.').toIntOrNull() ?: 0
 
@@ -84,7 +109,11 @@ object AppSelfUpdater {
         _state.value = "checking"
         val release = GitHubClient(null).latestRelease().getOrElse {
             _state.value = "error:${it.message}"
-            return "নতুন ভার্সন খুঁজতে পারিনি: ${it.message}"
+            return "নতুন ভার্সন খুঁজতে পারিনি — ইন্টারনেট চেক করে আবার চাপুন।"
+        }
+        if (buildNumberOf(release.tag) > 0) {
+            _latest.value = release
+            lastCheckAt = System.currentTimeMillis()
         }
         val latest = buildNumberOf(release.tag)
         val mine = installedBuildNumber()
