@@ -7,8 +7,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.RingtoneManager
-import android.provider.Settings
 import android.os.Build
 import com.example.MainActivity
 import com.example.R
@@ -19,43 +17,50 @@ import com.example.R
  * sound/vibration make them audible while the screen is off.
  */
 object ChatboxNotifier {
-    private const val MSG_CHANNEL = "chatbox_messages_v1"
-    private const val CALL_CHANNEL = "chatbox_calls_v1"
+    private fun msgChannel(context: Context) = ChatboxSounds.channelId(context, ChatboxSounds.Kind.MESSAGE)
+    private fun callChannel(context: Context) = ChatboxSounds.channelId(context, ChatboxSounds.Kind.CALL)
 
+    /** Creates the channels with the user's chosen tones (Profile → Notifications). */
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(MSG_CHANNEL) == null) {
+        val msgId = msgChannel(context)
+        if (nm.getNotificationChannel(msgId) == null) {
+            val tone = ChatboxSounds.tone(context, ChatboxSounds.Kind.MESSAGE)
+            val vibrate = ChatboxSounds.vibrate(context, ChatboxSounds.Kind.MESSAGE)
             nm.createNotificationChannel(
-                NotificationChannel(MSG_CHANNEL, "Messages", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel(msgId, "Messages", NotificationManager.IMPORTANCE_HIGH)
                     .apply {
                         description = "New Chatbox messages"
                         setSound(
-                            Settings.System.DEFAULT_NOTIFICATION_URI,
+                            tone,
                             AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .build()
                         )
-                        enableVibration(true)
-                        vibrationPattern = longArrayOf(0, 250, 250, 250)
+                        enableVibration(vibrate)
+                        vibrationPattern = if (vibrate) longArrayOf(0, 250, 250, 250) else null
                     }
             )
         }
-        if (nm.getNotificationChannel(CALL_CHANNEL) == null) {
+        val callId = callChannel(context)
+        if (nm.getNotificationChannel(callId) == null) {
+            val tone = ChatboxSounds.tone(context, ChatboxSounds.Kind.CALL)
+            val vibrate = ChatboxSounds.vibrate(context, ChatboxSounds.Kind.CALL)
             nm.createNotificationChannel(
-                NotificationChannel(CALL_CHANNEL, "Calls", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel(callId, "Calls", NotificationManager.IMPORTANCE_HIGH)
                     .apply {
                         description = "Incoming Chatbox calls"
                         setSound(
-                            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                            tone,
                             AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .build()
                         )
-                        enableVibration(true)
-                        vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500, 1000)
+                        enableVibration(vibrate)
+                        vibrationPattern = if (vibrate) longArrayOf(0, 1000, 500, 1000, 500, 1000) else null
                     }
             )
         }
@@ -74,7 +79,7 @@ object ChatboxNotifier {
         ensureChannels(context)
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val id = ("msg::$threadId").hashCode()
-        val notification = Notification.Builder(context, MSG_CHANNEL)
+        val notification = Notification.Builder(context, msgChannel(context))
             .setSmallIcon(R.drawable.ic_stat_saira)
             .setContentTitle(title)
             .setContentText(body)
@@ -89,7 +94,7 @@ object ChatboxNotifier {
         ensureChannels(context)
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val id = ("call::$callKey").hashCode()
-        val notification = Notification.Builder(context, CALL_CHANNEL)
+        val notification = Notification.Builder(context, callChannel(context))
             .setSmallIcon(R.drawable.ic_stat_saira)
             .setContentTitle(title)
             .setContentText(body)

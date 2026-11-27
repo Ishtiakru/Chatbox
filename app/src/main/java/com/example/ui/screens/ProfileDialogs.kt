@@ -62,6 +62,7 @@ import com.example.ui.theme.ChatboxErrorInk
 import com.example.ui.theme.ChatboxPrimary
 import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.LocalChatboxColors
+import com.example.util.ChatboxSounds
 import com.example.util.friendlyFirestoreMessage
 import kotlinx.coroutines.launch
 
@@ -214,40 +215,92 @@ fun ProfilePrivacyDialog(
 
 @Composable
 fun ProfileNotificationsDialog(
-    selectedNotifSound: String,
-    selectedRingtoneSound: String,
-    onNotifSoundSelected: (String) -> Unit,
-    onRingtoneSoundSelected: (String) -> Unit,
+    onOpenSaira: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val colors = LocalChatboxColors.current
-    val notifSounds = remember {
-        listOf(
-            "Default Chime",
-            "Soft Bell",
-            "Saira Spark",
-            "Crystal Drop",
-            "Modern Pop",
-            "Gentle Pulse",
-            "Whistle Joy",
-            "Bright Tone",
-            "Echo Breeze",
-            "Silent"
-        )
+    val context = LocalContext.current
+    // Bumped after every change so names/switches re-read the saved values.
+    var revision by remember { mutableStateOf(0) }
+    val msgTitle = remember(revision) { ChatboxSounds.title(context, ChatboxSounds.Kind.MESSAGE) }
+    val callTitle = remember(revision) { ChatboxSounds.title(context, ChatboxSounds.Kind.CALL) }
+    val msgVibrate = remember(revision) { ChatboxSounds.vibrate(context, ChatboxSounds.Kind.MESSAGE) }
+    val callVibrate = remember(revision) { ChatboxSounds.vibrate(context, ChatboxSounds.Kind.CALL) }
+    var pickingFor by remember { mutableStateOf<ChatboxSounds.Kind?>(null) }
+    var playing by remember { mutableStateOf<android.media.Ringtone?>(null) }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { runCatching { playing?.stop() } }
     }
-    val ringtoneSounds = remember {
-        listOf(
-            "Classic Phone",
-            "Saira Serenade",
-            "Digital Beat",
-            "Soft Marimba",
-            "Cosmic Wave",
-            "Sunrise Harmony",
-            "Ocean Ripple",
-            "Elegant Chime",
-            "Vintage Bell",
-            "Silent"
-        )
+
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val kind = pickingFor
+        pickingFor = null
+        if (kind != null && result.resultCode == android.app.Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val uri = result.data?.getParcelableExtra<Uri>(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            ChatboxSounds.setTone(context, kind, uri)   // null = "Silent"
+            revision++
+        }
+    }
+
+    fun openPicker(kind: ChatboxSounds.Kind) {
+        runCatching { playing?.stop() }
+        pickingFor = kind
+        val type = if (kind == ChatboxSounds.Kind.MESSAGE) android.media.RingtoneManager.TYPE_NOTIFICATION
+        else android.media.RingtoneManager.TYPE_RINGTONE
+        val intent = Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TYPE, type)
+            putExtra(
+                android.media.RingtoneManager.EXTRA_RINGTONE_TITLE,
+                if (kind == ChatboxSounds.Kind.MESSAGE) "Message tone" else "Call ringtone"
+            )
+            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
+            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, ChatboxSounds.systemDefault(kind))
+            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, ChatboxSounds.tone(context, kind))
+        }
+        runCatching { picker.launch(intent) }.onFailure { pickingFor = null }
+    }
+
+    @Composable
+    fun ToneRow(label: String, value: String, kind: ChatboxSounds.Kind, tag: String) {
+        Surface(
+            onClick = { openPicker(kind) },
+            shape = RoundedCornerShape(14.dp),
+            color = colors.fieldBg,
+            border = BorderStroke(1.dp, colors.border),
+            modifier = Modifier.fillMaxWidth().testTag(tag)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(label, style = MaterialTheme.typography.bodyLarge, color = colors.ink)
+                    Text(value, style = MaterialTheme.typography.bodySmall, color = ChatboxPrimary)
+                }
+                TextButton(onClick = {
+                    runCatching { playing?.stop() }
+                    playing = ChatboxSounds.preview(context, kind)
+                }) { Text("▶ শুনুন") }
+            }
+        }
+    }
+
+    @Composable
+    fun VibrateRow(label: String, checked: Boolean, kind: ChatboxSounds.Kind) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = colors.ink, modifier = Modifier.weight(1f))
+            Switch(checked = checked, onCheckedChange = {
+                ChatboxSounds.setVibrate(context, kind, it)
+                revision++
+            })
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -259,7 +312,8 @@ fun ProfileNotificationsDialog(
             Column(
                 modifier = Modifier
                     .padding(20.dp)
-                    .heightIn(max = 560.dp),
+                    .heightIn(max = 600.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
@@ -267,88 +321,44 @@ fun ProfileNotificationsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Notifications & Saira", style = MaterialTheme.typography.titleLarge, color = colors.ink)
+                    Text("Notifications", style = MaterialTheme.typography.titleLarge, color = colors.ink)
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Rounded.Close, contentDescription = "Close notifications settings")
                     }
                 }
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Text(
-                        text = "SMS Notification Sound",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.ink
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        notifSounds.forEach { sound ->
-                            val isSelected = sound.equals(selectedNotifSound, ignoreCase = true)
-                            Surface(
-                                onClick = { onNotifSoundSelected(sound) },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) ChatboxSoftLavender else colors.fieldBg,
-                                border = BorderStroke(1.dp, if (isSelected) ChatboxPrimary else colors.border),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = sound,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (isSelected) ChatboxPrimary else colors.ink
-                                    )
-                                    if (isSelected) {
-                                        Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = ChatboxPrimary)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Text("Messages", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                ToneRow("Message tone", msgTitle, ChatboxSounds.Kind.MESSAGE, "notif_message_tone")
+                VibrateRow("Vibrate for messages", msgVibrate, ChatboxSounds.Kind.MESSAGE)
 
-                    Text(
-                        text = "Call Ringtone Sound",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.ink
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        ringtoneSounds.forEach { sound ->
-                            val isSelected = sound.equals(selectedRingtoneSound, ignoreCase = true)
-                            Surface(
-                                onClick = { onRingtoneSoundSelected(sound) },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) ChatboxSoftLavender else colors.fieldBg,
-                                border = BorderStroke(1.dp, if (isSelected) ChatboxPrimary else colors.border),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = sound,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (isSelected) ChatboxPrimary else colors.ink
-                                    )
-                                    if (isSelected) {
-                                        Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = ChatboxPrimary)
-                                    }
-                                }
-                            }
+                HorizontalDivider()
+                Text("Calls", style = MaterialTheme.typography.titleSmall, color = colors.ink)
+                ToneRow("Call ringtone", callTitle, ChatboxSounds.Kind.CALL, "notif_call_ringtone")
+                VibrateRow("Vibrate for calls", callVibrate, ChatboxSounds.Kind.CALL)
+
+                Text(
+                    "ফোনের যেকোনো টোন বেছে নিতে পারবেন। \"Silent\" দিলে শব্দ হবে না।",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.inkMuted
+                )
+
+                HorizontalDivider()
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
                         }
-                    }
-                }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("ফোনের নোটিফিকেশন সেটিংস") }
+                OutlinedButton(
+                    onClick = { onDismiss(); onOpenSaira() },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Saira auto-reply & assistant") }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Button(onClick = onDismiss) { Text("Done") }
