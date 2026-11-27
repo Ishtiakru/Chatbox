@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Chatbox</string>
+    <string name="saira_automation_label">Saira Automation</string>
+    <string name="saira_automation_description">Lets Saira finish what you ask her to do on your phone: press Send or Call in WhatsApp, Messenger, Telegram, imo, Viber or your SMS app, and lock the screen. Saira only acts for a few seconds right after you confirm a command, and never reads or saves anything else on your screen.</string>
     <string name="app_tagline">A calmer space to stay close</string>
     <string name="app_tagline_bn">কাছের মানুষদের সাথে থাকার একটি শান্ত জায়গা</string>
     <string name="update_badge">Update</string>

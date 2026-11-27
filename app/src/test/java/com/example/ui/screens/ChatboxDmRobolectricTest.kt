@@ -609,6 +609,11 @@ class ChatboxDmRobolectricTest {
             "WAKE_LOCK only belongs to the full edition",
             !requested.contains(Manifest.permission.WAKE_LOCK)
         )
+        assertTrue(
+            "Saira Automation (accessibility) only ships in the full edition",
+            pkgInfo.services.orEmpty().none { it.permission == Manifest.permission.BIND_ACCESSIBILITY_SERVICE }
+        )
+        assertTrue("SEND_SMS only belongs to the full edition", !requested.contains(Manifest.permission.SEND_SMS))
         assertEquals(
             "allowBackup must be false",
             0,

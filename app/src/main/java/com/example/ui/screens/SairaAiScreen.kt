@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Refresh
@@ -92,6 +93,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.ai.AiChatMessage
+import com.example.saira.ContactMatch
+import com.example.saira.PhoneAction
+import com.example.saira.PhoneApp
+import com.example.saira.PhoneCommand
+import com.example.saira.PhoneOutcome
+import com.example.saira.SairaAutomation
+import com.example.saira.SairaNotificationListenerService
+import com.example.saira.SairaPhoneActions
+import com.example.saira.SairaPhoneCommandParser
+import com.example.saira.SairaVoiceMode
 import com.example.data.ai.AiFallbackProviderKind
 import com.example.data.ai.SairaAiClient
 import com.example.data.ai.SairaPrompts
@@ -140,6 +151,16 @@ import java.util.Locale
 import kotlin.random.Random
 
 private const val SESSION_ROLLOVER_LIMIT = 20
+
+/** A phone action Saira is waiting on in the chat (confirmation, a name/number, the text, or a contact pick). */
+private data class ChatPhonePending(
+    val exId: String,
+    val cmd: PhoneCommand,
+    val stage: String, // "confirm" | "target" | "text" | "pick"
+    val number: String? = null,
+    val who: String = "",
+    val choices: List<ContactMatch> = emptyList()
+)
 
 private val starterPrompts = listOf(
     "বাংলায় একটি সুন্দর সময় অনুযায়ী সম্ভাষণ ও বার্তা লিখে দাও",
@@ -295,7 +316,188 @@ fun SairaAiScreen(
         }
     }
 
-    fun sendPrompt(rawQuestion: String) {
+    // ---- Saira phone assistant (calls, messages, answering calls, apps, screen) ----
+    var phonePending by remember { mutableStateOf<ChatPhonePending?>(null) }
+    var phoneHints by remember { mutableStateOf<Map<String, PhoneOutcome>>(emptyMap()) }
+    var permissionContinuation by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showVoiceMode by remember { mutableStateOf(false) }
+    val voiceModeRunning by SairaVoiceMode.running.collectAsState()
+    val phonePermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        val next = permissionContinuation
+        permissionContinuation = null
+        next?.invoke()
+    }
+    val automationResult by SairaAutomation.results.collectAsState()
+    LaunchedEffect(automationResult) {
+        val r = automationResult ?: return@LaunchedEffect
+        if (exchanges.any { it.id == r.tag }) {
+            exchanges = exchanges.map { if (it.id == r.tag) it.copy(answer = it.answer + "\n" + r.message) else it }
+        }
+    }
+    var askAiAgain: (String) -> Unit = {}
+
+    fun setPhoneAnswer(exId: String, text: String, streaming: Boolean = false) {
+        exchanges = exchanges.map { if (it.id == exId) it.copy(answer = text, isStreaming = streaming) else it }
+    }
+
+    fun newPhoneExchange(question: String): String {
+        val id = "phone_${System.currentTimeMillis()}_${Random.nextInt(100, 999)}"
+        draft = ""
+        errorMessage = null
+        exchanges = exchanges + AiExchange(id = id, question = question, answer = "…", isStreaming = true)
+        return id
+    }
+
+    fun withPhonePermissions(perms: List<String>, then: () -> Unit) {
+        if (perms.isEmpty()) then() else {
+            permissionContinuation = then
+            phonePermLauncher.launch(perms.toTypedArray())
+        }
+    }
+
+    fun runPhone(exId: String, cmd: PhoneCommand, number: String?, who: String) {
+        phonePending = null
+        val perms = SairaPhoneActions.permissionsFor(context, cmd).filter { it != Manifest.permission.READ_CONTACTS }
+        withPhonePermissions(perms) {
+            val out = SairaPhoneActions.execute(context, cmd, number, who, tag = exId)
+            setPhoneAnswer(exId, out.message)
+            if (out.needsAutomation || out.needsNotificationAccess) phoneHints = phoneHints + (exId to out)
+        }
+    }
+
+    fun askPhoneConfirm(exId: String, cmd: PhoneCommand, number: String?, who: String) {
+        if (!cmd.needsConfirmation) {
+            runPhone(exId, cmd, number, who)
+            return
+        }
+        phonePending = ChatPhonePending(exId, cmd, "confirm", number, who)
+        val label = if (number != null && who != number) "$who ($number)" else who
+        setPhoneAnswer(exId, SairaPhoneCommandParser.describe(cmd, label) + "\nনিচের বাটনে চাপুন বা \"হ্যাঁ\" / \"না\" লিখুন।")
+    }
+
+    fun resolvePhone(exId: String, cmd: PhoneCommand) {
+        if (cmd.needsTarget) {
+            phonePending = ChatPhonePending(exId, cmd, "target")
+            setPhoneAnswer(
+                exId,
+                when (cmd.action) {
+                    PhoneAction.MESSAGE -> "কাকে মেসেজ পাঠাব? নাম বা নম্বর লিখুন।"
+                    PhoneAction.OPEN_APP -> "কোন অ্যাপ খুলব?"
+                    else -> "কাকে কল দেব? নাম বা নম্বর লিখুন।"
+                }
+            )
+            return
+        }
+        if (cmd.needsText) {
+            phonePending = ChatPhonePending(exId, cmd, "text")
+            setPhoneAnswer(exId, "${cmd.target}-কে কী লিখব?")
+            return
+        }
+        val usesNumber = cmd.action in setOf(PhoneAction.CALL, PhoneAction.VIDEO_CALL, PhoneAction.MESSAGE) &&
+            cmd.app !in setOf(PhoneApp.MESSENGER, PhoneApp.IMO)
+        if (!usesNumber) { askPhoneConfirm(exId, cmd, null, cmd.target); return }
+        if (cmd.targetIsNumber) { askPhoneConfirm(exId, cmd, cmd.target, cmd.target); return }
+        val askContacts = SairaPhoneActions.isDeclared(context, Manifest.permission.READ_CONTACTS) &&
+            !SairaPhoneActions.granted(context, Manifest.permission.READ_CONTACTS)
+        withPhonePermissions(if (askContacts) listOf(Manifest.permission.READ_CONTACTS) else emptyList()) {
+            val matches = SairaPhoneActions.findContacts(context, cmd.target)
+            when {
+                matches.isEmpty() && cmd.app in setOf(PhoneApp.TELEGRAM, PhoneApp.VIBER) ->
+                    askPhoneConfirm(exId, cmd, null, cmd.target)
+                matches.isEmpty() -> {
+                    phonePending = ChatPhonePending(exId, cmd.copy(target = ""), "target")
+                    setPhoneAnswer(
+                        exId,
+                        if (!SairaPhoneActions.granted(context, Manifest.permission.READ_CONTACTS)) {
+                            "Contacts-এর অনুমতি ছাড়া নাম দিয়ে খুঁজতে পারি না — নম্বরটা লিখুন।"
+                        } else "\"${cmd.target}\" নামে কোনো কন্টাক্ট পাইনি — নম্বরটা লিখুন।"
+                    )
+                }
+                matches.size == 1 || matches[0].name.equals(cmd.target, ignoreCase = true) ->
+                    askPhoneConfirm(exId, cmd, matches[0].number, matches[0].name)
+                else -> {
+                    phonePending = ChatPhonePending(exId, cmd, "pick", choices = matches)
+                    setPhoneAnswer(exId, "কোন ${cmd.target}? নিচে থেকে বেছে নিন:")
+                }
+            }
+        }
+    }
+
+    /** Handles phone requests typed in the chat; returns false when it's a normal question. */
+    fun handlePhoneMessage(question: String): Boolean {
+        val pend = phonePending
+        if (pend != null) {
+            when (pend.stage) {
+                "confirm" -> {
+                    if (SairaPhoneCommandParser.isYes(question)) {
+                        runPhone(newPhoneExchange(question), pend.cmd, pend.number, pend.who); return true
+                    }
+                    if (SairaPhoneCommandParser.isNo(question)) {
+                        phonePending = null
+                        setPhoneAnswer(newPhoneExchange(question), "ঠিক আছে, বাতিল করলাম।"); return true
+                    }
+                    phonePending = null
+                }
+                "text" -> {
+                    phonePending = null
+                    if (SairaPhoneCommandParser.isNo(question)) {
+                        setPhoneAnswer(newPhoneExchange(question), "ঠিক আছে, বাতিল করলাম।"); return true
+                    }
+                    resolvePhone(newPhoneExchange(question), pend.cmd.copy(text = question)); return true
+                }
+                "target" -> {
+                    phonePending = null
+                    if (SairaPhoneCommandParser.isNo(question)) {
+                        setPhoneAnswer(newPhoneExchange(question), "ঠিক আছে, বাতিল করলাম।"); return true
+                    }
+                    if (SairaPhoneCommandParser.parse(question) == null) {
+                        val n = SairaPhoneCommandParser.extractNumber(SairaPhoneCommandParser.normalize(question))
+                        resolvePhone(newPhoneExchange(question), pend.cmd.copy(target = n ?: question.trim()))
+                        return true
+                    }
+                }
+                "pick" -> {
+                    val idx = SairaPhoneCommandParser.digitsOf(SairaPhoneCommandParser.normalize(question)).toIntOrNull()
+                    val choice = idx?.let { pend.choices.getOrNull(it - 1) }
+                        ?: pend.choices.firstOrNull { it.name.equals(question.trim(), ignoreCase = true) }
+                    if (choice != null) {
+                        askPhoneConfirm(newPhoneExchange(question), pend.cmd, choice.number, choice.name); return true
+                    }
+                    phonePending = null
+                    if (SairaPhoneCommandParser.isNo(question)) {
+                        setPhoneAnswer(newPhoneExchange(question), "ঠিক আছে, বাতিল করলাম।"); return true
+                    }
+                }
+            }
+        }
+        val local = SairaPhoneCommandParser.parse(question)
+        if (local != null) {
+            val id = newPhoneExchange(question)
+            if (local.needsText && isOnline) {
+                scope.launch {
+                    val ai = SairaPhoneActions.extractWithAi(question)
+                    resolvePhone(id, if (ai != null && ai.text.isNotBlank()) local.copy(text = ai.text) else local)
+                }
+            } else resolvePhone(id, local)
+            return true
+        }
+        if (isOnline && SairaPhoneCommandParser.mightBeCommand(question)) {
+            val id = newPhoneExchange(question)
+            isBusy = true
+            scope.launch {
+                val ai = SairaPhoneActions.extractWithAi(question)
+                isBusy = false
+                if (ai == null) {
+                    exchanges = exchanges.filterNot { it.id == id }
+                    askAiAgain(question)
+                } else resolvePhone(id, ai)
+            }
+            return true
+        }
+        return false
+    }
+
+    fun sendPrompt(rawQuestion: String, skipPhone: Boolean = false) {
         // The owner can simply message Saira his API keys — she cuts them out (never shown,
         // never saved, never sent to an AI), tests them and installs them herself.
         if (isOwner && !isBusy) {
@@ -323,6 +525,7 @@ fun SairaAiScreen(
         val question = rawQuestion.trim()
         if (isBusy || question.isEmpty() || question.length > 2000) return
         restoreDone = true
+        if (!skipPhone && handlePhoneMessage(question)) return
 
         if (!isOnline) {
             errorMessage = "অফলাইন · Saira AI-এর সাথে চ্যাট করতে ইন্টারনেট সংযোগ চালু করুন।"
@@ -446,6 +649,12 @@ fun SairaAiScreen(
         }
     }
 
+    askAiAgain = { q -> sendPrompt(q, skipPhone = true) }
+
+    if (showVoiceMode) {
+        SairaVoiceModeDialog(onDismiss = { showVoiceMode = false })
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -545,6 +754,16 @@ fun SairaAiScreen(
                     }
 
                     if (selectedSubTab == "chat") {
+                        IconButton(
+                            onClick = { showVoiceMode = true },
+                            modifier = Modifier.testTag("saira_voice_mode_button")
+                        ) {
+                            Icon(
+                                Icons.Rounded.GraphicEq,
+                                contentDescription = "Saira voice mode",
+                                tint = if (voiceModeRunning) ChatboxUpdateGreen else ChatboxPrimary
+                            )
+                        }
                         IconButton(
                             onClick = { showHistoryDialog = true },
                             modifier = Modifier.testTag("saira_history_button")
@@ -796,6 +1015,19 @@ fun SairaAiScreen(
                                             modifier = Modifier.padding(14.dp)
                                         )
                                     }
+                                    val pend = phonePending
+                                    if (pend != null && pend.exId == ex.id) {
+                                        SairaPhoneButtons(
+                                            pending = pend,
+                                            onConfirm = { runPhone(ex.id, pend.cmd, pend.number, pend.who) },
+                                            onCancel = {
+                                                phonePending = null
+                                                setPhoneAnswer(ex.id, ex.answer.substringBefore("\n") + "\nবাতিল করেছি।")
+                                            },
+                                            onPick = { c -> askPhoneConfirm(ex.id, pend.cmd, c.number, c.name) }
+                                        )
+                                    }
+                                    phoneHints[ex.id]?.let { hint -> SairaPhoneHints(hint) }
                                     if (!ex.isStreaming && ex.answer.isNotEmpty()) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             TextButton(
@@ -1932,3 +2164,49 @@ private fun DebugAppCheckTokenDialog(
     }
 }
 
+
+
+@Composable
+private fun SairaPhoneButtons(
+    pending: ChatPhonePending,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    onPick: (ContactMatch) -> Unit
+) {
+    when (pending.stage) {
+        "confirm" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onConfirm, modifier = Modifier.testTag("saira_phone_confirm")) { Text("হ্যাঁ, করো") }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.testTag("saira_phone_cancel")) { Text("বাতিল") }
+        }
+        "pick" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            pending.choices.forEachIndexed { i, c ->
+                OutlinedButton(
+                    onClick = { onPick(c) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("saira_phone_choice_$i")
+                ) { Text("${i + 1}. ${c.name} · ${c.number}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+            TextButton(onClick = onCancel) { Text("বাতিল") }
+        }
+        else -> Unit
+    }
+}
+
+@Composable
+private fun SairaPhoneHints(outcome: PhoneOutcome) {
+    val context = LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (outcome.needsAutomation) {
+            OutlinedButton(
+                onClick = { SairaAutomation.openSettings(context) },
+                modifier = Modifier.testTag("saira_phone_enable_automation")
+            ) { Text("Saira Automation চালু করুন") }
+        }
+        if (outcome.needsNotificationAccess) {
+            OutlinedButton(onClick = { SairaNotificationListenerService.openNotificationAccessForApp(context) }) {
+                Text("Notification access দিন")
+            }
+        }
+    }
+}
