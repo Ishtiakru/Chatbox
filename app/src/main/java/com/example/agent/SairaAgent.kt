@@ -31,7 +31,9 @@ data class AgentAction(
     val instruction: String,
     val title: String,
     /** Public image URLs (admin's attached logo/pictures) the coding agent adds as drawables. */
-    val assets: List<String> = emptyList()
+    val assets: List<String> = emptyList(),
+    /** Public screenshot URLs that only show the coding agent WHAT to change (never added to the app). */
+    val refs: List<String> = emptyList()
 )
 
 /** Long-running app change being built on GitHub. */
@@ -205,19 +207,27 @@ object SairaAgent {
                     post(sairaMsg("আগের একটা পরিবর্তন এখনও চলছে (${phaseLabel(_job.value!!.phase)})। শেষ হলে নতুনটা ধরব।"))
                 } else {
                     val images = attachments.filter { it.mimeType.startsWith("image/") }.take(4)
-                    val assets = images.mapIndexedNotNull { idx, a ->
+                    val asAsset = decision.optString("image_role") == "asset"
+                    val urls = images.mapIndexedNotNull { idx, a ->
                         val ext = if (a.mimeType.contains("png")) "png" else "jpg"
-                        com.example.util.MediaHost.uploadBytes(a.bytes, "saira_asset_$idx.$ext").getOrNull()
+                        com.example.util.MediaHost.uploadBytes(a.bytes, "saira_img_$idx.$ext").getOrNull()
                     }
-                    val assetNote = when {
+                    val imageNote = when {
                         images.isEmpty() -> ""
-                        assets.size == images.size -> "\n\n🖼️ সংযুক্ত ${assets.size}টা ছবি অ্যাপের ভেতরে যোগ করে ব্যবহার করব।"
-                        else -> "\n\n⚠️ ${images.size - assets.size}টা ছবি আপলোড হয়নি — সেগুলো ছাড়া কাজ হবে।"
+                        urls.size < images.size -> "\n\n⚠️ ${images.size - urls.size}টা ছবি আপলোড হয়নি — সেগুলো ছাড়া কাজ হবে।"
+                        asAsset -> "\n\n🖼️ সংযুক্ত ${urls.size}টা ছবি অ্যাপের ভেতরে যোগ করে ব্যবহার করব।"
+                        else -> "\n\n🔍 সংযুক্ত ছবি দেখে বুঝে নেব কোন জায়গা বদলাতে হবে (ছবিটা অ্যাপে যোগ হবে না)।"
                     }
+                    // The coding agent gets the admin's exact words too, so nothing is lost in translation.
+                    val fullInstruction = "Admin's exact words: $text\nSaira's understanding: $instruction"
                     post(
                         sairaMsg(
-                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“$instruction”$assetNote\n\nকোড লিখে, বিল্ড ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১০–১৫ মিনিট)। শুরু করব?",
-                            confirm = AgentAction("app_change", instruction, "অ্যাপ পরিবর্তন", assets)
+                            "আমি অ্যাপে এই পরিবর্তনটা করব:\n“${text.ifBlank { instruction }}”\n($instruction)$imageNote\n\nকোড লিখে, কম্পাইল ও টেস্ট পাস করলে নতুন ভার্সন রিলিজ করে অ্যাপের ভেতরেই বসিয়ে দেব (প্রায় ১০–১৫ মিনিট)। শুরু করব?",
+                            confirm = AgentAction(
+                                "app_change", fullInstruction, "অ্যাপ পরিবর্তন",
+                                assets = if (asAsset) urls else emptyList(),
+                                refs = if (asAsset) emptyList() else urls
+                            )
                         )
                     )
                 }
@@ -274,7 +284,7 @@ object SairaAgent {
             _busy.value = true
             try {
                 when (action.type) {
-                    "app_change" -> startAppChange(action.instruction, action.assets)
+                    "app_change" -> startAppChange(action.instruction, action.assets, action.refs)
                     "rules_deploy" -> {
                         val r = gh()?.dispatch(GitHubClient.RULES_WORKFLOW, mapOf("mode" to "deploy"))
                         post(sairaMsg(if (r?.isSuccess == true) "🚀 Rules deploy শুরু হয়েছে (১–২ মিনিট)।" else "Deploy শুরু করা যায়নি: ${r?.exceptionOrNull()?.message}"))
@@ -288,7 +298,11 @@ object SairaAgent {
 
     // ------------------------------------------------------------ app change
 
-    private suspend fun startAppChange(instruction: String, assets: List<String> = emptyList()) {
+    private suspend fun startAppChange(
+        instruction: String,
+        assets: List<String> = emptyList(),
+        refs: List<String> = emptyList()
+    ) {
         val client = gh() ?: run {
             post(sairaMsg("GitHub যুক্ত নেই।"))
             return
@@ -300,6 +314,7 @@ object SairaAgent {
                 put("instruction", instruction.take(3000))
                 put("request_id", requestId)
                 if (assets.isNotEmpty()) put("assets", assets.joinToString(" "))
+                if (refs.isNotEmpty()) put("refs", refs.joinToString(" "))
             }
         )
         if (d.isFailure) {
@@ -346,7 +361,8 @@ object SairaAgent {
                     post(sairaMsg("✅ $summary\n📦 নতুন ভার্সন রিলিজ হচ্ছে (প্রায় ৬–১০ মিনিট)…"))
                     setJob(j.copy(phase = "releasing"))
                 } else {
-                    val why = notes.lastOrNull() ?: "GitHub-এ ব্যর্থ (${run.conclusion})"
+                    val why = notes.firstOrNull { !it.contains("সফল") && !it.startsWith("PUBLISHED") }
+                        ?: "GitHub-এ ব্যর্থ (${run.conclusion})"
                     post(sairaMsg("❌ পরিবর্তনটা প্রকাশ করিনি — $why\nঅ্যাপ আগের মতোই নিরাপদ আছে। নির্দেশটা একটু অন্যভাবে বলে আবার চেষ্টা করতে পারেন।"))
                     setJob(null)
                 }
@@ -501,7 +517,10 @@ object SairaAgent {
     private val PLANNER_SYSTEM = """
         You are the command router of Saira, the admin-only agent inside the Chatbox Android app.
         Pick ONE action for the admin's latest message and return ONLY JSON:
-        {"action": "...", "instruction": "<clear English restatement of what to do>", "count": <int, gallery only>}
+        {"action": "...", "instruction": "<clear English restatement of what to do>", "count": <int, gallery only>, "image_role": "asset" | "reference"}
+        image_role (app_change with attached images only): "asset" = the admin wants that picture itself put INTO the app
+        (new logo, icon, background, banner image). "reference" = a screenshot/photo that only SHOWS what to change
+        (a marked/circled area, an example design, a bug). When unsure, use "reference".
         Actions:
         - "app_change": the admin wants the app's code/UI/features changed, upgraded, fixed or a new feature added (e.g. "add a dark mode button", "change the login screen colour", "fix X", "notun feature add koro").
         - "app_update": install the newest app version now / check for update.

@@ -70,6 +70,12 @@ class AppPreferencesRepository(private val context: Context) {
             WorldLanguages.normalizeCode(prefs[loginLanguageKey] ?: "en-US")
         }
 
+    /** The language the user explicitly picked (null = never picked → app's original texts). */
+    val chosenLanguage: Flow<String?> =
+        context.appDataStore.data.map { prefs ->
+            prefs[loginLanguageKey]?.let { WorldLanguages.normalizeCode(it) }
+        }
+
     val quickReaction: Flow<String> =
         context.appDataStore.data.map { prefs ->
             val saved = prefs[quickReactionKey]?.trim().orEmpty()
