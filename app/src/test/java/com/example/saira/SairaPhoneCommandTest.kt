@@ -103,6 +103,11 @@ class SairaPhoneCommandTest {
         listOf("হ্যাঁ", "ha", "haa koro", "ok", "thik ache").forEach { assertTrue(it, SairaPhoneCommandParser.isYes(it)) }
         listOf("না", "na", "cancel", "থাক").forEach { assertTrue(it, SairaPhoneCommandParser.isNo(it)) }
         assertFalse(SairaPhoneCommandParser.isYes("karim ke call dao"))
+        // speech-to-text punctuation must not break the answer
+        listOf("হ্যাঁ, দাও", "Ha, dao.", "ঠিক আছে, পাঠাও।", "করে দাও", "হ্যাঁ।").forEach { assertTrue(it, SairaPhoneCommandParser.isYes(it)) }
+        listOf("না, থাক", "না।", "No.", "এখন না").forEach { assertTrue(it, SairaPhoneCommandParser.isNo(it)) }
+        assertFalse(SairaPhoneCommandParser.isYes("হ্যাঁ, না"))
+        assertFalse(SairaPhoneCommandParser.isNo("হ্যাঁ, দাও"))
         assertEquals("call ammu", SairaWakeWord.extract("Saira, call ammu"))
         assertEquals("আম্মুকে কল দাও", SairaWakeWord.extract("সায়রা আম্মুকে কল দাও"))
         assertEquals("", SairaWakeWord.extract("hey saira"))

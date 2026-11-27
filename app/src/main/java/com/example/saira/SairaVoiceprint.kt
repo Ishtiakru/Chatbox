@@ -29,30 +29,50 @@ data class Voiceprint(
     val selfStd: Double,
     val pitchHz: Double,
     val voicedSeconds: Double,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    /** Neural voice profile (256-d, L2-normalised) — null for voiceprints made before v1.0.0.149. */
+    val embedding: FloatArray? = null,
+    /** Owner's own held-out similarity to the profile at enrollment (≈ 0.9). */
+    val selfCos: Double = 0.0
 ) {
+    /** True when this voiceprint can use the crowd-proof neural check. */
+    val isNeural: Boolean get() = embedding != null
+
     fun serialize(): String = buildString {
-        append("v1;")
+        append(if (embedding != null) "v2;" else "v1;")
         append(weights.joinToString(",")); append(';')
         append(means.joinToString("|") { it.joinToString(",") }); append(';')
         append(variances.joinToString("|") { it.joinToString(",") }); append(';')
         append("$selfMean;$selfStd;$pitchHz;$voicedSeconds;$createdAtMs")
+        if (embedding != null) {
+            append(';'); append(embedding.joinToString(",") { "%.5f".format(java.util.Locale.US, it) })
+            append(';'); append(selfCos)
+        }
     }
 
     companion object {
         fun deserialize(raw: String?): Voiceprint? = runCatching {
             if (raw.isNullOrBlank()) return null
             val p = raw.split(';')
-            if (p[0] != "v1" || p.size < 9) return null
+            if ((p[0] != "v1" && p[0] != "v2") || p.size < 9) return null
             val w = p[1].split(',').map { it.toDouble() }.toDoubleArray()
             val m = p[2].split('|').map { r -> r.split(',').map { it.toDouble() }.toDoubleArray() }
             val v = p[3].split('|').map { r -> r.split(',').map { it.toDouble() }.toDoubleArray() }
-            Voiceprint(m, v, w, p[4].toDouble(), p[5].toDouble(), p[6].toDouble(), p[7].toDouble(), p[8].toLong())
+            val emb = if (p[0] == "v2" && p.size >= 11) p[9].split(',').map { it.toFloat() }.toFloatArray() else null
+            Voiceprint(
+                m, v, w, p[4].toDouble(), p[5].toDouble(), p[6].toDouble(), p[7].toDouble(), p[8].toLong(),
+                embedding = emb?.takeIf { it.size == SairaVoiceEncoder.EMB },
+                selfCos = if (emb != null) p[10].toDouble() else 0.0
+            )
         }.getOrNull()
     }
 }
 
-data class VoiceMatch(val ok: Boolean, val score: Double, val threshold: Double, val pitchHz: Double, val reason: String)
+data class VoiceMatch(
+    val ok: Boolean, val score: Double, val threshold: Double, val pitchHz: Double, val reason: String,
+    /** Room noise of the clip (neural check only): how far the speaker stood above the background. */
+    val snrDb: Double = Double.NaN
+)
 
 object SairaVoiceprint {
     const val SAMPLE_RATE = 16_000
@@ -223,6 +243,86 @@ object SairaVoiceprint {
             if (ratio < lo || ratio > hi) return VoiceMatch(false, s, th, p, "pitch differs")
         }
         return VoiceMatch(true, s, th, p, "ok")
+    }
+
+    // ---------------------------------------------------------------- neural check (v2)
+    private const val CHUNK_SAMPLES = SAMPLE_RATE * 3
+
+    /**
+     * Keeps only the parts where the speaker is clearly talking: drops pauses and — in a crowd — the
+     * gaps between words that are filled only with other people's murmur.
+     */
+    fun speechOnly(pcm: ShortArray): ShortArray {
+        val fr = 320
+        val n = pcm.size / fr
+        if (n < 5) return pcm
+        val r = DoubleArray(n) { rms(pcm.copyOfRange(it * fr, (it + 1) * fr)) }
+        val sorted = r.sortedArray()
+        val p20 = sorted[(n * 0.2).toInt()]
+        val p95 = sorted[(n * 0.95).toInt().coerceAtMost(n - 1)]
+        val thr = maxOf(200.0, p20 * 2.0, p95 * 0.1)
+        val keep = BooleanArray(n)
+        for (i in 0 until n) if (r[i] >= thr) for (j in maxOf(0, i - 1)..minOf(n - 1, i + 1)) keep[j] = true
+        val count = keep.count { it }
+        if (count < 10) return pcm
+        val out = ShortArray(count * fr)
+        var o = 0
+        for (i in 0 until n) if (keep[i]) { System.arraycopy(pcm, i * fr, out, o, fr); o += fr }
+        return out
+    }
+
+    /** Owner profile (mean fingerprint of ~3 s pieces) + their held-out self-similarity. */
+    fun neuralProfile(enc: SairaVoiceEncoder, pcm: ShortArray): Pair<FloatArray, Double>? {
+        val speech = speechOnly(pcm)
+        val chunks = ArrayList<FloatArray>()
+        var off = 0
+        while (off + SAMPLE_RATE * 2 <= speech.size) {
+            val end = minOf(speech.size, off + CHUNK_SAMPLES)
+            enc.embed(speech.copyOfRange(off, end))?.let { chunks.add(it) }
+            off += CHUNK_SAMPLES
+        }
+        if (chunks.isEmpty()) return null
+        val sum = FloatArray(SairaVoiceEncoder.EMB)
+        chunks.forEach { c -> for (j in sum.indices) sum[j] += c[j] }
+        val profile = SairaVoiceEncoder.l2(sum)
+        val self = if (chunks.size < 2) SairaVoiceEncoder.cosine(chunks[0], profile) else chunks.map { c ->
+            val others = FloatArray(sum.size) { sum[it] - c[it] }
+            SairaVoiceEncoder.cosine(c, SairaVoiceEncoder.l2(others))
+        }.average()
+        return profile to self
+    }
+
+    /**
+     * Similarity needed to accept, by room noise: in a quiet room the owner scores ≈ 0.9 and other people
+     * up to ≈ 0.8, so the bar is high; with a crowd around the phone everyone's score drops (the owner's
+     * to ≈ 0.65–0.7, other people's to ≈ 0.55), so the bar comes down with the measured SNR.
+     */
+    fun neuralThreshold(snrDb: Double, sensitivity: Int, shortAnswer: Boolean = false): Double {
+        val clean = when (sensitivity) { STRICT -> NEURAL_CLEAN + 0.03; RELAXED -> NEURAL_CLEAN - 0.05; else -> NEURAL_CLEAN }
+        val noisy = when (sensitivity) { STRICT -> NEURAL_NOISY + 0.03; RELAXED -> NEURAL_NOISY - 0.04; else -> NEURAL_NOISY }
+        val t = ((snrDb - SNR_NOISY) / (SNR_CLEAN - SNR_NOISY)).coerceIn(0.0, 1.0)
+        return noisy + (clean - noisy) * t - if (shortAnswer) 0.04 else 0.0
+    }
+
+    // Fitted on 46 real speakers (AudioMNIST) mixed with real crowd / cafe / restaurant / neighbour noise
+    // (MS-SNSD), checked on speakers not used for fitting: other voices accepted ≈ 2 %, the owner 100 % in a
+    // quiet room, ≈ 90 % with crowd murmur 12 dB below them and ≈ 78 % at 6 dB (old check: 35 % / 6 %).
+    private const val NEURAL_CLEAN = 0.76
+    private const val NEURAL_NOISY = 0.66
+    private const val SNR_CLEAN = 30.0
+    private const val SNR_NOISY = 10.0
+
+    fun matchNeural(enc: SairaVoiceEncoder, vp: Voiceprint, pcm: ShortArray, sensitivity: Int, shortAnswer: Boolean = false): VoiceMatch {
+        val profile = vp.embedding ?: return match(vp, pcm, sensitivity)
+        val snr = SairaDenoise.snrDb(pcm)
+        val th = neuralThreshold(snr, sensitivity, shortAnswer)
+        val speech = speechOnly(pcm)
+        val minSamples = if (shortAnswer) SAMPLE_RATE * 3 / 10 else SAMPLE_RATE / 2
+        if (speech.size < minSamples) return VoiceMatch(false, Double.NaN, th, 0.0, "too short")
+        val emb = enc.embed(if (speech.size < SAMPLE_RATE / 2) speech.copyOf(SAMPLE_RATE / 2) else speech)
+            ?: return VoiceMatch(false, Double.NaN, th, 0.0, "too short")
+        val cos = SairaVoiceEncoder.cosine(profile, emb)
+        return VoiceMatch(cos >= th, cos, th, 0.0, if (cos >= th) "ok" else "voice differs", snr)
     }
 
     // ---------------------------------------------------------------- GMM
