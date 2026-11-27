@@ -3,27 +3,143 @@ package com.example.saira
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.example.data.ai.AiChatMessage
 import com.example.data.ai.GeminiAiProvider
 import com.example.data.ai.GeminiKeyPool
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
+
+/** What Saira heard, plus (for questions / chat) her short spoken reply from the same request. */
+data class VoiceUnderstanding(val transcript: String, val reply: String?)
 
 /**
- * Speech → text for voice mode using the same Gemini key pool as Saira chat.
+ * Speech → text (and the answer, in the same round trip) for voice mode, using the Gemini key pool.
  * Audio is only sent after the on-device voice match says it is the owner speaking.
+ *
+ * Speed: one request does both hearing and answering; flash-lite models answer in ~1 s
+ * (measured live); a second key is raced if the first is slow ("hedging"); the TLS
+ * connection is warmed while the owner is still talking.
  */
 class SairaVoiceBrain(context: Context) {
     private val pool = GeminiKeyPool(context.applicationContext)
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val rr = AtomicInteger(0)
 
-    /** Text of the speech ("" = no clear speech), or null when no model could be reached. */
-    suspend fun transcribe(pcm: ShortArray): String? = withContext(Dispatchers.IO) {
+    /** Short reason for the last failure (for the status line). */
+    @Volatile var lastError: String? = null
+        private set
+
+    /** Opens the HTTPS connection to Gemini early (called when speech starts) so the real request is faster. */
+    fun warmUp() {
+        io.launch {
+            runCatching {
+                val key = pool.availableKeys().firstOrNull() ?: return@launch
+                val conn = URL("$BASE/${MODELS[0]}?key=$key").openConnection() as HttpURLConnection
+                conn.connectTimeout = 4_000
+                conn.readTimeout = 4_000
+                conn.inputStream.use { it.readBytes() } // fully read → connection goes back to the keep-alive pool
+            }
+        }
+    }
+
+    /** Transcript only ("" = no clear speech), or null when no model could be reached. */
+    suspend fun transcribe(pcm: ShortArray): String? =
+        understand(pcm, wantReply = false, followUp = false, history = emptyList())?.transcript
+
+    suspend fun understand(
+        pcm: ShortArray,
+        wantReply: Boolean,
+        followUp: Boolean,
+        history: List<AiChatMessage>,
+        expectYesNo: Boolean = false
+    ): VoiceUnderstanding? = withContext(Dispatchers.IO) {
+        val body = buildBody(pcm, wantReply, followUp, history, expectYesNo)
+        val keys = runCatching { pool.availableKeys() }.getOrDefault(emptyList())
+        if (keys.isEmpty()) { lastError = "no keys"; return@withContext null }
+        val ordered = keys.indices.map { keys[(it + rr.getAndIncrement()) % keys.size] }.distinct().take(MAX_TRIES)
+
+        val result = CompletableDeferred<VoiceUnderstanding?>()
+        val next = AtomicInteger(0)
+        val running = AtomicInteger(0)
+        val started = System.currentTimeMillis()
+
+        fun launchAttempt() {
+            val i = next.getAndIncrement()
+            if (i >= ordered.size || result.isCompleted) return
+            running.incrementAndGet()
+            io.launch {
+                val key = ordered[i]
+                // First attempts use the fastest model; later ones fall back.
+                val model = MODELS[(i / 3).coerceAtMost(MODELS.size - 1)]
+                val (code, raw) = post("$BASE/$model:generateContent?key=$key", body)
+                when {
+                    code in 200..299 -> {
+                        val text = parseText(raw)
+                        if (text != null) result.complete(parse(text, wantReply))
+                        else launchAttempt()
+                    }
+                    code == 429 || raw.contains("RESOURCE_EXHAUSTED") -> {
+                        if (model == GeminiAiProvider.DEFAULT_MODEL) pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
+                        lastError = "quota"
+                        launchAttempt()
+                    }
+                    else -> {
+                        lastError = "HTTP $code"
+                        Log.w(TAG, "voice $model HTTP $code ${raw.take(160)}")
+                        launchAttempt()
+                    }
+                }
+                if (running.decrementAndGet() == 0 && next.get() >= ordered.size) result.complete(null)
+            }
+        }
+
+        launchAttempt()
+        // Hedge: if the first answer is slow, race a second key (tail latency on mobile networks).
+        io.launch {
+            delay(HEDGE_AFTER_MS)
+            if (!result.isCompleted) launchAttempt()
+        }
+        val out = withTimeoutOrNull(BUDGET_MS - (System.currentTimeMillis() - started)) { result.await() }
+        if (out != null) lastError = null
+        out
+    }
+
+    private fun buildBody(
+        pcm: ShortArray,
+        wantReply: Boolean,
+        followUp: Boolean,
+        history: List<AiChatMessage>,
+        expectYesNo: Boolean
+    ): String {
         val wav = SairaVoiceprint.toWav(pcm)
         val b64 = Base64.encodeToString(wav, Base64.NO_WRAP)
-        val body = JSONObject().apply {
+        val context = buildString {
+            append("Now: ").append(SimpleDateFormat("EEEE d MMMM yyyy, h:mm a", Locale.US).format(Date())).append('\n')
+            append("Follow-up turn (owner may speak without saying Saira): ").append(if (followUp) "yes" else "no").append('\n')
+            if (history.isNotEmpty()) {
+                append("Recent conversation:\n")
+                history.takeLast(6).forEach { append(if (it.role == "user") "Owner: " else "Saira: ").append(it.text.take(300)).append('\n') }
+            }
+            // No "it's probably yes/no" hint here on purpose: in a live test that bias turned a spoken "না" into "হ্যাঁ".
+            // An unclear answer must fail safe (Saira keeps waiting), never confirm a call.
+            if (expectYesNo) append("This is a short reply to Saira's question. Transcribe it exactly; if unclear, output T: ?\n")
+            append(if (wantReply) "Transcribe and reply." else "Transcribe only (R: -).")
+        }
+        return JSONObject().apply {
             put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
             put(
                 "contents",
@@ -32,57 +148,20 @@ class SairaVoiceBrain(context: Context) {
                         "parts",
                         JSONArray()
                             .put(JSONObject().put("inline_data", JSONObject().put("mime_type", "audio/wav").put("data", b64)))
-                            .put(JSONObject().put("text", "Transcribe this."))
+                            .put(JSONObject().put("text", context))
                     )
                 )
             )
-            put("generationConfig", JSONObject().put("maxOutputTokens", 400).put("temperature", 0))
+            put("generationConfig", JSONObject().put("maxOutputTokens", 320).put("temperature", 0.3))
         }.toString()
-
-        // Measured live (CI probe, Nov 2026): flash-lite models transcribe Bengali/English in ~1 s,
-        // while 3.6-flash / 4-hydrogen are mostly quota (429) / overloaded (503) on the free pool.
-        val keys = runCatching { pool.availableKeys() }.getOrDefault(emptyList()).shuffled().take(8)
-        if (keys.isEmpty()) { lastError = "no keys"; return@withContext null }
-        val started = System.currentTimeMillis()
-        var tries = 0
-        for (model in MODELS) {
-            var failures = 0
-            for (key in keys) {
-                if (System.currentTimeMillis() - started > BUDGET_MS || tries >= MAX_TRIES) break
-                tries++
-                val (code, raw) = post("$BASE/$model:generateContent?key=$key", body)
-                when {
-                    code in 200..299 -> {
-                        lastError = null
-                        return@withContext parseText(raw)?.let { cleanTranscript(it) }.orEmpty()
-                    }
-                    code == 404 || raw.contains("is not found", ignoreCase = true) -> break
-                    code == 429 || raw.contains("RESOURCE_EXHAUSTED") -> {
-                        // Only cool the shared pool for the model Saira chat also uses.
-                        if (model == GeminiAiProvider.DEFAULT_MODEL) pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
-                        lastError = "quota"
-                    }
-                    else -> {
-                        lastError = "HTTP $code"
-                        Log.w(TAG, "transcribe $model HTTP $code ${raw.take(160)}")
-                        if (++failures >= 2) break // overloaded / timing out → next model
-                    }
-                }
-            }
-        }
-        null
     }
-
-    /** Short reason for the last failed [transcribe] (for the status line). */
-    @Volatile var lastError: String? = null
-        private set
 
     private fun post(url: String, body: String): Pair<Int, String> = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 5_000
-            conn.readTimeout = 9_000
+            conn.readTimeout = 8_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.outputStream.use { it.write(body.toByteArray()) }
@@ -97,23 +176,59 @@ class SairaVoiceBrain(context: Context) {
     private fun parseText(raw: String): String? = runCatching {
         val parts = JSONObject(raw).getJSONArray("candidates").getJSONObject(0)
             .getJSONObject("content").getJSONArray("parts")
-        buildString { for (i in 0 until parts.length()) append(parts.getJSONObject(i).optString("text")) }.trim()
+        buildString {
+            for (i in 0 until parts.length()) {
+                val p = parts.getJSONObject(i)
+                if (!p.optBoolean("thought")) append(p.optString("text"))
+            }
+        }.trim()
     }.getOrNull()
 
     companion object {
         private const val TAG = "SairaVoiceBrain"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+        // Measured live (Nov 2026): flash-lite ≈ 1 s for Bengali/English audio; 3.6-flash is mostly 429/503 on the pool.
         private val MODELS = listOf(GeminiAiProvider.DEFAULT_MODEL, GeminiAiProvider.FALLBACK_MODEL, "gemini-3.6-flash")
-        private const val BUDGET_MS = 18_000L
-        private const val MAX_TRIES = 8
+        private const val BUDGET_MS = 12_000L
+        private const val HEDGE_AFTER_MS = 1_600L
+        private const val MAX_TRIES = 7
 
         private const val SYSTEM =
-            "You are a speech-to-text engine for a phone assistant named Saira (Bengali: সায়রা). " +
-                "Write exactly what the speaker said, in the language spoken: Bengali speech in Bengali script, " +
-                "English words in English. Always write the assistant's name as \"Saira\". " +
-                "Output only the transcript — no quotes, labels or translation. If there is no clear speech, output nothing."
+            "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the owner's phone. " +
+                "You get a short audio clip of the owner speaking. Reply in EXACTLY this format, two lines:\n" +
+                "T: <exact transcript — Bengali speech in Bengali script, English words in English, Banglish as spoken; " +
+                "always write the name as Saira; nothing else; empty if there is no clear speech>\n" +
+                "R: <your spoken reply, or ->\n" +
+                "Rules for R: write - (a single dash) when the speech is a phone action (call, video call, message/SMS, " +
+                "answer or decline/cut a call, open an app, screen on/off, yes/no), when it is not addressed to Saira " +
+                "(the owner must start with Saira unless it is a follow-up turn), or when asked to transcribe only. " +
+                "Otherwise answer like a caring friend: if the owner spoke English answer in English, otherwise answer in " +
+                "Bengali written in Bengali script (never romanized Banglish — a Bengali voice reads it aloud). " +
+                "1–2 short spoken sentences, no markdown, emojis, lists or links. You are Saira; the owner is NOT Saira, " +
+                "so never call the owner Saira. Use the given time for time/date questions."
 
         fun cleanTranscript(t: String): String =
             t.trim().trim('"', '“', '”').replace(Regex("^(transcript|transcription)\\s*:\\s*", RegexOption.IGNORE_CASE), "").trim()
+
+        /** Parses the "T: … / R: …" answer (tolerant of a model that skips the labels). */
+        fun parse(text: String, wantReply: Boolean): VoiceUnderstanding {
+            val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            val tLine = lines.firstOrNull { it.startsWith("T:", ignoreCase = true) }
+            val rIdx = lines.indexOfFirst { it.startsWith("R:", ignoreCase = true) }
+            val transcript = when {
+                tLine != null -> tLine.substring(2)
+                rIdx > 0 -> lines.take(rIdx).joinToString(" ")
+                rIdx == 0 -> ""
+                else -> lines.joinToString(" ")
+            }.let { cleanTranscript(it) }
+            val reply = if (rIdx >= 0) {
+                (listOf(lines[rIdx].substring(2)) + lines.drop(rIdx + 1).filterNot { it.startsWith("T:", true) })
+                    .joinToString(" ").trim()
+            } else ""
+            // The model sometimes tacks "…, Saira" onto the answer as if the owner were Saira — drop that.
+            val cleaned = reply.replace(Regex("[,،]?\\s*(সায়রা|সায়রা|Saira)\\s*(?=[।!.?]|$)"), "").trim()
+            val r = cleaned.takeIf { wantReply && it.isNotBlank() && it.trim('-', '—', ' ', '.').isNotEmpty() }
+            return VoiceUnderstanding(transcript, r)
+        }
     }
 }

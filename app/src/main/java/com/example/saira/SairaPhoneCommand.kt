@@ -350,6 +350,27 @@ object SairaPhoneCommandParser {
             }
         }
 
+        // Genitive right before the call word / "kache": "ammuker call dao", "abbur kache call dao", "আম্মুর কাছে কল দাও"
+        val kache = setOf("kache", "kase", "kachhe", "কাছে")
+        for (i in 1 until lowTokens.size) {
+            val t = lowTokens[i]
+            if (t !in kache && !CALL.containsMatchIn(t) && !VIDEO.containsMatchIn(t)) continue
+            val raw = tokens[i - 1].trim(',', '.', '!', '?', '।', ':')
+            val low = raw.lowercase()
+            if (low in PRONOUNS || isStop(low) || low in setOf("ekbar", "abar", "arekbar", "akbar", "একবার", "আবার")) continue
+            val latin = low.isNotEmpty() && low.all { it in 'a'..'z' }
+            val stem = when {
+                latin && low.endsWith("ker") && low.length >= 6 -> raw.dropLast(3)
+                latin && low.endsWith("er") && low.length >= 5 -> raw.dropLast(2)
+                latin && low.endsWith("r") && low.length >= 4 && low[low.length - 2] in "uio" -> raw.dropLast(1)
+                raw.endsWith("কের") && raw.length >= 4 -> raw.dropLast(3)
+                raw.endsWith("ের") && raw.length >= 3 -> raw.dropLast(2)
+                raw.endsWith("র") && raw.length >= 3 && !latin -> raw.dropLast(1)
+                else -> null
+            } ?: continue
+            if (stem.isNotEmpty() && !isStop(stem.lowercase())) return collectBefore(i - 1, stem)
+        }
+
         // Genitive before "number": "karim er number e", "করিমের নম্বরে"
         val numberWord = rx("^(number|nombor|nambar|numbare|numbere|number-e|নম্বরে|নাম্বারে|নম্বর|নাম্বার)$")
         for (i in lowTokens.indices) {
@@ -462,7 +483,7 @@ object SairaPhoneCommandParser {
 object SairaWakeWord {
     private val WAKE = rx(
         "^(?:(?:hey|hi|hello|ok|okay|oi|ei|ay|ji|জি|ওই|এই|হেই|হ্যালো|ওকে|শোনো|shono|acha|আচ্ছা)[ ,!.।]+){0,2}" +
-            "(saira|sayra|saera|shaira|shayra|sahira|sairah|syra|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা)" +
+            "(saira|sayra|saera|shaira|shayra|sahira|sairah|syra|sarah|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা)" +
             "(?:[ ,!.।:-]+|$)",
         RegexOption.IGNORE_CASE
     )
