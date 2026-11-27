@@ -629,6 +629,8 @@ class ChatboxDmRobolectricTest {
         composeRule.onNodeWithTag("nav_saira").performClick()
         composeRule.waitForIdle()
 
+        composeRule.onNodeWithTag("saira_menu_button").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_play_protect_status").performScrollTo().assertIsDisplayed()

@@ -241,7 +241,8 @@ class PooledGeminiProvider(
                     if (!line.startsWith("data:")) continue
                     val payload = line.removePrefix("data:").trim()
                     if (payload.isEmpty() || payload == "[DONE]") continue
-                    val text = parseText(payload) ?: continue
+                    // keep the piece's own spaces / line breaks — trimming each piece glued words together
+                    val text = parseText(payload, trim = false) ?: continue
                     if (text.isNotEmpty()) {
                         any = true
                         emit(text)
@@ -292,7 +293,7 @@ class PooledGeminiProvider(
         }
     }
 
-    private fun parseText(raw: String): String? = runCatching {
+    private fun parseText(raw: String, trim: Boolean = true): String? = runCatching {
         val json = JSONObject(raw)
         val candidates = json.optJSONArray("candidates") ?: return null
         if (candidates.length() == 0) return null
@@ -302,7 +303,7 @@ class PooledGeminiProvider(
         for (i in 0 until parts.length()) {
             sb.append(parts.getJSONObject(i).optString("text", ""))
         }
-        sb.toString().trim().ifEmpty { null }
+        (if (trim) sb.toString().trim() else sb.toString()).ifEmpty { null }
     }.getOrNull()
 
     private fun post(url: String, body: String): Pair<Int, String> {

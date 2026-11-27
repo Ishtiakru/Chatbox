@@ -34,6 +34,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.MarkChatUnread
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.ArrowUpward
@@ -660,6 +667,7 @@ fun SairaAiScreen(
             .background(colors.background)
             .imePadding()
     ) {
+        val activeRuleCount = rules.count { it.enabled }
         // Meta-AI Styled Top Header
         Surface(color = colors.surface) {
             Row(
@@ -683,10 +691,12 @@ fun SairaAiScreen(
                             maxLines = 1
                         )
                         Text(
-                            text = if (rolloverCount > 0) {
-                                "${currentTimeInfo.bengaliGreeting} · Thread ${rolloverCount + 1}"
-                            } else {
-                                "${currentTimeInfo.bengaliGreeting} · Always on Free AI"
+                            text = when {
+                                selectedSubTab == "autoReply" ->
+                                    if (activeRuleCount > 0) "Auto-Reply · $activeRuleCount টা নিয়ম চালু" else "Auto-Reply"
+                                selectedSubTab == "agent" -> "Agent · Admin"
+                                rolloverCount > 0 -> "${currentTimeInfo.bengaliGreeting} · Thread ${rolloverCount + 1}"
+                                else -> "${currentTimeInfo.bengaliGreeting} · Always on Free AI"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.inkSubtle,
@@ -701,57 +711,6 @@ fun SairaAiScreen(
                         appUpdateActive = appUpdateActive,
                         onUpdateClick = onAppUpdateClick
                     )
-                    Surface(
-                        color = colors.fieldBg,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, colors.border)
-                    ) {
-                        Row(modifier = Modifier.padding(2.dp)) {
-                            Surface(
-                                onClick = { selectedSubTab = "chat" },
-                                color = if (selectedSubTab == "chat") Color.White else Color.Transparent,
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.testTag("saira_subtab_chat")
-                            ) {
-                                Text(
-                                    text = "Chat",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (selectedSubTab == "chat") ChatboxPrimary else colors.inkMuted,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                )
-                            }
-                            Surface(
-                                onClick = { selectedSubTab = "autoReply" },
-                                color = if (selectedSubTab == "autoReply") Color.White else Color.Transparent,
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.testTag("saira_subtab_rules")
-                            ) {
-                                val activeRules = rules.count { it.enabled }
-                                Text(
-                                    text = if (activeRules > 0) "Auto-Reply ($activeRules)" else "Auto-Reply",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (selectedSubTab == "autoReply") ChatboxPrimary else colors.inkMuted,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                )
-                            }
-                            if (isAdminAgent) {
-                                Surface(
-                                    onClick = { selectedSubTab = "agent" },
-                                    color = if (selectedSubTab == "agent") Color.White else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.testTag("saira_subtab_agent")
-                                ) {
-                                    Text(
-                                        text = "Agent",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = if (selectedSubTab == "agent") ChatboxPrimary else colors.inkMuted,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     if (selectedSubTab == "chat") {
                         IconButton(
                             onClick = { showVoiceMode = true },
@@ -768,6 +727,47 @@ fun SairaAiScreen(
                             modifier = Modifier.testTag("saira_history_button")
                         ) {
                             Icon(Icons.Rounded.History, contentDescription = "Saved threads", tint = ChatboxPrimary)
+                        }
+                    }
+                    // Chat / Auto-Reply / Agent live in one menu instead of a crowded tab strip.
+                    Box {
+                        var sectionMenuOpen by remember { mutableStateOf(false) }
+                        IconButton(
+                            onClick = { sectionMenuOpen = true },
+                            modifier = Modifier.testTag("saira_menu_button")
+                        ) {
+                            Icon(Icons.Rounded.Menu, contentDescription = "Saira menu", tint = ChatboxPrimary)
+                        }
+                        DropdownMenu(
+                            expanded = sectionMenuOpen,
+                            onDismissRequest = { sectionMenuOpen = false },
+                            shape = RoundedCornerShape(18.dp),
+                            containerColor = colors.surface,
+                            modifier = Modifier.testTag("saira_section_menu")
+                        ) {
+                            SairaSectionItem(
+                                icon = Icons.Rounded.ChatBubbleOutline,
+                                title = "Chat",
+                                subtitle = "Saira-র সাথে কথা বলুন",
+                                selected = selectedSubTab == "chat",
+                                tag = "saira_subtab_chat"
+                            ) { selectedSubTab = "chat"; sectionMenuOpen = false }
+                            SairaSectionItem(
+                                icon = Icons.Rounded.MarkChatUnread,
+                                title = if (activeRuleCount > 0) "Auto-Reply ($activeRuleCount)" else "Auto-Reply",
+                                subtitle = "আপনার হয়ে মেসেজের উত্তর",
+                                selected = selectedSubTab == "autoReply",
+                                tag = "saira_subtab_rules"
+                            ) { selectedSubTab = "autoReply"; sectionMenuOpen = false }
+                            if (isAdminAgent) {
+                                SairaSectionItem(
+                                    icon = Icons.Rounded.AutoAwesome,
+                                    title = "Agent",
+                                    subtitle = "অ্যাপ বদলানো ও আপডেট (Admin)",
+                                    selected = selectedSubTab == "agent",
+                                    tag = "saira_subtab_agent"
+                                ) { selectedSubTab = "agent"; sectionMenuOpen = false }
+                            }
                         }
                     }
                 }
@@ -2208,4 +2208,40 @@ private fun SairaPhoneHints(outcome: PhoneOutcome) {
             }
         }
     }
+}
+
+/** One row of the Saira section menu (Chat / Auto-Reply / Agent). */
+@Composable
+private fun SairaSectionItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    tag: String,
+    onClick: () -> Unit
+) {
+    val colors = LocalChatboxColors.current
+    DropdownMenuItem(
+        text = {
+            Column(modifier = Modifier.padding(vertical = 2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (selected) ChatboxPrimary else colors.ink
+                )
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = colors.inkSubtle)
+            }
+        },
+        leadingIcon = {
+            Icon(icon, contentDescription = null, tint = if (selected) ChatboxPrimary else colors.inkMuted)
+        },
+        trailingIcon = {
+            if (selected) Icon(Icons.Rounded.Check, contentDescription = "selected", tint = ChatboxPrimary)
+        },
+        onClick = onClick,
+        modifier = Modifier
+            .widthIn(min = 240.dp)
+            .background(if (selected) ChatboxPrimary.copy(alpha = 0.08f) else Color.Transparent)
+            .testTag(tag)
+    )
 }
