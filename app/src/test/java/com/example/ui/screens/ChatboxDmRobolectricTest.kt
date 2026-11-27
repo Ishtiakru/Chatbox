@@ -129,11 +129,10 @@ class ChatboxDmRobolectricTest {
         composeRule.onAllNodesWithTag("chatbox_thread_maya").assertCountEquals(0)
         composeRule.onNodeWithText("No users added yet").assertIsDisplayed()
 
-        // Profile screen must NOT have Log out / Sign out
+        // Profile screen now has Log out option added as requested
         composeRule.onNodeWithTag("nav_profile").performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodesWithText("Log out", ignoreCase = true).assertCountEquals(0)
-        composeRule.onAllNodesWithText("Sign out", ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Log out", ignoreCase = true).assertCountEquals(1)
     }
 
     @Test

@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
@@ -161,7 +162,8 @@ fun ProfileScreen(
     onChangeLiveLocation: (Boolean) -> Unit,
     onLanguageSelected: (String) -> Unit,
     onAppUpdateClick: () -> Unit,
-    onNavigateTab: (CoreAppTab) -> Unit
+    onNavigateTab: (CoreAppTab) -> Unit,
+    onLogout: () -> Unit = {}
 ) {
     val colors = LocalChatboxColors.current
     val context = LocalContext.current
@@ -345,6 +347,19 @@ fun ProfileScreen(
                     } else {
                         activeSheet = ProfileSheet.HELP
                     }
+                }
+            ),
+            ProfileMenuRow(
+                id = "logout",
+                title = "Log out",
+                subtitle = "Sign out of your Chatbox account",
+                icon = Icons.AutoMirrored.Rounded.Logout,
+                tint = Color(0xFFD32F2F),
+                onClick = {
+                    runCatching {
+                        com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+                    }
+                    onLogout()
                 }
             )
         )
@@ -690,52 +705,7 @@ fun ProfileScreen(
             }
 
             if (!searchOpen) {
-                HorizontalDivider(
-                    color = colors.border,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-
-                // "Also in Chatbox" quick shortcuts (like WhatsApp's "Also from Meta" footer)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text(
-                        text = "Also in Chatbox",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = colors.inkMuted
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        ProfileShortcutBubble(
-                            label = "Chatbox",
-                            icon = Icons.Rounded.ChatBubbleOutline,
-                            onClick = { onNavigateTab(CoreAppTab.CHATBOX) }
-                        )
-                        ProfileShortcutBubble(
-                            label = "Saira AI",
-                            icon = Icons.Rounded.AutoAwesome,
-                            onClick = { onNavigateTab(CoreAppTab.SAIRA) }
-                        )
-                        ProfileShortcutBubble(
-                            label = "Calls",
-                            icon = Icons.Rounded.Phone,
-                            onClick = { onNavigateTab(CoreAppTab.CALLS) }
-                        )
-                        if (isAdmin) {
-                            ProfileShortcutBubble(
-                                label = "Admin",
-                                icon = Icons.Rounded.Shield,
-                                onClick = { onNavigateTab(CoreAppTab.ADMIN) }
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -797,45 +767,6 @@ fun ProfileScreen(
         )
         ProfileSheet.HELP -> ProfileAboutHelpDialog(
             onDismiss = { activeSheet = ProfileSheet.NONE }
-        )
-    }
-}
-
-@Composable
-private fun ProfileShortcutBubble(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit
-) {
-    val colors = LocalChatboxColors.current
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 4.dp)
-    ) {
-        Surface(
-            shape = CircleShape,
-            color = Color.White,
-            border = BorderStroke(1.dp, colors.border),
-            modifier = Modifier.size(48.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = ChatboxPrimary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.inkMuted,
-            maxLines = 1
         )
     }
 }
