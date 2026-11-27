@@ -116,6 +116,7 @@ private enum class ProfileSheet {
     EDIT_PROFILE,
     PRIVACY,
     CHATS,
+    NOTIFICATIONS,
     STORAGE,
     LANGUAGE,
     APPEARANCE,
@@ -288,9 +289,9 @@ fun ProfileScreen(
             ProfileMenuRow(
                 id = "notifications",
                 title = "Notifications & Saira",
-                subtitle = "Auto-reply rules, WhatsApp & Messenger assistant",
+                subtitle = "Message tone, call ringtone, vibration · Saira auto-reply",
                 icon = Icons.Rounded.NotificationsNone,
-                onClick = { onNavigateTab(CoreAppTab.SAIRA) }
+                onClick = { activeSheet = ProfileSheet.NOTIFICATIONS }
             ),
             ProfileMenuRow(
                 id = "storage",
@@ -754,6 +755,10 @@ fun ProfileScreen(
             oneMinAutoReplyEnabled = oneMinAutoReplyEnabled,
             onQuickReactionChange = onQuickReactionChange,
             onChangeOneMinAutoReply = onChangeOneMinAutoReply,
+            onDismiss = { activeSheet = ProfileSheet.NONE }
+        )
+        ProfileSheet.NOTIFICATIONS -> ProfileNotificationsDialog(
+            onOpenSaira = { onNavigateTab(CoreAppTab.SAIRA) },
             onDismiss = { activeSheet = ProfileSheet.NONE }
         )
         ProfileSheet.STORAGE -> ProfileStorageDialog(
