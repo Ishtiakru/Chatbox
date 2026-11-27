@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <application>
         <!-- Keeps the process alive + online in Doze so replies still go out after
@@ -39,6 +40,20 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- Saira Automation: presses Send / Call in other apps and locks the screen on command. -->
+        <service
+            android:name="com.example.saira.SairaAutomationService"
+            android:exported="true"
+            android:label="@string/saira_automation_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/saira_automation_config" />
+        </service>
 
         <service
             android:name="com.example.saira.SairaNotificationListenerService"

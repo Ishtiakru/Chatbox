@@ -57,6 +57,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        connected = this
         configureAppCheck(applicationContext, null)
         SairaKeepAliveService.sync(applicationContext)
         serviceScope.launch {
@@ -66,6 +67,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (connected === this) connected = null
         runCatching {
             requestRebind(ComponentName(this, SairaNotificationListenerService::class.java))
         }
@@ -641,6 +643,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        if (connected === this) connected = null
         super.onDestroy()
         pendingReplyJobs.values.forEach { entry ->
             entry.job.cancel()
@@ -681,6 +684,44 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "SairaNotifListener"
+
+        @Volatile
+        private var connected: SairaNotificationListenerService? = null
+
+        private val ANSWER_WORDS = listOf("answer", "accept", "pick up", "উত্তর", "গ্রহণ", "রিসিভ", "ধরুন", "জবাব", "join")
+        private val DECLINE_WORDS = listOf(
+            "decline", "reject", "hang up", "end call", "end", "dismiss", "কেটে", "প্রত্যাখ্যান", "বাতিল", "শেষ", "কাটুন"
+        )
+
+        /**
+         * Presses Answer / Decline on whatever call is ringing (phone dialer, WhatsApp,
+         * Messenger, Telegram, imo …) through its notification. Returns the app's name, or
+         * null when no call notification with such a button was found.
+         */
+        fun fireCallAction(context: Context, answer: Boolean): String? {
+            val svc = connected ?: return null
+            val words = if (answer) ANSWER_WORDS else DECLINE_WORDS
+            val active = runCatching { svc.activeNotifications }.getOrNull() ?: return null
+            val calls = active.filter { sbn ->
+                val n = sbn.notification
+                n.category == Notification.CATEGORY_CALL ||
+                    n.extras?.containsKey("android.callType") == true ||
+                    n.actions?.any { a -> ANSWER_WORDS.any { w -> a.title?.toString()?.lowercase()?.contains(w) == true } } == true
+            }.sortedByDescending { it.postTime }
+            for (sbn in calls) {
+                val action = sbn.notification.actions?.firstOrNull { a ->
+                    val t = a.title?.toString()?.lowercase().orEmpty()
+                    words.any { t.contains(it) }
+                } ?: continue
+                if (SairaPhoneActions.sendAction(context, action)) {
+                    return runCatching {
+                        val pm = context.packageManager
+                        pm.getApplicationLabel(pm.getApplicationInfo(sbn.packageName, 0)).toString()
+                    }.getOrDefault(sbn.packageName)
+                }
+            }
+            return null
+        }
         private const val WAKE_LOCK_TAG = "Chatbox:SairaAutoReplyWakeLock"
         private const val PENDING_WAKE_LOCK_TIMEOUT_MS = 75_000L
         private const val PROCESS_WAKE_LOCK_TIMEOUT_MS = 60_000L

@@ -132,6 +132,24 @@ class SairaFeatureSuiteRobolectricTest {
         composeRule.onNodeWithText("New Unlimited Thread").performClick()
         composeRule.waitForIdle()
 
+        // Phone assistant: a typed call request is only carried out after "yes"
+        composeRule.onNodeWithTag("saira_prompt_input").performTextInput("01712345678 নম্বরে কল দাও")
+        composeRule.onNodeWithTag("saira_send_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("saira_phone_confirm").assertIsDisplayed()
+        composeRule.onNodeWithTag("saira_phone_cancel").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithTag("saira_phone_confirm").assertCountEquals(0)
+
+        // Voice mode dialog: teach voice / on-off switch
+        composeRule.onNodeWithTag("saira_voice_mode_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("saira_voice_enroll_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("saira_voice_mode_switch").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("saira_voice_mode_close").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithTag("saira_voice_mode_dialog").assertCountEquals(0)
+
         // Switch to Auto-Reply tab
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()

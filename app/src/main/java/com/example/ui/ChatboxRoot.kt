@@ -131,6 +131,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val activeCall by viewModel.activeCall.collectAsState()
     val callEngine by viewModel.callEngine.collectAsState()
     val callPermContext = LocalContext.current
+    // Saira voice mode restarts itself once the app is opened again (after an update / reboot).
+    LaunchedEffect(Unit) { runCatching { com.example.saira.SairaVoiceMode.resumeIfEnabled(callPermContext) } }
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val callPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
