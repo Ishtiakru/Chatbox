@@ -17,6 +17,9 @@ import com.example.R
  * sound/vibration make them audible while the screen is off.
  */
 object ChatboxNotifier {
+    /** An unanswered call stops ringing after this long (both sides log "Missed"). */
+    const val RING_TIMEOUT_MS = 60_000L
+
     private fun msgChannel(context: Context) = ChatboxSounds.channelId(context, ChatboxSounds.Kind.MESSAGE)
     private fun callChannel(context: Context) = ChatboxSounds.channelId(context, ChatboxSounds.Kind.CALL)
 
@@ -100,8 +103,13 @@ object ChatboxNotifier {
             .setContentText(body)
             .setOngoing(true)
             .setAutoCancel(false)
+            .setCategory(Notification.CATEGORY_CALL)
+            .setTimeoutAfter(RING_TIMEOUT_MS)
             .setContentIntent(openAppIntent(context))
             .build()
+        // INSISTENT = ringtone + vibration repeat until the notification is cancelled
+        // (accept / decline / caller hangs up / 60 s timeout) — not just one ring.
+        notification.flags = notification.flags or Notification.FLAG_INSISTENT
         nm.notify(id, notification)
     }
 

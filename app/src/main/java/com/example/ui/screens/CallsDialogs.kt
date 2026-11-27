@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.ChatboxThread
 import com.example.ui.components.ChatboxSearchField
@@ -137,8 +138,16 @@ internal fun CallsActiveCallDialog(
         return
     }
 
-    Dialog(onDismissRequest = if (engine != null) ({}) else onDismiss) {
-        if (engine != null) KeepScreenOn()
+    // A stray touch outside the card (cheek, finger) must never end the call — only the red button does.
+    Dialog(
+        onDismissRequest = if (engine != null) ({}) else onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = engine == null)
+    ) {
+        if (engine != null) {
+            KeepScreenOn()
+            // Phone held to the ear → screen off, so the cheek can't press "End".
+            if (!target.isVideo) ProximityScreenOff()
+        }
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1E1930),
@@ -936,7 +945,11 @@ internal fun CallsIncomingCallDialog(
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDecline) {
+    // Ringing: only the Accept / Decline buttons act; touches outside and Back are ignored.
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1E1930),

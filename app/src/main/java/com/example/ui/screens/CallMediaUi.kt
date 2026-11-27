@@ -66,6 +66,26 @@ internal fun KeepScreenOn() {
     }
 }
 
+/** Turns the screen off while the phone is near the ear (audio calls), like the phone app. */
+@Composable
+internal fun ProximityScreenOff() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    DisposableEffect(Unit) {
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        val lock = runCatching {
+            if (pm != null && pm.isWakeLockLevelSupported(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                pm.newWakeLock(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "chatbox:call-proximity")
+                    .apply { setReferenceCounted(false); acquire(4 * 60 * 60 * 1000L) }
+            } else null
+        }.getOrNull()
+        onDispose {
+            runCatching {
+                if (lock?.isHeld == true) lock.release(android.os.PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+            }
+        }
+    }
+}
+
 @Composable
 internal fun WebRtcVideoView(
     track: VideoTrack?,
