@@ -93,7 +93,7 @@ Use "none" when the user is not asking the phone to do one of these actions righ
 
     /** Asks the AI to read a command the local rules could not (null = not a command / offline). */
     suspend fun extractWithAi(userText: String): PhoneCommand? = withContext(Dispatchers.IO) {
-        val raw = withTimeoutOrNull(14_000L) {
+        val raw = withTimeoutOrNull(6_000L) {
             runCatching { SairaAiClient.complete(EXTRACT_SYSTEM, emptyList(), userText) }.getOrNull()
         } ?: return@withContext null
         parseAiJson(raw)

@@ -64,6 +64,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.saira.SairaAutomation
 import com.example.saira.SairaNotificationListenerService
+import com.example.saira.SairaCloudVoice
 import com.example.saira.SairaPhoneActions
 import com.example.saira.SairaTtsVoice
 import com.example.saira.SairaVoiceMode
@@ -76,6 +77,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val PREVIEW_LINE = "আমি সায়রা। আপনি শুধু বলুন, সায়রা আম্মুকে কল দাও — আমি সাথে সাথে করে দেব।"
 
 private val ENROLL_LINES = listOf(
     "Saira, আমি তোমার মালিক। এখন থেকে শুধু আমার কণ্ঠ শুনবে।",
@@ -108,17 +111,39 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
         TextToSpeech(context.applicationContext) { st -> ttsReady = st == TextToSpeech.SUCCESS }
     }
     DisposableEffect(Unit) { onDispose { runCatching { previewTts.stop(); previewTts.shutdown() } } }
-    fun previewVoice() {
+    val cloudVoice = remember { SairaCloudVoice(context) }
+    var previewBusy by remember { mutableStateOf(false) }
+    var confirmFirst by remember { mutableStateOf(SairaVoiceMode.confirmFirst(context)) }
+    fun localPreview() {
         if (!ttsReady) { voiceNote = "কণ্ঠ-ইঞ্জিন এখনো তৈরি হয়নি, একটু পরে চাপুন।"; return }
         val bn = SairaTtsVoice.apply(previewTts, bengali = true)
         val chosen = runCatching { previewTts.voice }.getOrNull()
         voiceNote = when {
+            voiceNote != null && bn -> voiceNote
             !bn -> "এই ফোনে বাংলা কণ্ঠ নেই — Settings → Text-to-speech → Google → বাংলা কণ্ঠ ইনস্টল করুন।"
             chosen != null && SairaTtsVoice.femaleScore(chosen) == 0 ->
                 "এই ফোনে শুধু পুরুষ বাংলা কণ্ঠ আছে — Google Text-to-speech-এ মেয়ে কণ্ঠ (Voice I) বেছে নিন।"
             else -> null
         }
-        if (bn) previewTts.speak("আমি সায়রা। আপনি শুধু বলুন, সায়রা আম্মুকে কল দাও — আমি সাথে সাথে করে দেব।", TextToSpeech.QUEUE_FLUSH, null, "saira_preview")
+        if (bn) previewTts.speak(PREVIEW_LINE, TextToSpeech.QUEUE_FLUSH, null, "saira_preview")
+    }
+    fun previewVoice() {
+        if (previewBusy) return
+        previewBusy = true
+        voiceNote = "Saira-র কণ্ঠ আনছি…"
+        scope.launch {
+            val clip = cloudVoice.clip(PREVIEW_LINE, 12_000L)
+            previewBusy = false
+            val track = clip?.let { SairaCloudVoice.play(it) }
+            if (clip != null && track != null) {
+                voiceNote = null
+                kotlinx.coroutines.delay(clip.durationMs + 300)
+                runCatching { track.release() }
+            } else {
+                voiceNote = "ইন্টারনেট ছাড়া Saira-র নিজের কণ্ঠ আসে না — ফোনের কণ্ঠে শোনাচ্ছি।"
+                localPreview()
+            }
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -255,9 +280,9 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                     }
                 }
                 Text(
-                    "Saira শুধু আপনার কণ্ঠ চিনবে। \"Saira, আম্মুকে কল দাও\", \"Saira, করিমকে WhatsApp-এ মেসেজ দাও যে আমি আসছি\", " +
-                        "\"Saira, কল ধরো\", \"Saira, স্ক্রিন বন্ধ করো\" — ফোন পকেটে বা স্ক্রিন বন্ধ থাকলেও। কল আর মেসেজের আগে Saira " +
-                        "জিজ্ঞেস করবে, আপনি \"হ্যাঁ\" বললে তবেই করবে।",
+                    "Saira শুধু আপনার কণ্ঠ চিনবে। এক নিঃশ্বাসে বলুন: \"Saira, আম্মুকে কল দাও\", \"Saira, করিমকে WhatsApp-এ মেসেজ দাও যে আমি আসছি\", " +
+                        "\"Saira, কল ধরো\", \"Saira, স্ক্রিন বন্ধ করো\" — ফোন পকেটে বা স্ক্রিন বন্ধ থাকলেও সাথে সাথে করবে। " +
+                        "শুধু \"Saira\" বললে একটা বিপ হবে, তারপর কমান্ড বলুন।",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.inkMuted
                 )
@@ -268,7 +293,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Saira-র কণ্ঠ শুনুন")
+                    Text(if (previewBusy) "আনছি…" else "Saira-র কণ্ঠ শুনুন")
                 }
                 voiceNote?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = colors.inkMuted) }
 
@@ -380,6 +405,22 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                             modifier = Modifier.testTag("saira_voice_mode_switch")
                         )
                     }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("কল / মেসেজের আগে জিজ্ঞেস করবে", style = MaterialTheme.typography.bodyMedium, color = colors.ink)
+                        Text(
+                            if (confirmFirst) "\"হ্যাঁ করো\" বললে তবেই করবে" else "বন্ধ — কমান্ড দিলেই সাথে সাথে করবে",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.inkSubtle
+                        )
+                    }
+                    Switch(
+                        checked = confirmFirst,
+                        onCheckedChange = { confirmFirst = it; SairaVoiceMode.setConfirmFirst(context, it) },
+                        modifier = Modifier.testTag("saira_voice_confirm_switch")
+                    )
                 }
 
                 // Step 4 — powers that need system settings
