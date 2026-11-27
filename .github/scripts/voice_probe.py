@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Temporary: checks Gemini speech-to-text the way SairaVoiceBrain does. Keys never printed."""
-import base64, json, subprocess, time, urllib.error, urllib.request
+import base64, json, subprocess, sys, time, traceback, urllib.error, urllib.request
+def _hook(t, v, tb):
+    print("::notice title=VOICE::CRASH " + "".join(traceback.format_exception(t, v, tb))[-600:].replace("\n", " ;; "))
+sys.excepthook = _hook
 
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.6-flash", "gemini-4-hydrogen", "gemini-3.5-flash", "gemini-flash-latest"]
