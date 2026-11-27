@@ -24,7 +24,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 /** What Saira heard, plus (for questions / chat) her short spoken reply from the same request. */
-data class VoiceUnderstanding(val transcript: String, val reply: String?)
+data class VoiceUnderstanding(val transcript: String, val reply: String?, val commandJson: String? = null)
 
 /**
  * Speech → text (and the answer, in the same round trip) for voice mode, using the Gemini key pool.
@@ -152,7 +152,7 @@ class SairaVoiceBrain(context: Context) {
                     )
                 )
             )
-            put("generationConfig", JSONObject().put("maxOutputTokens", 320).put("temperature", 0.3))
+            put("generationConfig", JSONObject().put("maxOutputTokens", 400).put("temperature", 0.3))
         }.toString()
     }
 
@@ -195,10 +195,13 @@ class SairaVoiceBrain(context: Context) {
 
         private const val SYSTEM =
             "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the owner's phone. " +
-                "You get a short audio clip of the owner speaking. Reply in EXACTLY this format, two lines:\n" +
+                "You get a short audio clip of the owner speaking. Reply in EXACTLY this format, three lines:\n" +
                 "T: <exact transcript — Bengali speech in Bengali script, English words in English, Banglish as spoken; " +
                 "always write the name as Saira; nothing else; empty if there is no clear speech>\n" +
                 "R: <your spoken reply, or ->\n" +
+                "C: <if the speech orders a phone action, one JSON object {\"action\":\"call|video_call|message|answer|decline|" +
+                "open_app|screen_on|screen_off\",\"app\":\"phone|sms|whatsapp|messenger|telegram|imo|viber|other\"," +
+                "\"target\":\"contact name or number as said (app name for open_app, e.g. YouTube)\",\"text\":\"message to send\"}; otherwise ->\n" +
                 "Rules for R: write - (a single dash) when the speech is a phone action (call, video call, message/SMS, " +
                 "answer or decline/cut a call, open an app, screen on/off, yes/no), when it is not addressed to Saira " +
                 "(the owner must start with Saira unless it is a follow-up turn), or when asked to transcribe only. " +
@@ -214,6 +217,8 @@ class SairaVoiceBrain(context: Context) {
         fun parse(text: String, wantReply: Boolean): VoiceUnderstanding {
             val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
             val tLine = lines.firstOrNull { it.startsWith("T:", ignoreCase = true) }
+            val cLine = lines.firstOrNull { it.startsWith("C:", ignoreCase = true) }
+            val commandJson = cLine?.substring(2)?.trim()?.takeIf { it.contains('{') && it.contains("action") }
             val rIdx = lines.indexOfFirst { it.startsWith("R:", ignoreCase = true) }
             val transcript = when {
                 tLine != null -> tLine.substring(2)
@@ -222,13 +227,13 @@ class SairaVoiceBrain(context: Context) {
                 else -> lines.joinToString(" ")
             }.let { cleanTranscript(it) }
             val reply = if (rIdx >= 0) {
-                (listOf(lines[rIdx].substring(2)) + lines.drop(rIdx + 1).filterNot { it.startsWith("T:", true) })
+                (listOf(lines[rIdx].substring(2)) + lines.drop(rIdx + 1).filterNot { it.startsWith("T:", true) || it.startsWith("C:", true) })
                     .joinToString(" ").trim()
             } else ""
             // The model sometimes tacks "…, Saira" onto the answer as if the owner were Saira — drop that.
             val cleaned = reply.replace(Regex("[,،]?\\s*(সায়রা|সায়রা|Saira)\\s*(?=[।!.?]|$)"), "").trim()
             val r = cleaned.takeIf { wantReply && it.isNotBlank() && it.trim('-', '—', ' ', '.').isNotEmpty() }
-            return VoiceUnderstanding(transcript, r)
+            return VoiceUnderstanding(transcript, r, commandJson)
         }
     }
 }

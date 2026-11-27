@@ -464,8 +464,23 @@ Use "none" when the user is not asking the phone to do one of these actions righ
         else PhoneOutcome(false, "${cmd.target} খুলতে পারিনি।" + automationHint(context))
     }
 
+    /** Bengali / Banglish app names → the English launcher label. */
+    private val APP_ALIASES = mapOf(
+        "ইউটিউব" to "youtube", "ইউটিউবে" to "youtube", "youtub" to "youtube", "ফেসবুক" to "facebook", "ফেসবুকে" to "facebook",
+        "fb" to "facebook", "ক্যামেরা" to "camera", "গ্যালারি" to "gallery", "গ্যালারী" to "gallery", "ছবি" to "gallery",
+        "ক্রোম" to "chrome", "সেটিংস" to "settings", "সেটিং" to "settings", "setting" to "settings", "ম্যাপ" to "maps",
+        "ম্যাপস" to "maps", "map" to "maps", "প্লে স্টোর" to "play store", "playstore" to "play store", "টিকটক" to "tiktok",
+        "ইনস্টাগ্রাম" to "instagram", "insta" to "instagram", "জিমেইল" to "gmail", "ক্যালকুলেটর" to "calculator",
+        "ঘড়ি" to "clock", "এলার্ম" to "clock", "alarm" to "clock", "বিকাশ" to "bkash", "নগদ" to "nagad", "ফোন" to "phone",
+        "ডায়ালার" to "phone", "মেসেজ" to "messages", "message" to "messages", "sms" to "messages", "কন্টাক্ট" to "contacts",
+        "contact" to "contacts", "ক্যালেন্ডার" to "calendar", "ফাইল" to "files", "file" to "files", "মিউজিক" to "music",
+        "গান" to "music", "স্ন্যাপচ্যাট" to "snapchat", "টুইটার" to "x", "twitter" to "x", "চ্যাটজিপিটি" to "chatgpt",
+        "চ্যাটবক্স" to "chatbox", "জুম" to "zoom", "ড্রাইভ" to "drive", "ইমেইল" to "gmail", "email" to "gmail"
+    )
+
     private fun findAppByName(context: Context, name: String): String? {
-        val q = name.lowercase().removeSuffix(" app").trim()
+        val raw = name.lowercase().removeSuffix(" app").removeSuffix(" অ্যাপ").trim()
+        val q = APP_ALIASES[raw] ?: raw
         if (q.isEmpty()) return null
         val pm = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)

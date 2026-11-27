@@ -65,6 +65,24 @@ class SairaPhoneCommandTest {
     }
 
     @Test
+    fun `open app however it is said`() {
+        fun open(t: String) = p(t)?.takeIf { it.action == PhoneAction.OPEN_APP }
+        assertEquals(PhoneApp.WHATSAPP, open("হোয়াটসঅ্যাপ ওপেন করো।")?.app)
+        assertEquals(PhoneApp.WHATSAPP, open("WhatsApp open koro.")?.app)
+        assertEquals(PhoneApp.WHATSAPP, open("whatsapp e jao")?.app)
+        assertEquals(PhoneApp.WHATSAPP, open("হোয়াটসঅ্যাপে যাও")?.app)
+        assertEquals(PhoneApp.WHATSAPP, open("whatsapp kholo to")?.app)
+        assertEquals("youtube", open("youtube ta kholo")?.target)
+        assertEquals("youtube", open("open youtube.")?.target)
+        assertEquals("ক্যামেরা", open("ক্যামেরাটা একটু খুলে দাও তো")?.target)
+        assertEquals(PhoneApp.OTHER, open("ফেসবুক চালু করো")?.app)
+        assertEquals("settings", open("settings e jao")?.target)
+        assertNull(p("tumi kothay jao"))
+        assertNull(p("বাসায় যাও"))
+        assertEquals(PhoneAction.SCREEN_ON, p("স্ক্রিন অন করো")?.action)
+    }
+
+    @Test
     fun `ordinary chat is never treated as a phone command`() {
         listOf(
             "বাংলায় একটি সুন্দর সময় অনুযায়ী সম্ভাষণ ও বার্তা লিখে দাও",
