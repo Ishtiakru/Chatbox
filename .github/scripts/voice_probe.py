@@ -13,7 +13,11 @@ import imageio_ffmpeg
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 wavs = []
 for i, (lang, text) in enumerate(PHRASES):
-    gTTS(text, lang=lang).save(f"/tmp/p{i}.mp3")
+    for att in range(6):
+        try:
+            gTTS(text, lang=lang).save(f"/tmp/p{i}.mp3"); break
+        except Exception:
+            time.sleep(10 * (att + 1))
     subprocess.run([FF, "-loglevel", "error", "-y", "-i", f"/tmp/p{i}.mp3", "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", f"/tmp/p{i}.wav"], check=True)
     wavs.append(base64.b64encode(open(f"/tmp/p{i}.wav", "rb").read()).decode())
 def call(model, key, b64, ctx):
