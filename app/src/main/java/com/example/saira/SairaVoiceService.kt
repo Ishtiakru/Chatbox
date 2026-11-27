@@ -42,7 +42,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Voice-mode settings & live status (shared by the service and the Saira screen). */
@@ -207,6 +206,7 @@ class SairaVoiceService : Service() {
                 val preRoll = ArrayDeque<ShortArray>()
                 val speech = ArrayList<ShortArray>()
                 var lastModeCheck = 0L
+                var lastWarm = 0L
                 var paused = false
                 while (scope.isActive) {
                     val n = rec.read(buf, 0, frame)
@@ -232,13 +232,16 @@ class SairaVoiceService : Service() {
                         if (preRoll.size > 15) preRoll.removeFirst()
                         if (loudRun >= 3) {
                             inSpeech = true; silence = 0
+                            if (now - lastWarm > 25_000) { lastWarm = now; brain.warmUp() }
                             speech.clear(); speech.addAll(preRoll); preRoll.clear()
                         }
                     } else {
                         speech.add(copy)
                         if (r < maxOf(noise * 2.0, 260.0)) silence++ else silence = 0
                         val tooLong = speech.size >= 600 // 12 s
-                        if (silence >= 40 || tooLong) {
+                        if (silence >= END_SILENCE_FRAMES || tooLong) {
+                            // Drop most of the trailing silence: less to upload = faster answer.
+                            repeat((silence - 8).coerceAtLeast(0)) { if (speech.isNotEmpty()) speech.removeAt(speech.size - 1) }
                             val total = speech.sumOf { it.size }
                             if (total >= rate * 6 / 10) {
                                 val pcm = ShortArray(total)
@@ -263,11 +266,13 @@ class SairaVoiceService : Service() {
     // ------------------------------------------------------------------ understanding
     private suspend fun handleSegment(pcm: ShortArray) {
         val vp = SairaVoiceMode.voiceprint(this) ?: return
-        // A short "হ্যাঁ" / "না" right after Saira asks gets the relaxed check (it's still the owner's turn).
-        val waitingForAnswer = pending?.let { System.currentTimeMillis() < it.until } == true ||
-            System.currentTimeMillis() < followUpUntil
-        val sens = if (waitingForAnswer) SairaVoiceprint.RELAXED else SairaVoiceMode.sensitivity(this)
-        val match = SairaVoiceprint.match(vp, pcm, sens)
+        // Only the owner's voice is ever answered. A short "হ্যাঁ" / "না" after Saira asks may be
+        // shorter than a normal command, so it needs less audio — but the same voice check.
+        val waitingForAnswer = pending?.let { System.currentTimeMillis() < it.until } == true
+        val match = SairaVoiceprint.match(
+            vp, pcm, SairaVoiceMode.sensitivity(this),
+            minFrames = if (waitingForAnswer) SairaVoiceprint.MIN_SHORT_FRAMES else SairaVoiceprint.MIN_COMMAND_FRAMES
+        )
         if (!match.ok) {
             SairaVoiceMode.setStatus("অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি")
             return
@@ -277,22 +282,29 @@ class SairaVoiceService : Service() {
             return
         }
         SairaVoiceMode.setStatus("আপনার কণ্ঠ চিনেছি — বুঝে নিচ্ছি…")
-        val heard = withTimeoutOrNull(22_000L) { brain.transcribe(pcm) }
-        if (heard == null) {
+        val followUp = System.currentTimeMillis() < followUpUntil
+        val understood = withTimeoutOrNull(14_000L) {
+            brain.understand(
+                pcm, wantReply = !waitingForAnswer, followUp = followUp,
+                history = history.toList(), expectYesNo = waitingForAnswer
+            )
+        }
+        if (understood == null) {
             SairaVoiceMode.setStatus(
                 if (brain.lastError == "quota") "AI এখন ব্যস্ত (limit) — একটু পরে আবার বলুন"
                 else "বুঝতে পারিনি (নেটওয়ার্ক ধীর) — আবার বলুন"
             )
             return
         }
+        val heard = understood.transcript
         if (heard.isBlank()) {
             SairaVoiceMode.setStatus("পরিষ্কার কথা শুনিনি — আবার বলুন")
             return
         }
-        handleTranscript(heard)
+        handleTranscript(heard, understood.reply)
     }
 
-    private suspend fun handleTranscript(text: String) {
+    private suspend fun handleTranscript(text: String, quickReply: String? = null) {
         val now = System.currentTimeMillis()
         val p = pending
         val addressed = SairaWakeWord.extract(text)
@@ -323,10 +335,10 @@ class SairaVoiceService : Service() {
             return
         }
         SairaVoiceMode.setStatus("“$command”")
-        handleCommand(command)
+        handleCommand(command, quickReply)
     }
 
-    private suspend fun handleCommand(command: String) {
+    private suspend fun handleCommand(command: String, quickReply: String? = null) {
         var parsed: PhoneCommand? = SairaPhoneCommandParser.parse(command)
         if (parsed == null && SairaPhoneCommandParser.mightBeCommand(command)) parsed = SairaPhoneActions.extractWithAi(command)
         if (parsed != null && parsed.needsText) {
@@ -335,7 +347,12 @@ class SairaVoiceService : Service() {
         }
         val c = parsed
         if (c == null) {
-            answerQuestion(command)
+            if (quickReply != null) {
+                // Answer came back with the transcript — speak it right away (no second AI round trip).
+                remember(command, quickReply)
+                speak(plain(quickReply).take(600))
+                followUpUntil = System.currentTimeMillis() + 8_000
+            } else answerQuestion(command)
             return
         }
         if (c.needsTarget) { speak("কাকে? নামসহ আবার বলুন, যেমন: Saira, আম্মুকে কল দাও।"); return }
@@ -362,7 +379,7 @@ class SairaVoiceService : Service() {
             return
         }
         pending = Pending(c, number, who, System.currentTimeMillis() + 20_000)
-        speak(SairaPhoneCommandParser.describe(c, who) + " হ্যাঁ বা না বলুন।")
+        speak(SairaPhoneCommandParser.describe(c, who) + " বলুন: হ্যাঁ করো, অথবা না।")
     }
 
     private fun runConfirmed(cmd: PhoneCommand, number: String?, who: String) {
@@ -388,11 +405,15 @@ class SairaVoiceService : Service() {
             runCatching { SairaAiClient.complete(VOICE_SYSTEM, history.toList(), question) }.getOrNull()
         }?.trim().orEmpty()
         if (answer.isEmpty()) { speak("দুঃখিত, এখন উত্তর দিতে পারছি না।"); return }
+        remember(question, answer)
+        speak(plain(answer).take(600))
+        followUpUntil = System.currentTimeMillis() + 8_000
+    }
+
+    private fun remember(question: String, answer: String) {
         history.addLast(AiChatMessage("user", question))
         history.addLast(AiChatMessage("model", answer))
         while (history.size > 8) history.removeFirst()
-        speak(plain(answer).take(600))
-        followUpUntil = System.currentTimeMillis() + 8_000
     }
 
     // ------------------------------------------------------------------ speech out
@@ -409,13 +430,8 @@ class SairaVoiceService : Service() {
             return
         }
         val bengali = text.any { it in '\u0980'..'\u09FF' }
-        val locale = if (bengali) {
-            listOf(Locale("bn", "BD"), Locale("bn", "IN"), Locale("bn")).firstOrNull {
-                engine.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE
-            }
-        } else Locale.US
-        locale?.let { engine.language = it }
-        if (bengali && locale == null) {
+        val hasVoice = runCatching { SairaTtsVoice.apply(engine, bengali) }.getOrDefault(false)
+        if (bengali && !hasVoice) {
             // No Bengali voice on this phone: don't read Bengali with an English voice — just act.
             then?.let { f -> main.post { f() } }
             return
@@ -498,8 +514,10 @@ class SairaVoiceService : Service() {
         private const val NOTIFICATION_ID = 7401
         const val ACTION_STOP = "com.example.saira.VOICE_STOP"
 
+        /** 0.5 s of quiet ends a sentence (was 0.8 s) — Saira starts working sooner. */
+        private const val END_SILENCE_FRAMES = 25
         private const val VOICE_SYSTEM =
-            "You are Saira, a friendly voice assistant on the user's phone. Reply in the user's language " +
+            "You are Saira, a warm female voice assistant on the user's phone. Reply in the user's language " +
                 "(Bengali, Banglish or English) in 1–3 short spoken sentences. No markdown, lists, emojis or links."
     }
 }

@@ -64,6 +64,8 @@ object SairaVoiceprint {
     private const val COMPONENTS = 8
     const val MIN_ENROLL_VOICED_SECONDS = 6.0
     private const val MIN_TEST_FRAMES = 35   // ~0.35 s of voiced speech
+    const val MIN_COMMAND_FRAMES = MIN_TEST_FRAMES
+    const val MIN_SHORT_FRAMES = 22          // a short "হ্যাঁ" / "না"
 
     /** 0 = strict, 1 = normal, 2 = relaxed. */
     const val STRICT = 0
@@ -204,10 +206,10 @@ object SairaVoiceprint {
         return avgLogLik(Gmm(vp.means, vp.variances, vp.weights), frames)
     }
 
-    fun match(vp: Voiceprint, pcm: ShortArray, sensitivity: Int = NORMAL): VoiceMatch {
+    fun match(vp: Voiceprint, pcm: ShortArray, sensitivity: Int = NORMAL, minFrames: Int = MIN_TEST_FRAMES): VoiceMatch {
         val frames = features(pcm)
         val th = thresholdFor(vp, sensitivity)
-        if (frames.size < MIN_TEST_FRAMES) return VoiceMatch(false, Double.NaN, th, 0.0, "too short")
+        if (frames.size < minFrames) return VoiceMatch(false, Double.NaN, th, 0.0, "too short")
         val s = avgLogLik(Gmm(vp.means, vp.variances, vp.weights), frames)
         val p = pitch(pcm)
         if (s < th) return VoiceMatch(false, s, th, p, "voice differs")

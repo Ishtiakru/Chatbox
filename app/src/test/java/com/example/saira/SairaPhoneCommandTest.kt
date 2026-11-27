@@ -57,6 +57,11 @@ class SairaPhoneCommandTest {
         assertEquals(PhoneAction.SCREEN_OFF, voice("Saira screen bondho koro")?.action)
         assertEquals(PhoneAction.SCREEN_OFF, voice("Saira স্ক্রিন বন্ধ করো")?.action)
         assertEquals("কল ধরো", SairaWakeWord.extract("Okay Saira, কল ধরো"))
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.PHONE, "ammu"), voice("Saira, ammuker call dao."))
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.PHONE, "abbu"), voice("Saira, abbur kache call dao"))
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.PHONE, "আম্মু"), voice("সায়রা আম্মুর কাছে কল দাও"))
+        assertEquals(PhoneCommand(PhoneAction.CALL, PhoneApp.PHONE, "ammu"), voice("Sarah, call ammu"))
+        assertEquals("", voice("Saira ekbar call dao")?.target)
     }
 
     @Test

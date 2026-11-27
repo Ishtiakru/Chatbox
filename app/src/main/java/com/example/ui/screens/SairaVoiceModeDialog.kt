@@ -7,6 +7,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.net.Uri
+import android.speech.tts.TextToSpeech
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -63,6 +65,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.saira.SairaAutomation
 import com.example.saira.SairaNotificationListenerService
 import com.example.saira.SairaPhoneActions
+import com.example.saira.SairaTtsVoice
 import com.example.saira.SairaVoiceMode
 import com.example.saira.SairaVoiceprint
 import com.example.ui.i18n.Text
@@ -97,6 +100,26 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
     var voiced by remember { mutableStateOf(0f) }
     var message by remember { mutableStateOf<Pair<String, Boolean>?>(null) } // text, isError
     var refresh by remember { mutableIntStateOf(0) }
+
+    // Preview of Saira's (female) voice, same picker as the background service.
+    var ttsReady by remember { mutableStateOf(false) }
+    var voiceNote by remember { mutableStateOf<String?>(null) }
+    val previewTts = remember {
+        TextToSpeech(context.applicationContext) { st -> ttsReady = st == TextToSpeech.SUCCESS }
+    }
+    DisposableEffect(Unit) { onDispose { runCatching { previewTts.stop(); previewTts.shutdown() } } }
+    fun previewVoice() {
+        if (!ttsReady) { voiceNote = "কণ্ঠ-ইঞ্জিন এখনো তৈরি হয়নি, একটু পরে চাপুন।"; return }
+        val bn = SairaTtsVoice.apply(previewTts, bengali = true)
+        val chosen = runCatching { previewTts.voice }.getOrNull()
+        voiceNote = when {
+            !bn -> "এই ফোনে বাংলা কণ্ঠ নেই — Settings → Text-to-speech → Google → বাংলা কণ্ঠ ইনস্টল করুন।"
+            chosen != null && SairaTtsVoice.femaleScore(chosen) == 0 ->
+                "এই ফোনে শুধু পুরুষ বাংলা কণ্ঠ আছে — Google Text-to-speech-এ মেয়ে কণ্ঠ (Voice I) বেছে নিন।"
+            else -> null
+        }
+        if (bn) previewTts.speak("আমি সায়রা। আপনি শুধু বলুন, সায়রা আম্মুকে কল দাও — আমি সাথে সাথে করে দেব।", TextToSpeech.QUEUE_FLUSH, null, "saira_preview")
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -238,6 +261,16 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.inkMuted
                 )
+
+                OutlinedButton(
+                    onClick = { previewVoice() },
+                    modifier = Modifier.testTag("saira_voice_preview_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Saira-র কণ্ঠ শুনুন")
+                }
+                voiceNote?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = colors.inkMuted) }
 
                 // Step 1 — voice
                 Surface(shape = RoundedCornerShape(16.dp), color = colors.fieldBg, border = BorderStroke(1.dp, colors.border)) {
