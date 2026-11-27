@@ -332,3 +332,11 @@ jobs:
             sleep $((i * 10))
           done
           echo "::warning::could not upload chatbox-full.apk"
+
+      - name: Announce update to every installed app (settings/sparkUpdate)
+        continue-on-error: true
+        env:
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
+        run: |
+          python3 -m pip install --quiet google-auth || true
+          python3 .github/scripts/announce_update.py "${{ steps.meta.outputs.version }}"
