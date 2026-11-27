@@ -240,7 +240,6 @@ object AppSelfUpdater {
             val certs = if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
             certs?.map { it.toCharsString() }?.toSet().orEmpty()
         } else p.signatures?.map { it.toCharsString() }?.toSet().orEmpty()
-    }
 
     private suspend fun install(context: Context, apk: File) = withContext(Dispatchers.IO) {
         val installer = context.packageManager.packageInstaller
