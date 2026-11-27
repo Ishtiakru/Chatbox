@@ -1,7 +1,5 @@
 package com.example.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -38,9 +36,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PhotoCamera
@@ -83,7 +79,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,11 +98,9 @@ import com.example.ui.components.MessengerAvatar
 import com.example.ui.components.ProfileDialogMode
 import com.example.ui.components.ProfileModalDialog
 import com.example.ui.theme.ChatboxPrimary
-import com.example.ui.theme.ChatboxSoftLavender
 import com.example.ui.theme.ChatboxUpdateGreen
 import com.example.ui.theme.LocalChatboxColors
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -115,7 +108,7 @@ import java.io.File
 
 private enum class ProfileSheet {
     NONE,
-    EDIT_PROFILE,
+    EDIT_ABOUT,
     ACCOUNT,
     EDIT_NAME,
     PRIVACY,
@@ -178,7 +171,6 @@ fun ProfileScreen(
     var activeSheet by remember { mutableStateOf(ProfileSheet.NONE) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var copiedId by remember { mutableStateOf(false) }
     var cacheBytes by remember { mutableLongStateOf(0L) }
 
     val cloudBlockedIds by remember(currentUserId) {
@@ -426,16 +418,6 @@ fun ProfileScreen(
                                 tint = ChatboxPrimary
                             )
                         }
-                        IconButton(
-                            onClick = { activeSheet = ProfileSheet.EDIT_PROFILE },
-                            modifier = Modifier.testTag("profile_edit_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Edit,
-                                contentDescription = "Edit profile",
-                                tint = ChatboxPrimary
-                            )
-                        }
                     }
                 }
                 if (searchOpen) {
@@ -477,7 +459,7 @@ fun ProfileScreen(
                     ) {
                         // Thought bubble above avatar
                         Surface(
-                            onClick = { activeSheet = ProfileSheet.EDIT_PROFILE },
+                            onClick = { activeSheet = ProfileSheet.EDIT_ABOUT },
                             shape = RoundedCornerShape(20.dp),
                             color = colors.surface.copy(alpha = 0.94f),
                             border = BorderStroke(1.dp, colors.border),
@@ -573,13 +555,13 @@ fun ProfileScreen(
                             }
                         }
 
-                        // Name + dropdown chevron (opens Edit Profile)
+                        // Name + chevron (opens the name-only editor)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { activeSheet = ProfileSheet.EDIT_PROFILE }
+                                .clickable { activeSheet = ProfileSheet.EDIT_NAME }
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
@@ -592,50 +574,14 @@ fun ProfileScreen(
                             )
                             Icon(
                                 imageVector = Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = "Edit profile",
+                                contentDescription = "Edit name",
                                 tint = ChatboxPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Copyable 6-digit Chatbox ID pill
-                        if (effectiveShortId.isNotBlank()) {
-                            Surface(
-                                onClick = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    cm?.setPrimaryClip(ClipData.newPlainText("Chatbox ID", effectiveShortId))
-                                    copiedId = true
-                                    scope.launch {
-                                        delay(1800)
-                                        copiedId = false
-                                    }
-                                },
-                                shape = CircleShape,
-                                color = ChatboxSoftLavender,
-                                border = BorderStroke(1.dp, colors.border),
-                                modifier = Modifier.testTag("profile_copy_id_chip")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = "ID: $effectiveShortId",
-                                        fontFamily = FontFamily.Monospace,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = ChatboxPrimary
-                                    )
-                                    Icon(
-                                        imageVector = if (copiedId) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
-                                        contentDescription = "Copy 6-digit Chatbox ID",
-                                        tint = if (copiedId) ChatboxUpdateGreen else ChatboxPrimary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                            }
-                        } else if (ownProfile == null) {
+                        // ID & Gmail live in Account only (removed from the header).
+                        if (effectiveShortId.isBlank() && ownProfile == null) {
                             TextButton(onClick = onRetryEnsureProfile) {
                                 Text(
                                     text = if (isOnline) "Creating your 6-digit ID…" else "Offline · Tap to sync profile",
@@ -645,15 +591,6 @@ fun ProfileScreen(
                             }
                         }
 
-                        if (!userEmail.isNullOrBlank()) {
-                            Text(
-                                text = userEmail,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.inkSubtle,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
             }
@@ -732,11 +669,11 @@ fun ProfileScreen(
 
     when (activeSheet) {
         ProfileSheet.NONE -> Unit
-        ProfileSheet.EDIT_PROFILE, ProfileSheet.ACCOUNT, ProfileSheet.EDIT_NAME -> ProfileModalDialog(
+        ProfileSheet.EDIT_ABOUT, ProfileSheet.ACCOUNT, ProfileSheet.EDIT_NAME -> ProfileModalDialog(
             mode = when (activeSheet) {
                 ProfileSheet.ACCOUNT -> ProfileDialogMode.ACCOUNT
                 ProfileSheet.EDIT_NAME -> ProfileDialogMode.NAME
-                else -> ProfileDialogMode.FULL
+                else -> ProfileDialogMode.ABOUT
             },
             uid = currentUserId,
             email = userEmail,
