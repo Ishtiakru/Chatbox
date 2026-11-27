@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -138,6 +138,7 @@ jobs:
         id: agent
         env:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
+          SAIRA_PRO_KEYS: ${{ secrets.SAIRA_PRO_KEYS }}
           INSTRUCTION: ${{ inputs.instruction }}
           ASSETS: ${{ inputs.assets }}
           REFS: ${{ inputs.refs }}

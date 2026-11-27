@@ -23,7 +23,17 @@ data class AgentTurn(val role: String, val text: String)
  */
 class SairaAgentAi(context: Context) {
     private val pool = GeminiKeyPool(context.applicationContext)
+    private val store = SecureStore(context.applicationContext)
 
+    /** "provider/model" of the last answer (pro brain) or "gemini-free". */
+    @Volatile var lastModel: String = ""
+        private set
+
+    /**
+     * Strongest available brain first: the admin's own API keys (Claude / GPT / Gemini Pro …,
+     * see [ProBrain]); live web facts come from Gemini's Google Search grounding. Falls back to the
+     * free Gemini pool. [fast] = quick routing/translation work → cheaper fast models.
+     */
     suspend fun generate(
         system: String,
         history: List<AgentTurn>,
@@ -31,8 +41,43 @@ class SairaAgentAi(context: Context) {
         attachments: List<AgentAttachment> = emptyList(),
         json: Boolean = false,
         search: Boolean = false,
-        maxTokens: Int = 2048
+        maxTokens: Int = 2048,
+        fast: Boolean = false
     ): String = withContext(Dispatchers.IO) {
+        val pro = ProBrain.parse(store.get(ProBrain.STORE_KEY))
+        if (pro.isNotEmpty()) {
+            var p = prompt
+            if (search && !json) {
+                val findings = runCatching {
+                    poolGenerate(
+                        "You are a web research assistant. Use Google Search. List the up-to-date facts that answer " +
+                            "the question, each with its source name and date. Max 250 words. No opinions.",
+                        emptyList(), prompt.take(4000), emptyList(), json = false, search = true, maxTokens = 1200
+                    )
+                }.getOrNull()
+                if (!findings.isNullOrBlank()) {
+                    p = "$prompt\n\n[Live web search findings — use them for current facts:]\n$findings"
+                }
+            }
+            val r = ProBrain.generate(pro, system, history, p, attachments, json, maxOf(maxTokens, 4096), fast)
+            if (r != null) {
+                lastModel = r.model
+                return@withContext r.text
+            }
+            Log.w(TAG, "pro brain did not answer → free Gemini pool")
+        }
+        poolGenerate(system, history, prompt, attachments, json, search, maxTokens).also { lastModel = "gemini-free" }
+    }
+
+    private suspend fun poolGenerate(
+        system: String,
+        history: List<AgentTurn>,
+        prompt: String,
+        attachments: List<AgentAttachment>,
+        json: Boolean,
+        search: Boolean,
+        maxTokens: Int
+    ): String {
         val keys = pool.availableKeys()
         if (keys.isEmpty()) throw IllegalStateException("Saira-র AI key পাওয়া যায়নি।")
         var lastError: Exception? = null
@@ -55,7 +100,7 @@ class SairaAgentAi(context: Context) {
                 }
                 if (code in 200..299) {
                     val text = extract(raw)
-                    if (!text.isNullOrBlank()) return@withContext text
+                    if (!text.isNullOrBlank()) return text
                     lastError = IllegalStateException("empty answer")
                     i++
                     continue
