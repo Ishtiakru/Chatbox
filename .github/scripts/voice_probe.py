@@ -4,9 +4,8 @@ def _hook(t, v, tb):
     print("::notice title=VOICE::CRASH " + "".join(traceback.format_exception(t, v, tb))[-600:].replace("\n", " ;; "))
 sys.excepthook = _hook
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-SYSTEM = "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the owner's phone. You get a short audio clip of the owner speaking. Reply in EXACTLY this format, two lines:\nT: <exact transcript — Bengali speech in Bengali script, English words in English, Banglish as spoken; always write the name as Saira; nothing else; empty if there is no clear speech>\nR: <your spoken reply, or ->\nRules for R: write - (a single dash) when the speech is a phone action (call, video call, message/SMS, answer or decline/cut a call, open an app, screen on/off, yes/no), when it is not addressed to Saira (the owner must start with Saira unless it is a follow-up turn), or when asked to transcribe only. Otherwise answer like a caring friend in the owner's language (Bengali, Banglish or English): 1–2 short spoken sentences, no markdown, emojis, lists or links. Use the given time for time/date questions."
-PHRASES = [("bn", "সায়রা, আম্মুকে কল দাও"), ("bn", "সায়রা, আজকে কি বার?"), ("bn", "সায়রা, তুমি কেমন আছো?"),
-           ("en", "Saira, what is the capital of Japan?"), ("bn", "আজকে বিকেলে বাজারে যাবো"), ("bn", "হ্যাঁ")]
+SYSTEM = "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the owner's phone. You get a short audio clip of the owner speaking. Reply in EXACTLY this format, two lines:\nT: <exact transcript — Bengali speech in Bengali script, English words in English, Banglish as spoken; always write the name as Saira; nothing else; empty if there is no clear speech>\nR: <your spoken reply, or ->\nRules for R: write - (a single dash) when the speech is a phone action (call, video call, message/SMS, answer or decline/cut a call, open an app, screen on/off, yes/no), when it is not addressed to Saira (the owner must start with Saira unless it is a follow-up turn), or when asked to transcribe only. Otherwise answer like a caring friend: if the owner spoke English answer in English, otherwise answer in Bengali written in Bengali script (never romanized Banglish — a Bengali voice reads it aloud). 1–2 short spoken sentences, no markdown, emojis, lists or links. You are Saira; the owner is NOT Saira, so never call the owner Saira. Use the given time for time/date questions."
+PHRASES = [("bn", "হ্যাঁ"), ("bn", "না"), ("en", "Saira, what is the capital of Japan?"), ("bn", "Saira, aaj ke ki bar?"), ("bn", "হ্যাঁ, দাও")]
 def note(m): print("::notice title=VOICE::" + str(m).replace("%", "%25").replace("\n", " ;; "))
 keys = [k.strip() for k in open("/tmp/pool.txt", encoding="utf-8").read().splitlines() if k.strip() and not k.startswith("#")]
 from gtts import gTTS
@@ -32,10 +31,11 @@ def call(model, key, b64, ctx):
     return code, "".join(p.get("text", "") for p in (c.get("content") or {}).get("parts", []) if not p.get("thought")), dt
 now = datetime.datetime.now().strftime("%A %d %B %Y, %I:%M %p")
 ki = 0
-for model in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"]:
+for model in ["gemini-3.5-flash-lite"]:
     for rnd in range(2):
         for pi, b64 in enumerate(wavs):
-            ctx = f"Now: {now}\nFollow-up turn (owner may speak without saying Saira): no\n" + ("Transcribe only (R: -)." if pi == 5 else "Transcribe and reply.")
+            yn = pi in (0, 1, 4)
+            ctx = f"Now: {now}\nFollow-up turn (owner may speak without saying Saira): no\n" + ("Saira just asked the owner a yes/no question — this short clip is most likely হ্যাঁ / না (or ha, ji, thik ache, okay, na, thak, cancel). Transcribe it exactly.\nTranscribe only (R: -)." if yn else "Transcribe and reply.")
             for a in range(4):
                 key = keys[ki % len(keys)]; ki += 1
                 code, msg, dt = call(model, key, b64, ctx)
