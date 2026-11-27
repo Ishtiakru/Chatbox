@@ -23,6 +23,9 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import saira_brain as brain  # noqa: E402
+
 ROOT = os.getcwd()
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 STRONG = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
@@ -92,6 +95,11 @@ def gemini(system: str, prompt: str, max_tokens: int = 32768, images: "list | No
     is used if no strong model answers within a short grace period. Models that
     return 404 are skipped for the rest of the run."""
     import concurrent.futures as cf
+    if brain.available():
+        try:
+            return brain.chat_json(system, prompt, images=images, max_tokens=max(max_tokens, 16000))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[brain] pro models failed, falling back to free Gemini: {str(exc)[:200]}")
     if not KEYS:
         raise RuntimeError("AI_KEY_POOL empty")
     body = json.dumps({
@@ -405,6 +413,233 @@ def test_source(cls: str, name: str) -> tuple[str, str]:
     return "", ""
 
 
+# ───────────────────────── Agentic mode (pro models) ─────────────────────────
+# With a strong model the agent works like a real engineer: it explores the code
+# (list / grep / read), edits, compiles, runs the tests and iterates until green.
+
+AGENT_MAX_STEPS = 45
+AGENT_BUDGET_S = 40 * 60
+SEARCH_ROOTS = ("app/src/main", "app/src/test")
+
+AGENT_RULES = """
+You work in a loop. Each turn reply with ONE JSON object:
+{"thinking": "<1-3 short sentences: what you learned / what you do next>",
+ "actions": [ {"tool": "...", ...}, ... ]}      (1-8 actions; they run in order)
+Tools:
+ {"tool":"list","path":"app/src/main/java/com/example/ui"}            directory listing with line counts
+ {"tool":"grep","pattern":"<python regex>","path":"app/src/main"}     search code (max 80 hits)
+ {"tool":"read","path":"<file>","start":1,"end":400}                   numbered lines (max 600 per read)
+ {"tool":"edit","path":"<file>","search":"<exact text, occurs once>","replace":"<new text>"}
+ {"tool":"write","path":"<file>","content":"<full content>"}          create a new file (or fully rewrite a small one)
+ {"tool":"compile"}                                                    Kotlin compile → errors or OK
+ {"tool":"test"}                                                       unit tests → failures or OK
+ {"tool":"done","summary_bn":"<1-2 sentence Bengali summary for the admin>"}
+ {"tool":"give_up","reason_bn":"<Bengali reason>"}                    only if truly impossible (paid server, harmful …)
+Rules:
+- ALWAYS read the exact current text before editing; "search" must match exactly once (copy whitespace).
+- Make the change completely and correctly, keep everything the admin did not ask to change.
+- Kotlin 2.2, Compose Material3, minSdk 26. Add every import. No new Gradle dependencies, no invented APIs.
+- Paths: only app/src/main/java/, app/src/main/res/, app/src/main/AndroidManifest.xml, app/src/test/.
+- For Text composables use `import com.example.ui.i18n.Text` (it translates to the user's language).
+- Unit tests: if a test checks behaviour the admin did NOT ask to change, fix your code; if it encodes the OLD
+  behaviour the admin explicitly asked to change, update that test to check the NEW behaviour (never just delete it).
+- "done" is accepted only after compile AND tests pass (they are re-checked automatically).
+- Be efficient: batch several reads/greps in one turn.
+"""
+
+
+def _rel_ok(p: str) -> bool:
+    p = (p or "").strip().lstrip("./")
+    return ".." not in p and p.startswith(SEARCH_ROOTS) and not any(f in p for f in FORBIDDEN)
+
+
+def _tool(a: dict) -> str:
+    t = a.get("tool")
+    try:
+        if t == "list":
+            p = (a.get("path") or "app/src/main/java/com/example").strip().rstrip("/")
+            if not _rel_ok(p) or not os.path.isdir(os.path.join(ROOT, p)):
+                return f"list {p}: not an allowed directory"
+            rows = []
+            for name in sorted(os.listdir(os.path.join(ROOT, p))):
+                full = os.path.join(ROOT, p, name)
+                if os.path.isdir(full):
+                    rows.append(f"{name}/")
+                else:
+                    try:
+                        n = sum(1 for _ in open(full, encoding="utf-8", errors="ignore"))
+                    except Exception:  # noqa: BLE001
+                        n = 0
+                    rows.append(f"{name} ({n} lines)")
+            return f"list {p}:\n" + "\n".join(rows[:300])
+        if t == "grep":
+            pat = re.compile(a.get("pattern") or ".")
+            base = (a.get("path") or "app/src").strip().rstrip("/")
+            if not (base == "app/src" or _rel_ok(base)):
+                return "grep: path not allowed"
+            hits = []
+            target = os.path.join(ROOT, base)
+            walk = [(os.path.dirname(target), [], [os.path.basename(target)])] if os.path.isfile(target) else os.walk(target)
+            for dp, _, files in walk:
+                for f in sorted(files):
+                    if not f.endswith((".kt", ".xml", ".json", ".kts")):
+                        continue
+                    full = os.path.join(dp, f)
+                    rel = os.path.relpath(full, ROOT)
+                    for i, line in enumerate(open(full, encoding="utf-8", errors="ignore"), 1):
+                        if pat.search(line):
+                            hits.append(f"{rel}:{i}: {line.rstrip()[:220]}")
+                            if len(hits) >= 80:
+                                break
+                    if len(hits) >= 80:
+                        break
+                if len(hits) >= 80:
+                    break
+            return f"grep {a.get('pattern')!r}: {len(hits)} hits\n" + "\n".join(hits)
+        if t == "read":
+            p = (a.get("path") or "").strip()
+            if not _rel_ok(p) or not os.path.isfile(os.path.join(ROOT, p)):
+                return f"read {p}: file not found / not allowed"
+            lines = read(p).splitlines()
+            start = max(1, int(a.get("start") or 1))
+            end = min(len(lines), int(a.get("end") or start + 599), start + 599)
+            body = "\n".join(f"{i:5d}| {lines[i - 1]}" for i in range(start, end + 1))
+            return f"read {p} lines {start}-{end} of {len(lines)}:\n{body}"
+        if t == "edit":
+            probs = apply_changes({"edits": [{"path": a.get("path"), "search": a.get("search"),
+                                              "replace": a.get("replace")}]})
+            return f"edit {a.get('path')}: " + ("OK" if not probs else "FAILED — " + "; ".join(probs))
+        if t == "write":
+            p = (a.get("path") or "").strip()
+            if not safe_path(p):
+                return f"write {p}: path not allowed"
+            full = os.path.join(ROOT, p)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            open(full, "w", encoding="utf-8").write(a.get("content") or "")
+            return f"write {p}: OK ({len((a.get('content') or '').splitlines())} lines)"
+        if t == "compile":
+            errs = compile_errors()
+            return "compile: OK" if not errs else "compile: ERRORS\n" + "\n".join(errs)
+        if t == "test":
+            fails = run_tests()
+            if not fails:
+                return "test: all unit tests passed"
+            out = []
+            for f in fails:
+                path, _ = test_source(f["cls"], f["name"])
+                out.append(f"FAILED {f['cls']} > {f['name']} ({path})\n{f['msg'][:1500]}")
+            return "test: FAILURES\n" + "\n\n".join(out)
+        return f"unknown tool {t!r}"
+    except re.error as exc:
+        return f"{t}: bad regex — {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{t}: error {type(exc).__name__}: {str(exc)[:200]}"
+
+
+def _snapshot_untracked() -> set:
+    out = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "app/src"], cwd=ROOT,
+                         capture_output=True, text=True).stdout
+    return set(out.split())
+
+
+def _revert(before: set) -> None:
+    subprocess.run(["git", "checkout", "--", "app/src/main", "app/src/test"], cwd=ROOT)
+    for f in _snapshot_untracked() - before:
+        try:
+            os.remove(os.path.join(ROOT, f))
+        except OSError:
+            pass
+
+
+def _trim(history: list) -> None:
+    total = sum(len(m["text"]) for m in history)
+    i = 1
+    while total > 500_000 and i < len(history) - 6:
+        m = history[i]
+        if m["role"] == "user" and len(m["text"]) > 1500:
+            total -= len(m["text"]) - 300
+            m["text"] = m["text"][:300] + "\n…[old tool output trimmed]"
+        i += 1
+
+
+def agent_loop(instruction: str, refs: list, system: str) -> "tuple[str, str]":
+    """Returns ("ok", summary) | ("give_up", reason) | ("error", why)."""
+    before = _snapshot_untracked()
+    t0 = time.time()
+    sys_prompt = system + "\n" + AGENT_RULES
+    history = [{"role": "user", "images": refs, "text": f"""Admin request (Bengali/Banglish/English — understand it exactly as meant):
+<<<{instruction}>>>
+
+Project source index (path, line count, declarations):
+{index()}
+
+Explore what you need, implement the request, compile, run the tests, then call done."""}]
+    compiled_ok = tested_ok = False
+    model_used = ""
+    for step in range(1, AGENT_MAX_STEPS + 1):
+        if time.time() - t0 > AGENT_BUDGET_S:
+            break
+        _trim(history)
+        try:
+            text, model_used = brain.chat(sys_prompt, history, max_tokens=24000, need_vision=bool(refs))
+        except Exception as exc:  # noqa: BLE001
+            _revert(before)
+            return "error", f"pro model failed: {str(exc)[:200]}"
+        try:
+            obj = brain.parse_json(text)
+        except ValueError:
+            history += [{"role": "assistant", "text": text[:3000]},
+                        {"role": "user", "text": "Reply with ONE valid JSON object as specified."}]
+            continue
+        actions = obj.get("actions") or []
+        if isinstance(actions, dict):
+            actions = [actions]
+        print(f"[agent:{step}] {str(obj.get('thinking') or '')[:200]} → "
+              f"{[x.get('tool') for x in actions if isinstance(x, dict)]}")
+        history.append({"role": "assistant", "text": json.dumps(obj, ensure_ascii=False)[:60000]})
+        results = []
+        finished = None
+        for a in actions[:8]:
+            if not isinstance(a, dict):
+                continue
+            t = a.get("tool")
+            if t == "give_up":
+                _revert(before)
+                return "give_up", str(a.get("reason_bn") or "সম্ভব নয়")
+            if t == "done":
+                errs = compile_errors()
+                if errs:
+                    results.append("done REJECTED — compile errors:\n" + "\n".join(errs))
+                    break
+                fails = run_tests()
+                if fails:
+                    results.append("done REJECTED — unit tests fail:\n" + _tool({"tool": "test"}))
+                    break
+                finished = str(a.get("summary_bn") or "অ্যাপ আপডেট করা হয়েছে")
+                break
+            r = _tool(a)
+            if t in ("edit", "write"):
+                compiled_ok = tested_ok = False
+            elif t == "compile":
+                compiled_ok = r.endswith("OK")
+            elif t == "test":
+                tested_ok = "passed" in r
+            results.append(r[:60000])
+        if finished is not None:
+            diff = subprocess.run(["git", "status", "--porcelain", "app/src"], cwd=ROOT,
+                                  capture_output=True, text=True).stdout
+            if not [l for l in diff.splitlines() if "google-services.json" not in l]:
+                history.append({"role": "user", "text": "done REJECTED — you have not changed any file yet."})
+                continue
+            print(f"[agent] finished in {step} steps, {time.time() - t0:.0f}s with {model_used}")
+            return "ok", finished
+        left = AGENT_MAX_STEPS - step
+        history.append({"role": "user", "text": ("\n\n".join(results) or "(no valid actions)") +
+                        (f"\n\n[{left} turns left]" if left <= 8 else "")})
+    _revert(before)
+    return "error", f"not finished within budget (compile_ok={compiled_ok}, tests_ok={tested_ok})"
+
+
 def main() -> int:
     instruction = (os.environ.get("INSTRUCTION") or "").strip()
     if not instruction:
@@ -434,6 +669,21 @@ def main() -> int:
     system = ("You are Saira, a senior Android/Kotlin engineer working on the 'Chatbox' app "
               "(Jetpack Compose, Firebase Firestore/Auth, package com.example). You change the real "
               "source code to fulfil the admin's request, carefully and minimally.")
+
+    if brain.available():
+        print(f"[agent] pro brain: {brain.describe()} → agentic mode")
+        wait_warmup()
+        status, msg = agent_loop(instruction, refs, system)
+        if status == "ok":
+            open("/tmp/agent_summary.txt", "w", encoding="utf-8").write(msg)
+            notice("পরিবর্তন তৈরি ও কম্পাইল সফল: " + msg)
+            set_output("changed", "true")
+            return 0
+        if status == "give_up":
+            notice("এই পরিবর্তনটা অ্যাপের কোডে করা সম্ভব নয়: " + msg)
+            set_output("changed", "false")
+            return 1
+        print(f"[agent] agentic mode did not finish ({msg}) → classic pipeline")
 
     plan = gemini(system, f"""Admin request (Bengali/Banglish/English):
 <<<{instruction}>>>

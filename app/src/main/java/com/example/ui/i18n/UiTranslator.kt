@@ -133,7 +133,8 @@ object UiTranslator {
                     prompt = "Return ONLY a JSON object mapping each index to its translation, e.g. {\"0\": \"...\", \"1\": \"...\"}.\n" +
                         "Items:\n$input",
                     json = true,
-                    maxTokens = 8192
+                    maxTokens = 8192,
+                    fast = true
                 )
                 val o = JSONObject(raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```"))
                 chunk.indices.mapNotNull { i ->

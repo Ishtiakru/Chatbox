@@ -78,6 +78,10 @@ object SairaAgent {
     private val _autoInstall = MutableStateFlow(true)
     val autoInstall: StateFlow<Boolean> = _autoInstall.asStateFlow()
 
+    private val _proKeys = MutableStateFlow<List<ProKey>>(emptyList())
+    /** The admin's own AI keys (masked in the UI) that power Saira's pro brain. */
+    val proKeys: StateFlow<List<ProKey>> = _proKeys.asStateFlow()
+
     private var store: SecureStore? = null
     private var ai: SairaAgentAi? = null
     private var appContext: Context? = null
@@ -93,6 +97,7 @@ object SairaAgent {
         store = s
         ai = SairaAgentAi(app)
         _autoInstall.value = s.getPlain("auto_install") != "0"
+        _proKeys.value = ProBrain.parse(s.get(ProBrain.STORE_KEY))
         _messages.value = loadMessages(s)
         if (_messages.value.isEmpty()) {
             _messages.value = listOf(
@@ -137,8 +142,55 @@ object SairaAgent {
             store?.putPlain("github_repo", id.repo)
             _github.value = id
             post(sairaMsg("🔗 GitHub যুক্ত হয়েছে: ${id.login} → ${id.repo}। এখন যেকোনো পরিবর্তনের কথা বলুন।"))
+            if (_proKeys.value.isNotEmpty()) scope.launch { syncProKeys() }
         }
         return r
+    }
+
+    // ------------------------------------------------------------ pro brain keys
+
+    /** Adds key(s) (one per line / space-separated model allowed), saves them encrypted, syncs to GitHub. */
+    suspend fun addProKeys(raw: String): String {
+        val s = store ?: return "—"
+        val added = ProBrain.parse(raw)
+        if (added.isEmpty()) {
+            return "এই key চিনতে পারিনি। Claude (sk-ant-…), OpenAI (sk-…), Gemini (AIza…), OpenRouter (sk-or-…), " +
+                "xAI (xai-…), Groq (gsk_…) বা deepseek:sk-… দিন।"
+        }
+        val merged = (_proKeys.value.filter { old -> added.none { it.key == old.key } } + added)
+            .sortedBy { ProBrain.ORDER.indexOf(it.provider) }
+        s.put(ProBrain.STORE_KEY, ProBrain.serialize(merged))
+        _proKeys.value = merged
+        val tests = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            added.map { k -> "${ProBrain.LABELS[k.provider]}: ${ProBrain.test(k)}" }
+        }
+        val sync = syncProKeys()
+        val msg = "🧠 AI Brain আপডেট:\n" + tests.joinToString("\n") + "\n" + sync
+        post(sairaMsg(msg))
+        return tests.joinToString("\n") + "\n" + sync
+    }
+
+    suspend fun removeProKey(key: String): String {
+        val s = store ?: return "—"
+        val left = _proKeys.value.filter { it.key != key }
+        s.put(ProBrain.STORE_KEY, ProBrain.serialize(left).ifBlank { null })
+        _proKeys.value = left
+        return syncProKeys()
+    }
+
+    suspend fun testProKeys(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        if (_proKeys.value.isEmpty()) return@withContext "কোনো key নেই।"
+        _proKeys.value.joinToString("\n") { k -> "${ProBrain.LABELS[k.provider]} ${ProBrain.mask(k.key)}: ${ProBrain.test(k)}" }
+    }
+
+    /** Copies the keys into the GitHub secret the coding agent reads (sealed on the phone). */
+    private suspend fun syncProKeys(): String {
+        val client = gh() ?: return "ℹ️ GitHub যুক্ত হলে key গুলো কোডিং এজেন্টেও (GitHub) পৌঁছে যাবে।"
+        val value = ProBrain.serialize(_proKeys.value).ifBlank { "# none" }
+        return client.setSecret(ProBrain.SECRET_NAME, value).fold(
+            { "🔒 GitHub-এ নিরাপদে পাঠানো হয়েছে — কোড বদলানোর কাজও এখন এই মডেল দিয়ে হবে।" },
+            { "⚠️ GitHub-এ পাঠানো যায়নি: ${it.message}" }
+        )
     }
 
     fun disconnectGitHub() {
@@ -180,8 +232,8 @@ object SairaAgent {
 
     private suspend fun handle(text: String, attachments: List<AgentAttachment>, hooks: AgentHooks) {
         val brain = ai ?: return
-        val history = _messages.value.takeLast(12).dropLast(1).filter { it.text.isNotBlank() }
-            .map { AgentTurn(if (it.fromSaira) "model" else "user", it.text.take(1500)) }
+        val history = _messages.value.takeLast(20).dropLast(1).filter { it.text.isNotBlank() }
+            .map { AgentTurn(if (it.fromSaira) "model" else "user", it.text.take(4000)) }
 
         val decision = runCatching {
             JSONObject(
@@ -192,7 +244,8 @@ object SairaAgent {
                         (attachments.joinToString { "${it.name} (${it.mimeType})" }.ifEmpty { "none" }) +
                         "\nGitHub connected: ${_github.value != null}. Running job: ${_job.value?.phase ?: "none"}.",
                     json = true,
-                    maxTokens = 1024
+                    maxTokens = 1024,
+                    fast = true
                 )
             )
         }.getOrNull() ?: JSONObject().put("action", "answer")
@@ -266,7 +319,7 @@ object SairaAgent {
             prompt = text.ifEmpty { "Look at the attached files and explain them." },
             attachments = attachments,
             search = attachments.isEmpty(),
-            maxTokens = 4096
+            maxTokens = 8192
         )
         post(sairaMsg(reply))
     }

@@ -48,6 +48,33 @@ class GitHubClient(private val token: String?, val repo: String = DEFAULT_REPO) 
         if (code !in 200..299) throw IOException("dispatch HTTP $code: ${raw.take(200)}")
     }
 
+    /**
+     * Creates/updates an Actions secret. The value is sealed on the phone with the repo's
+     * public key (libsodium sealed box) — GitHub only ever receives the encrypted value.
+     */
+    suspend fun setSecret(name: String, value: String): Result<Unit> = call {
+        val pkRaw = try {
+            request("GET", "https://api.github.com/repos/$repo/actions/secrets/public-key").second
+        } catch (e: IOException) {
+            if (e.message.orEmpty().contains("403") || e.message.orEmpty().contains("404")) {
+                throw IOException(
+                    "GitHub token-এ Secrets লেখার অনুমতি নেই। github.com → Settings → Developer settings → " +
+                        "আপনার token → Permissions → Secrets = Read and write দিন, তারপর আবার চেষ্টা করুন।"
+                )
+            }
+            throw e
+        }
+        val o = JSONObject(pkRaw)
+        val pk = android.util.Base64.decode(o.getString("key"), android.util.Base64.DEFAULT)
+        val sealed = SealedBox.seal(value.toByteArray(Charsets.UTF_8), pk)
+        val body = JSONObject()
+            .put("encrypted_value", android.util.Base64.encodeToString(sealed, android.util.Base64.NO_WRAP))
+            .put("key_id", o.getString("key_id"))
+        val (code, raw) = request("PUT", "https://api.github.com/repos/$repo/actions/secrets/$name", body.toString())
+        if (code == 403) throw IOException("GitHub token-এ Secrets = Read and write অনুমতি দিন (403)।")
+        if (code !in 200..299) throw IOException("secret HTTP $code: ${raw.take(160)}")
+    }
+
     suspend fun runs(workflowFile: String? = null, limit: Int = 10): Result<List<GitHubRun>> = call {
         val url = if (workflowFile != null) {
             "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/runs?per_page=$limit"
