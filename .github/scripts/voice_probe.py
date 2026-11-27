@@ -18,8 +18,15 @@ note(f"keys={len(keys)}")
 from gtts import gTTS
 wavs = []
 for i, (lang, text) in enumerate(PHRASES):
-    gTTS(text, lang=lang).save(f"/tmp/p{i}.mp3")
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", f"/tmp/p{i}.mp3", "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", f"/tmp/p{i}.wav"], check=True)
+    try:
+        gTTS(text, lang=lang).save(f"/tmp/p{i}.mp3")
+        src = f"/tmp/p{i}.mp3"
+    except Exception as e:
+        note(f"gtts failed: {str(e)[:150]} -> espeak")
+        subprocess.run(["espeak-ng", "-v", lang, "-w", f"/tmp/p{i}_e.wav", text], check=True)
+        src = f"/tmp/p{i}_e.wav"
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", f"/tmp/p{i}.wav"], capture_output=True, text=True)
+    if r.returncode: note("ffmpeg: " + r.stderr[:200])
     wavs.append(base64.b64encode(open(f"/tmp/p{i}.wav", "rb").read()).decode())
 
 def call(model, key, b64, cfg):

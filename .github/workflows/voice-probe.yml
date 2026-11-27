@@ -24,6 +24,7 @@ jobs:
           open("/tmp/pool.txt", "w", encoding="utf-8").write(raw)
           PY
           pip install --quiet gTTS
+          sudo apt-get install -y -qq espeak-ng ffmpeg >/dev/null 2>&1 || true
           timeout 600s python3 .github/scripts/voice_probe.py
       - name: Cleanup
         if: always()
