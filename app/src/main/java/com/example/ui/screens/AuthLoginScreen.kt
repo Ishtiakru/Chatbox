@@ -35,7 +35,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -437,11 +436,15 @@ fun AuthLoginScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     modifier = Modifier.padding(bottom = 4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.AllInclusive,
+                    // Chatbox's own logo (was an ∞ icon that looked like Meta's).
+                    Image(
+                        painter = painterResource(R.drawable.saira_asset_5733705484_1),
                         contentDescription = null,
-                        tint = LoginInkMuted,
-                        modifier = Modifier.size(16.dp)
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(5.dp))
+                            .testTag("login_footer_logo")
                     )
                     Text(
                         text = stringResource(R.string.app_name),

@@ -151,6 +151,8 @@ class SairaFeatureSuiteRobolectricTest {
         composeRule.onAllNodesWithTag("saira_voice_mode_dialog").assertCountEquals(0)
 
         // Switch to Auto-Reply tab
+        composeRule.onNodeWithTag("saira_menu_button").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_play_protect_status").performScrollTo().assertIsDisplayed()
@@ -255,6 +257,8 @@ class SairaFeatureSuiteRobolectricTest {
 
         // Saira tab -> Auto-Reply card visible
         composeRule.onNodeWithTag("nav_saira").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("saira_menu_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_subtab_rules").performClick()
         composeRule.waitForIdle()
