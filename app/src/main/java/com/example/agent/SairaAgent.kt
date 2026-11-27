@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -98,6 +99,7 @@ object SairaAgent {
         ai = SairaAgentAi(app)
         _autoInstall.value = s.getPlain("auto_install") != "0"
         _proKeys.value = ProBrain.parse(s.get(ProBrain.STORE_KEY))
+        restoreProKeysFromVault(app)
         _messages.value = loadMessages(s)
         if (_messages.value.isEmpty()) {
             _messages.value = listOf(
@@ -142,55 +144,31 @@ object SairaAgent {
             store?.putPlain("github_repo", id.repo)
             _github.value = id
             post(sairaMsg("🔗 GitHub যুক্ত হয়েছে: ${id.login} → ${id.repo}। এখন যেকোনো পরিবর্তনের কথা বলুন।"))
-            if (_proKeys.value.isNotEmpty()) scope.launch { syncProKeys() }
         }
         return r
     }
 
     // ------------------------------------------------------------ pro brain keys
 
-    /** Adds key(s) (one per line / space-separated model allowed), saves them encrypted, syncs to GitHub. */
-    suspend fun addProKeys(raw: String): String {
-        val s = store ?: return "—"
-        val added = ProBrain.parse(raw)
-        if (added.isEmpty()) {
-            return "এই key চিনতে পারিনি। Claude (sk-ant-…), OpenAI (sk-…), Gemini (AIza…), OpenRouter (sk-or-…), " +
-                "xAI (xai-…), Groq (gsk_…) বা deepseek:sk-… দিন।"
-        }
+    /** Merges new pro keys into this phone's encrypted store; returns the full list. */
+    fun mergeProKeysLocally(added: List<ProKey>): List<ProKey> {
         val merged = (_proKeys.value.filter { old -> added.none { it.key == old.key } } + added)
             .sortedBy { ProBrain.ORDER.indexOf(it.provider) }
-        s.put(ProBrain.STORE_KEY, ProBrain.serialize(merged))
+        store?.put(ProBrain.STORE_KEY, ProBrain.serialize(merged))
         _proKeys.value = merged
-        val tests = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            added.map { k -> "${ProBrain.LABELS[k.provider]}: ${ProBrain.test(k)}" }
+        return merged
+    }
+
+    /** After a reinstall the owner's pro keys come back from the owner-only Firestore vault. */
+    private fun restoreProKeysFromVault(context: Context) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val snap = com.example.data.repository.FirebaseProviders.firestore(context)
+                    .collection("adminVault").document("sairaProKeys").get().await()
+                val fromVault = ProBrain.parse(snap.getString("keys"))
+                if (fromVault.isNotEmpty()) mergeProKeysLocally(fromVault)
+            }
         }
-        val sync = syncProKeys()
-        val msg = "🧠 AI Brain আপডেট:\n" + tests.joinToString("\n") + "\n" + sync
-        post(sairaMsg(msg))
-        return tests.joinToString("\n") + "\n" + sync
-    }
-
-    suspend fun removeProKey(key: String): String {
-        val s = store ?: return "—"
-        val left = _proKeys.value.filter { it.key != key }
-        s.put(ProBrain.STORE_KEY, ProBrain.serialize(left).ifBlank { null })
-        _proKeys.value = left
-        return syncProKeys()
-    }
-
-    suspend fun testProKeys(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
-        if (_proKeys.value.isEmpty()) return@withContext "কোনো key নেই।"
-        _proKeys.value.joinToString("\n") { k -> "${ProBrain.LABELS[k.provider]} ${ProBrain.mask(k.key)}: ${ProBrain.test(k)}" }
-    }
-
-    /** Copies the keys into the GitHub secret the coding agent reads (sealed on the phone). */
-    private suspend fun syncProKeys(): String {
-        val client = gh() ?: return "ℹ️ GitHub যুক্ত হলে key গুলো কোডিং এজেন্টেও (GitHub) পৌঁছে যাবে।"
-        val value = ProBrain.serialize(_proKeys.value).ifBlank { "# none" }
-        return client.setSecret(ProBrain.SECRET_NAME, value).fold(
-            { "🔒 GitHub-এ নিরাপদে পাঠানো হয়েছে — কোড বদলানোর কাজও এখন এই মডেল দিয়ে হবে।" },
-            { "⚠️ GitHub-এ পাঠানো যায়নি: ${it.message}" }
-        )
     }
 
     fun disconnectGitHub() {
@@ -213,13 +191,28 @@ object SairaAgent {
     // ------------------------------------------------------------------ chat
 
     fun send(text: String, attachments: List<AgentAttachment>, hooks: AgentHooks) {
-        val clean = text.trim()
-        if (clean.isEmpty() && attachments.isEmpty()) return
-        val note = if (attachments.isEmpty()) "" else "📎 " + attachments.joinToString { it.name }
-        post(AgentMessage(newId(), false, clean.ifEmpty { "(ফাইলগুলো দেখো)" }, note))
+        // API keys sent in chat are cut out first: never stored in the chat, never sent to an AI.
+        val intake = KeyIntake.extract(text.trim())
+        val clean = intake.redacted.trim()
+        if (clean.isEmpty() && attachments.isEmpty() && intake.keys.isEmpty()) return
+        val note = buildList {
+            if (intake.keys.isNotEmpty()) add("🔑 ${intake.keys.size}টা key (লুকানো)")
+            if (attachments.isNotEmpty()) add("📎 " + attachments.joinToString { it.name })
+        }.joinToString(" · ")
+        post(AgentMessage(newId(), false, clean.ifEmpty { if (intake.keys.isNotEmpty()) "(key গুলো বসিয়ে নাও)" else "(ফাইলগুলো দেখো)" }, note))
         _busy.value = true
         scope.launch {
             try {
+                if (intake.keys.isNotEmpty()) {
+                    val ctx = appContext
+                    post(sairaMsg("🔑 ${intake.keys.size}টা key পেয়েছি — পরীক্ষা করে বসাচ্ছি…"))
+                    post(sairaMsg(if (ctx != null) KeyIntake.install(ctx, intake.keys) else "—"))
+                    // Only the keys? Then we're done; otherwise also handle the rest of the message.
+                    val rest = clean.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+                    val trivial = rest.split(" ").filter { it.isNotBlank() }.size <= 12 &&
+                        Regex("key|api|bosa|add|নাও|বসা|যোগ|nao|dao|kor").containsMatchIn(rest)
+                    if (rest.isEmpty() || trivial) return@launch
+                }
                 handle(clean, attachments, hooks)
             } catch (e: Exception) {
                 Log.w(TAG, "agent failed", e)

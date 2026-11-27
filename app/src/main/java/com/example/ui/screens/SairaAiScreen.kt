@@ -296,6 +296,30 @@ fun SairaAiScreen(
     }
 
     fun sendPrompt(rawQuestion: String) {
+        // The owner can simply message Saira his API keys — she cuts them out (never shown,
+        // never saved, never sent to an AI), tests them and installs them herself.
+        if (isOwner && !isBusy) {
+            val intake = com.example.agent.KeyIntake.extract(rawQuestion.trim())
+            if (intake.keys.isNotEmpty()) {
+                val keyExId = "keys_${System.currentTimeMillis()}"
+                draft = ""
+                isBusy = true
+                errorMessage = null
+                exchanges = exchanges + AiExchange(
+                    id = keyExId,
+                    question = "🔑 ${intake.keys.size}টা key (লুকানো)" + intake.redacted.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
+                    answer = "পরীক্ষা করে বসাচ্ছি…",
+                    isStreaming = true
+                )
+                scope.launch {
+                    val report = runCatching { com.example.agent.KeyIntake.install(context, intake.keys) }
+                        .getOrElse { "key বসাতে সমস্যা হয়েছে: ${it.message}" }
+                    exchanges = exchanges.map { if (it.id == keyExId) it.copy(answer = report, isStreaming = false) else it }
+                    isBusy = false
+                }
+                return
+            }
+        }
         val question = rawQuestion.trim()
         if (isBusy || question.isEmpty() || question.length > 2000) return
         restoreDone = true

@@ -139,11 +139,14 @@ jobs:
         env:
           AI_KEY_POOL: ${{ secrets.AI_KEY_POOL }}
           SAIRA_PRO_KEYS: ${{ secrets.SAIRA_PRO_KEYS }}
+          FIREBASE_ADMIN_KEY: ${{ secrets.FIREBASE_ADMIN_KEY }}
           INSTRUCTION: ${{ inputs.instruction }}
           ASSETS: ${{ inputs.assets }}
           REFS: ${{ inputs.refs }}
           REQUEST_ID: ${{ inputs.request_id }}
-        run: python3 .github/scripts/saira_agent.py
+        run: |
+          python3 -m pip install --quiet google-auth >/dev/null 2>&1 || true
+          python3 .github/scripts/saira_agent.py
 
       - name: Verify (release build + lint; unit tests already passed in the agent step)
         if: steps.agent.outputs.changed == 'true'

@@ -86,8 +86,6 @@ import com.example.BuildConfig
 import com.example.agent.AgentAttachment
 import com.example.agent.AgentHooks
 import com.example.agent.AppSelfUpdater
-import com.example.agent.ProBrain
-import com.example.agent.ProKey
 import com.example.agent.SairaAgent
 import com.example.ui.theme.ChatboxPrimary
 import java.io.ByteArrayOutputStream
@@ -160,7 +158,6 @@ private fun SairaAgentWorkspace(
     val github by SairaAgent.github.collectAsState()
     val job by SairaAgent.job.collectAsState()
     val autoInstall by SairaAgent.autoInstall.collectAsState()
-    val proKeys by SairaAgent.proKeys.collectAsState()
     val updateState by AppSelfUpdater.state.collectAsState()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -253,10 +250,6 @@ private fun SairaAgentWorkspace(
                         galleryGranted = galleryGranted,
                         autoInstall = autoInstall,
                         updateState = updateState,
-                        proKeys = proKeys,
-                        onAddProKey = { SairaAgent.addProKeys(it) },
-                        onRemoveProKey = { SairaAgent.removeProKey(it) },
-                        onTestProKeys = { SairaAgent.testProKeys() },
                         onConnectGitHub = { token, repo -> SairaAgent.connectGitHub(token, repo) },
                         onDisconnectGitHub = { SairaAgent.disconnectGitHub() },
                         onOpenDrive = {
@@ -475,10 +468,6 @@ private fun DrawerAction(emoji: String, label: String, enabled: Boolean, onClick
 
 @Composable
 private fun ConnectedSection(
-    proKeys: List<ProKey>,
-    onAddProKey: suspend (String) -> String,
-    onRemoveProKey: suspend (String) -> String,
-    onTestProKeys: suspend () -> String,
     githubLabel: String?,
     firebaseUid: String,
     galleryGranted: Boolean,
@@ -505,70 +494,6 @@ private fun ConnectedSection(
             .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // AI Brain — the admin's own model keys
-        var newKey by remember { mutableStateOf("") }
-        var brainWorking by remember { mutableStateOf(false) }
-        var brainStatus by remember { mutableStateOf<String?>(null) }
-        ConnectorCard(
-            title = "🧠 AI Brain (আপনার API key)",
-            connected = proKeys.isNotEmpty(),
-            subtitle = if (proKeys.isEmpty()) {
-                "Claude / GPT / Gemini Pro-র key দিলে Saira সবচেয়ে শক্তিশালী মডেল দিয়ে উত্তর দেবে ও অ্যাপের কোড লিখবে। " +
-                    "Key শুধু এই ফোনে (এনক্রিপ্ট করে) আর GitHub secret-এ থাকে — অ্যাপের APK-তে কখনো না।"
-            } else "সবচেয়ে শক্তিশালীটা আগে ব্যবহার হয়; কাজ না করলে পরেরটা, শেষে ফ্রি Gemini।"
-        ) {
-            proKeys.forEach { k ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "${ProBrain.LABELS[k.provider] ?: k.provider} · ${ProBrain.mask(k.key)}" + (k.model?.let { " · $it" } ?: ""),
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(enabled = !brainWorking, onClick = {
-                        brainWorking = true
-                        scope.launch {
-                            brainStatus = onRemoveProKey(k.key)
-                            brainWorking = false
-                        }
-                    }) { Text("মুছুন") }
-                }
-            }
-            OutlinedTextField(
-                value = newKey,
-                onValueChange = { newKey = it },
-                label = { Text("API key (চাইলে space দিয়ে model নাম)") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth().testTag("saira_agent_pro_key")
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = newKey.trim().length > 15 && !brainWorking,
-                    onClick = {
-                        brainWorking = true
-                        brainStatus = "যাচাই করছি…"
-                        scope.launch {
-                            brainStatus = onAddProKey(newKey)
-                            newKey = ""
-                            brainWorking = false
-                        }
-                    }
-                ) { Text(if (brainWorking) "অপেক্ষা…" else "যোগ করুন") }
-                if (proKeys.isNotEmpty()) {
-                    OutlinedButton(enabled = !brainWorking, onClick = {
-                        brainWorking = true
-                        brainStatus = "পরীক্ষা করছি…"
-                        scope.launch {
-                            brainStatus = onTestProKeys()
-                            brainWorking = false
-                        }
-                    }) { Text("পরীক্ষা") }
-                }
-            }
-            brainStatus?.let {
-                androidx.compose.material3.Text(it, style = MaterialTheme.typography.labelSmall, color = Color(0xFF4B4560))
-            }
-        }
         // GitHub
         ConnectorCard(title = "GitHub", connected = githubLabel != null, subtitle = githubLabel ?: "অ্যাপের কোড বদলানো, বিল্ড ও রিলিজের জন্য") {
             if (githubLabel != null) {
@@ -576,7 +501,7 @@ private fun ConnectedSection(
             } else {
                 Text(
                     "github.com → Settings → Developer settings → Fine-grained token → Repository: Chatbox → " +
-                        "Permissions: Contents, Actions, Secrets = Read and write → Generate, তারপর এখানে পেস্ট করুন।",
+                        "Permissions: Contents = Read and write, Actions = Read and write → Generate, তারপর এখানে পেস্ট করুন।",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF6B6480)
                 )
