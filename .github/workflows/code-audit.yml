@@ -6,6 +6,7 @@ on:
       - arena/e6004471-chatbox
     paths:
       - .github/workflows/code-audit.yml
+      - .github/audit-trigger
 
 permissions:
   contents: read
@@ -33,7 +34,11 @@ jobs:
       - name: Compile (all warnings) + Android lint
         run: |
           ./gradlew :app:compileDebugKotlin --no-daemon --rerun-tasks 2>&1 | tee compile.txt | tail -5
-          ./gradlew :app:lintDebug --no-daemon --continue -Pandroid.lint.abortOnError=false 2>&1 | tail -5 || true
+          ./gradlew :app:lintDebug --no-daemon --continue 2>&1 | tee lintout.txt | tail -5 || true
+          for f in compile.txt lintout.txt; do
+            T=$(grep -vE "^\s*$" $f | grep -E "rror|FAIL|What went wrong|e: |>" | tail -25 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')
+            echo "::notice title=tail-$f::$T"
+          done
           grep -E "^w: " compile.txt | sed -E 's#^w: file://[^ ]*/app/src/main/java/##' > warnings.txt || true
           R=$(ls app/build/reports/lint-results-debug.txt 2>/dev/null | head -1)
           [ -n "$R" ] && cp "$R" lint.txt || echo "no lint report" > lint.txt
