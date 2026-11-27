@@ -9,9 +9,9 @@ with urllib.request.urlopen(f"{BASE}/models?pageSize=1000&key={keys[0]}", timeou
     models = json.loads(r.read())["models"]
 names = [m["name"].split("/")[1] for m in models]
 tts = [n for n in names if "tts" in n or "audio" in n or "live" in n or "native" in n]
-note("TTS-ish models: " + ", ".join(tts))
-note("flash-lite models: " + ", ".join(n for n in names if "lite" in n))
-cands = [n for n in names if "tts" in n][:4]
+pass #note("TTS-ish models: " + ", ".join(tts))
+pass #note("flash-lite models: " + ", ".join(n for n in names if "lite" in n))
+cands = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"]
 ki = 1
 for model in cands:
     res = []
@@ -27,10 +27,10 @@ for model in cands:
                     with urllib.request.urlopen(req, timeout=30) as r: raw = r.read().decode(); code = 200
                 except urllib.error.HTTPError as e: raw = e.read().decode(errors="replace"); code = e.code
                 dt = time.time() - t
-                if code == 200: break
-            if code == 200:
+                if code == 200 and '"inlineData"' in raw: break
+            if code == 200 and '"inlineData"' in raw:
                 o = json.loads(raw); p = o["candidates"][0]["content"]["parts"][0].get("inlineData", {})
                 res.append(f"{voice} {len(text)}ch {dt:.2f}s {p.get('mimeType')} {len(base64.b64decode(p.get('data','')))}B")
             else:
-                res.append(f"{voice} {code} {dt:.2f}s {raw[:90]}")
+                res.append(f"{voice} {code} {dt:.2f}s {raw[:160]}")
     note(f"{model}: " + " || ".join(res))
