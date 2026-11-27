@@ -30,12 +30,18 @@ class MainActivity : ComponentActivity() {
         // Platform requestPermissions() instead of registerForActivityResult(): the latter
         // trips lint's InvalidFragmentVersionForActivityResult (fatal for lintVitalRelease)
         // because this app has no androidx.fragment >= 1.3.0 dependency.
+        // Asked after the launch intro, so the system popup doesn't cover the animation.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            @Suppress("DEPRECATION")
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_PERMISSION_CODE)
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(3_000)
+                if (!isFinishing && !isDestroyed) {
+                    @Suppress("DEPRECATION")
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_PERMISSION_CODE)
+                }
+            }
         }
 
         val appViewModel = com.example.util.AppViewModels.chatbox(application)

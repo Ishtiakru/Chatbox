@@ -250,7 +250,9 @@ object SairaAgent {
                 if (_github.value == null) {
                     post(sairaMsg("অ্যাপের কোড বদলাতে আগে GitHub যুক্ত করতে হবে — উপরের Connected → GitHub-এ token দিন।"))
                 } else if (_job.value != null) {
-                    post(sairaMsg("আগের একটা পরিবর্তন এখনও চলছে (${phaseLabel(_job.value!!.phase)})। শেষ হলে নতুনটা ধরব।"))
+                    // read once: the job can finish (→ null) between the check and this line
+                    val running = _job.value
+                    post(sairaMsg("আগের একটা পরিবর্তন এখনও চলছে (${running?.let { phaseLabel(it.phase) } ?: "শেষ হচ্ছে"})। শেষ হলে নতুনটা ধরব।"))
                 } else {
                     val images = attachments.filter { it.mimeType.startsWith("image/") }.take(4)
                     val asAsset = decision.optString("image_role") == "asset"
