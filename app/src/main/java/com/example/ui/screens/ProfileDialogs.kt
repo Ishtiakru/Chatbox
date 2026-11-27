@@ -213,6 +213,152 @@ fun ProfilePrivacyDialog(
 }
 
 @Composable
+fun ProfileNotificationsDialog(
+    selectedNotifSound: String,
+    selectedRingtoneSound: String,
+    onNotifSoundSelected: (String) -> Unit,
+    onRingtoneSoundSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalChatboxColors.current
+    val notifSounds = remember {
+        listOf(
+            "Default Chime",
+            "Soft Bell",
+            "Saira Spark",
+            "Crystal Drop",
+            "Modern Pop",
+            "Gentle Pulse",
+            "Whistle Joy",
+            "Bright Tone",
+            "Echo Breeze",
+            "Silent"
+        )
+    }
+    val ringtoneSounds = remember {
+        listOf(
+            "Classic Phone",
+            "Saira Serenade",
+            "Digital Beat",
+            "Soft Marimba",
+            "Cosmic Wave",
+            "Sunrise Harmony",
+            "Ocean Ripple",
+            "Elegant Chime",
+            "Vintage Bell",
+            "Silent"
+        )
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = colors.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .heightIn(max = 560.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Notifications & Saira", style = MaterialTheme.typography.titleLarge, color = colors.ink)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Close notifications settings")
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "SMS Notification Sound",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.ink
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        notifSounds.forEach { sound ->
+                            val isSelected = sound.equals(selectedNotifSound, ignoreCase = true)
+                            Surface(
+                                onClick = { onNotifSoundSelected(sound) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) ChatboxSoftLavender else colors.fieldBg,
+                                border = BorderStroke(1.dp, if (isSelected) ChatboxPrimary else colors.border),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = sound,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) ChatboxPrimary else colors.ink
+                                    )
+                                    if (isSelected) {
+                                        Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = ChatboxPrimary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "Call Ringtone Sound",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.ink
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ringtoneSounds.forEach { sound ->
+                            val isSelected = sound.equals(selectedRingtoneSound, ignoreCase = true)
+                            Surface(
+                                onClick = { onRingtoneSoundSelected(sound) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) ChatboxSoftLavender else colors.fieldBg,
+                                border = BorderStroke(1.dp, if (isSelected) ChatboxPrimary else colors.border),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = sound,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) ChatboxPrimary else colors.ink
+                                    )
+                                    if (isSelected) {
+                                        Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = ChatboxPrimary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Button(onClick = onDismiss) { Text("Done") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ProfileChatsSettingsDialog(
     quickReaction: String,
     oneMinAutoReplyEnabled: Boolean,

@@ -28,6 +28,8 @@ private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore
 
 class AppPreferencesRepository(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val notificationSoundKey = stringPreferencesKey("sms_notification_sound_v1")
+    private val ringtoneSoundKey = stringPreferencesKey("call_ringtone_sound_v1")
     private val loginLanguageKey = stringPreferencesKey("login_language")
     private val quickReactionKey = stringPreferencesKey("dm_quick_reaction")
     private val sairaNotificationRulesKey = stringPreferencesKey("saira_notification_rules_v1")
@@ -74,6 +76,16 @@ class AppPreferencesRepository(private val context: Context) {
     val chosenLanguage: Flow<String?> =
         context.appDataStore.data.map { prefs ->
             prefs[loginLanguageKey]?.let { WorldLanguages.normalizeCode(it) }
+        }
+
+    val notificationSound: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[notificationSoundKey] ?: "Default Chime"
+        }
+
+    val ringtoneSound: Flow<String> =
+        context.appDataStore.data.map { prefs ->
+            prefs[ringtoneSoundKey] ?: "Classic Phone"
         }
 
     val quickReaction: Flow<String> =
@@ -324,6 +336,18 @@ class AppPreferencesRepository(private val context: Context) {
         val normalized = WorldLanguages.normalizeCode(languageCode)
         context.appDataStore.edit { prefs ->
             prefs[loginLanguageKey] = normalized
+        }
+    }
+
+    suspend fun setNotificationSound(sound: String) {
+        context.appDataStore.edit { prefs ->
+            prefs[notificationSoundKey] = sound
+        }
+    }
+
+    suspend fun setRingtoneSound(sound: String) {
+        context.appDataStore.edit { prefs ->
+            prefs[ringtoneSoundKey] = sound
         }
     }
 
