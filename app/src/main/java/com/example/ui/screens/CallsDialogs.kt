@@ -66,6 +66,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.ChatboxThread
 import com.example.ui.components.ChatboxSearchField
@@ -143,11 +146,10 @@ internal fun CallsActiveCallDialog(
         onDismissRequest = if (engine != null) ({}) else onDismiss,
         properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = engine == null)
     ) {
-        if (engine != null) {
-            KeepScreenOn()
-            // Phone held to the ear → screen off, so the cheek can't press "End".
-            if (!target.isVideo) ProximityScreenOff()
-        }
+        if (engine != null) KeepScreenOn()
+        // Phone held to the ear → controls ignore touches (and the screen turns off where allowed),
+        // so the cheek can't press "End".
+        val nearEar = if (engine != null && !target.isVideo) rememberNearEar() else false
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1E1930),
@@ -156,7 +158,19 @@ internal fun CallsActiveCallDialog(
                 .testTag("calls_active_call_dialog")
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .pointerInput(nearEar) {
+                        if (nearEar) awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        if (nearEar) drawRect(Color.Black)
+                    }
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {

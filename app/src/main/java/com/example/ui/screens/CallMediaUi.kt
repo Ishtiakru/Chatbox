@@ -29,6 +29,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,24 +68,44 @@ internal fun KeepScreenOn() {
     }
 }
 
-/** Turns the screen off while the phone is near the ear (audio calls), like the phone app. */
+/**
+ * True while the phone is held to the ear (proximity sensor; no permission needed).
+ * Where WAKE_LOCK is granted (full edition) the screen is also switched off, like the phone app.
+ */
 @Composable
-internal fun ProximityScreenOff() {
+internal fun rememberNearEar(): Boolean {
     val context = androidx.compose.ui.platform.LocalContext.current
+    var near by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
+        val sm = context.getSystemService(android.content.Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_PROXIMITY)
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val max = sensor?.maximumRange ?: 5f
+                near = e.values.isNotEmpty() && e.values[0] < minOf(max, 5f)
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        if (sm != null && sensor != null) {
+            sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        val canLock = context.checkSelfPermission(android.Manifest.permission.WAKE_LOCK) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
         val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
-        val lock = runCatching {
+        val lock = if (!canLock) null else runCatching {
             if (pm != null && pm.isWakeLockLevelSupported(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
                 pm.newWakeLock(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "chatbox:call-proximity")
                     .apply { setReferenceCounted(false); acquire(4 * 60 * 60 * 1000L) }
             } else null
         }.getOrNull()
         onDispose {
+            runCatching { sm?.unregisterListener(listener) }
             runCatching {
                 if (lock?.isHeld == true) lock.release(android.os.PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
             }
         }
     }
+    return near
 }
 
 @Composable
