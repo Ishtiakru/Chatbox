@@ -132,6 +132,9 @@ class SairaVoiceService : Service() {
     @Volatile private var aiCommand: String? = null
     @Volatile private var needsWho: PhoneCommand? = null
     @Volatile private var needsWhoUntil = 0L
+    /** A message waiting for its text ("কী লিখব?"). */
+    @Volatile private var needsWhat: PhoneCommand? = null
+    @Volatile private var needsWhatUntil = 0L
     private val history = ArrayDeque<AiChatMessage>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -177,10 +180,15 @@ class SairaVoiceService : Service() {
         }
         acquireWakeLock()
         SairaVoiceMode.setRunning(true)
-        SairaVoiceMode.setStatus("শুনছি — \"Saira, …\" বলুন")
+        SairaVoiceMode.setStatus(
+            if (SairaVoiceMode.voiceprint(this)?.isNeural == false) "শুনছি — ভিড়ে চেনার জন্য Saira-র পাতায় কণ্ঠ আবার শেখান"
+            else "শুনছি — \"Saira, …\" বলুন"
+        )
         if (loopJob?.isActive != true) loopJob = scope.launch { listenLoop() }
         if (workerJob?.isActive != true) workerJob = scope.launch { for (seg in segments) handleSegment(seg) }
         if (prefetchJob?.isActive != true) prefetchJob = scope.launch { runCatching { cloudVoice.prefetch(PHRASES) } }
+        // Load the speaker model now, not on the first command.
+        scope.launch { SairaVoiceId.encoder(this@SairaVoiceService) }
         return START_STICKY
     }
 
@@ -220,15 +228,10 @@ class SairaVoiceService : Service() {
             try {
                 rec.startRecording()
                 val buf = ShortArray(frame)
-                var noise = 150.0
-                var loudRun = 0
-                var silence = 0
-                var inSpeech = false
-                val preRoll = ArrayDeque<ShortArray>()
-                val speech = ArrayList<ShortArray>()
+                // Follows the room's own level, so a crowd / TV / fan around the phone counts as "quiet".
+                val vad = SairaVad(endSilenceFrames = END_SILENCE_FRAMES)
                 var lastModeCheck = 0L
                 var lastWarm = 0L
-                var speechPeak = 0.0
                 var paused = false
                 while (scope.isActive) {
                     val n = rec.read(buf, 0, frame)
@@ -240,42 +243,12 @@ class SairaVoiceService : Service() {
                         paused = audioManager.mode != AudioManager.MODE_NORMAL
                     }
                     if (paused || speaking.get() || now < mutedUntil) {
-                        inSpeech = false; speech.clear(); preRoll.clear(); loudRun = 0
+                        vad.reset()
                         continue
                     }
-                    val r = SairaVoiceprint.rms(buf, n)
-                    val copy = buf.copyOf(n)
-                    if (!inSpeech) {
-                        if (r > maxOf(noise * 3.0, 380.0)) loudRun++ else {
-                            loudRun = 0
-                            noise = 0.96 * noise + 0.04 * r
-                        }
-                        preRoll.addLast(copy)
-                        if (preRoll.size > 15) preRoll.removeFirst()
-                        if (loudRun >= 3) {
-                            inSpeech = true; silence = 0; speechPeak = 0.0
-                            if (now - lastWarm > 25_000) { lastWarm = now; brain.warmUp() }
-                            speech.clear(); speech.addAll(preRoll); preRoll.clear()
-                        }
-                    } else {
-                        speech.add(copy)
-                        if (r > speechPeak) speechPeak = r
-                        // Quiet = well below the speaker's own level too (so a noisy room can't keep the segment open).
-                        if (r < maxOf(noise * 2.0, 260.0, speechPeak * 0.12)) silence++ else silence = 0
-                        val tooLong = speech.size >= 750 // 15 s
-                        if (silence >= END_SILENCE_FRAMES || tooLong) {
-                            // Drop most of the trailing silence: less to upload = faster answer.
-                            repeat((silence - 8).coerceAtLeast(0)) { if (speech.isNotEmpty()) speech.removeAt(speech.size - 1) }
-                            val total = speech.sumOf { it.size }
-                            if (total >= rate * 6 / 10) {
-                                val pcm = ShortArray(total)
-                                var off = 0
-                                for (s in speech) { s.copyInto(pcm, off); off += s.size }
-                                segments.trySend(pcm)
-                            }
-                            inSpeech = false; speech.clear(); loudRun = 0; silence = 0
-                        }
-                    }
+                    val done = vad.push(buf.copyOf(n))
+                    if (vad.justStarted && now - lastWarm > 25_000) { lastWarm = now; brain.warmUp() }
+                    if (done != null) segments.trySend(done)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "listen loop error", e)
@@ -293,12 +266,12 @@ class SairaVoiceService : Service() {
         // Only the owner's voice is ever answered. A short "হ্যাঁ" / "না" after Saira asks may be
         // shorter than a normal command, so it needs less audio — but the same voice check.
         val waitingForAnswer = pending?.let { System.currentTimeMillis() < it.until } == true
-        val match = SairaVoiceprint.match(
-            vp, pcm, SairaVoiceMode.sensitivity(this),
-            minFrames = if (waitingForAnswer) SairaVoiceprint.MIN_SHORT_FRAMES else SairaVoiceprint.MIN_COMMAND_FRAMES
-        )
+        val match = SairaVoiceId.match(this, vp, pcm, SairaVoiceMode.sensitivity(this), shortAnswer = waitingForAnswer)
         if (!match.ok) {
-            SairaVoiceMode.setStatus("অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি")
+            SairaVoiceMode.setStatus(
+                if (match.reason == "too short") "খুব ছোট শব্দ — উপেক্ষা করেছি"
+                else "অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি"
+            )
             return
         }
         if (!isOnline()) {
@@ -377,6 +350,12 @@ class SairaVoiceService : Service() {
                 .replace(Regex("(কে|ke|কেই)$", RegexOption.IGNORE_CASE), "").trim()
             parsed = waiting.copy(target = n ?: name)
         }
+        // Answer to "কী লিখব?": the whole sentence is the message text.
+        val waitingText = needsWhat?.takeIf { System.currentTimeMillis() < needsWhatUntil }
+        needsWhat = null
+        if (parsed == null && waitingText != null && command.isNotBlank()) {
+            parsed = waitingText.copy(text = command.trim().trim('।', '.', ' '))
+        }
         val fromHearing = aiCommand?.let { SairaPhoneActions.parseAiJson(it) }
         aiCommand = null
         if (parsed == null && fromHearing != null) parsed = fromHearing
@@ -407,7 +386,12 @@ class SairaVoiceService : Service() {
             speak(P_WHO) { followUpUntil = System.currentTimeMillis() + 10_000 }
             return
         }
-        if (c.needsText) { speak(P_WHAT); return }
+        if (c.needsText) {
+            needsWhat = c
+            needsWhatUntil = System.currentTimeMillis() + 20_000
+            speak(P_WHAT) { followUpUntil = System.currentTimeMillis() + 12_000 }
+            return
+        }
 
         var number: String? = null
         var who = c.target
@@ -593,7 +577,7 @@ class SairaVoiceService : Service() {
 
         const val P_CANCELLED = "ঠিক আছে, বাতিল করলাম।"
         const val P_WHO = "কাকে? নামটা বলুন।"
-        const val P_WHAT = "কী লিখব? বলুন: Saira, করিমকে মেসেজ দাও যে আমি আসছি।"
+        const val P_WHAT = "কী লিখব? বলুন।"
         const val P_SENT = "পাঠিয়ে দিয়েছি।"
         const val P_SORRY = "দুঃখিত, এখন উত্তর দিতে পারছি না।"
         /** Saira's fixed lines — generated once in her cloud voice and cached, so they play instantly. */

@@ -68,6 +68,7 @@ import com.example.saira.SairaCloudVoice
 import com.example.saira.SairaPhoneActions
 import com.example.saira.SairaTtsVoice
 import com.example.saira.SairaVoiceMode
+import com.example.saira.SairaVoiceId
 import com.example.saira.SairaVoiceprint
 import com.example.ui.i18n.Text
 import com.example.ui.theme.ChatboxPrimary
@@ -212,7 +213,8 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
             if (pcm == null) {
                 message = "মাইক্রোফোন চালু করা যায়নি।" to true
             } else if (mode == "enroll") {
-                val vp = withContext(Dispatchers.Default) { SairaVoiceprint.enroll(pcm, System.currentTimeMillis()) }
+                message = "কণ্ঠ শিখে নিচ্ছি…" to false
+                val vp = withContext(Dispatchers.Default) { SairaVoiceId.enroll(context, pcm, System.currentTimeMillis()) }
                 if (vp == null) {
                     message = "যথেষ্ট কথা শুনতে পাইনি — একটু জোরে, টানা কথা বলে আবার চেষ্টা করুন।" to true
                 } else {
@@ -223,9 +225,10 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
             } else {
                 val vp = voiceprint
                 if (vp != null) {
-                    val m = withContext(Dispatchers.Default) { SairaVoiceprint.match(vp, pcm, sensitivity) }
-                    message = if (m.ok) "✅ মিলেছে — এটা আপনার কণ্ঠ।" to false
-                    else (if (m.reason == "too short") "আরেকটু বেশি কথা বলুন।" else "❌ মেলেনি — Saira এই কণ্ঠ মানবে না।") to true
+                    val m = withContext(Dispatchers.Default) { SairaVoiceId.match(context, vp, pcm, sensitivity) }
+                    val pct = if (m.score.isNaN() || !vp.isNeural) "" else " (মিল ${"%.0f".format(m.score * 100)}%)"
+                    message = if (m.ok) "✅ মিলেছে — এটা আপনার কণ্ঠ।$pct" to false
+                    else (if (m.reason == "too short") "আরেকটু বেশি কথা বলুন।" else "❌ মেলেনি — Saira এই কণ্ঠ মানবে না।$pct") to true
                 }
             }
             recording = null
@@ -317,7 +320,8 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                             )
                         } else {
                             Text(
-                                if (voiceprint != null) "✅ কণ্ঠ শেখানো আছে। চাইলে আবার শেখাতে পারেন।"
+                                if (voiceprint?.isNeural == false) "⚠️ নতুন উন্নত কণ্ঠ-চেনা এসেছে — ভিড়ের মধ্যেও আপনাকে চিনবে। \"আবার শেখান\" চেপে একবার ১৫ সেকেন্ড কথা বলুন।"
+                                else if (voiceprint != null) "✅ কণ্ঠ শেখানো আছে (ভিড়েও চেনে)। চাইলে আবার শেখাতে পারেন।"
                                 else "Saira-র সাথে কমপক্ষে ১৫ সেকেন্ড কথা বলুন — ও আপনার কণ্ঠ মনে রাখবে (শুধু এই ফোনে, কোথাও পাঠানো হয় না)।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.inkMuted

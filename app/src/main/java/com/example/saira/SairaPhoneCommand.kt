@@ -124,13 +124,19 @@ object SairaPhoneCommandParser {
     )
     private val NOT_APPS = setOf("screen", "স্ক্রিন", "call", "কল", "phone call", "light", "ফোন কল")
 
+    // Speech-to-text adds commas / dandas freely ("হ্যাঁ, দাও।") — [yesNoText] turns them into spaces first.
     private val YES = rx(
         "^(ha+|haa+|hya+|hyaa+|ji+|jee|hm+|hmm+|yes|yeah|yep|ok|okay|okey|sure|thik ache|thik ase|thikache|koro|kor|dao|daw|confirm|" +
-            "হ্যাঁ|হ্যা|হা|হুম|জি|জ্বি|ঠিক আছে|আচ্ছা|করো|দাও|ওকে|অবশ্যই)( (koro|kor|dao|করো|দাও|please|plz|saira|সায়রা))?[.!। ]*$"
+            "kore dao|pathao|korun|din|হ্যাঁ|হ্যা|হা|হুম|জি|জ্বি|ঠিক আছে|আচ্ছা|করো|দাও|ওকে|অবশ্যই|করে দাও|পাঠাও|করুন|দিন|পাঠান)" +
+            "( (koro|kor|dao|kore dao|pathao|korun|din|please|plz|saira|ekhoni|করো|দাও|করে দাও|পাঠাও|করুন|দিন|পাঠান|সায়রা|এখনই)){0,2}$"
     )
     private val NO = rx(
-        "^(na+|no|nope|cancel|thak|baad dao|bad dao|stop|dorkar nai|lagbe na|না|নাহ|বাতিল|থাক|বাদ দাও|লাগবে না|দরকার নেই)( (thak|থাক|dao|দাও))?[.!। ]*$"
+        "^(na+|no|nope|cancel|thak|baad dao|bad dao|stop|dorkar nai|lagbe na|ekhon na|না|নাহ|বাতিল|থাক|বাদ দাও|লাগবে না|দরকার নেই|এখন না)" +
+            "( (thak|dao|lagbe na|koro na|dorkar nai|saira|ekhon na|থাক|দাও|লাগবে না|করো না|দরকার নেই|সায়রা|এখন না)){0,2}$"
     )
+
+    private fun yesNoText(raw: String): String =
+        normalize(raw).lowercase().replace(Regex("[,،;:!?।.…\"'“”‘’\\-–—]+"), " ").replace(Regex("\\s+"), " ").trim()
 
     private val NUMBER = rx("(?<![\\d+])(\\+?\\d[\\d\\s-]{4,17}\\d)(?!\\d)")
 
@@ -180,8 +186,8 @@ object SairaPhoneCommandParser {
 
     fun digitsOf(s: String): String = s.filter { it.isDigit() }
 
-    fun isYes(raw: String): Boolean = YES.matches(normalize(raw).lowercase().trim())
-    fun isNo(raw: String): Boolean = NO.matches(normalize(raw).lowercase().trim())
+    fun isYes(raw: String): Boolean = YES.matches(yesNoText(raw))
+    fun isNo(raw: String): Boolean = NO.matches(yesNoText(raw))
 
     fun detectApp(low: String): PhoneApp? = APP_PATTERNS.firstOrNull { it.second.containsMatchIn(low) }?.first
 

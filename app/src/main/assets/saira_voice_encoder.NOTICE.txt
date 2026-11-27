@@ -1,0 +1,10 @@
+saira_voice_encoder.bin — speaker-encoder weights used by Saira voice mode (on-device "is this the owner?" check).
+
+Derived from the pretrained GE2E voice encoder shipped with Resemblyzer 0.1.4
+(https://github.com/resemble-ai/Resemblyzer), Copyright 2019 Resemble.AI, licensed under the
+Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+Modifications: weights converted from the PyTorch checkpoint to float16 little-endian,
+LSTM input/hidden biases summed, and the librosa 40-band mel filterbank (16 kHz, n_fft 400)
+stored alongside. File layout: "SVE1", mel[40x201] float32, then per LSTM layer
+W_ih, W_hh, (b_ih+b_hh) as float16, then linear weight and bias as float16.
