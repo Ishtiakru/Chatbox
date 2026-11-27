@@ -2051,6 +2051,12 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         )
         startCallEngine(callId, threadId, peerName, isVideo)
         sendCallSig(threadId, callId, "start", isVideo)
+        // Nobody answers → stop ringing on our side too and log a missed call.
+        viewModelScope.launch {
+            delay(ChatboxNotifier.RING_TIMEOUT_MS)
+            val cur = _activeCall.value
+            if (cur != null && cur.callId == callId && cur.phase == "ringing") endCall(missed = true)
+        }
     }
 
     private fun startCallEngine(callId: String, threadId: String, peerName: String, isVideo: Boolean) {
@@ -2233,6 +2239,16 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                         title = if (isVideo) "ভিডিও কল" else "অডিও কল",
                         body = "${thread.name} আপনাকে কল করছেন"
                     )
+                }
+                // Safety net if the caller's "missed" signal never arrives: stop ringing after 60 s.
+                viewModelScope.launch {
+                    delay(ChatboxNotifier.RING_TIMEOUT_MS)
+                    val still = _activeCall.value
+                    if (still != null && still.callId == callId && still.isIncoming && still.phase == "ringing") {
+                        runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), callId) }
+                        logChatboxCall(still.threadId, still.peerName, still.isVideo, true, "Missed")
+                        clearActiveCall()
+                    }
                 }
             }
             "accept" -> {
