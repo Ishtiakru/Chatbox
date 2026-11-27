@@ -498,8 +498,12 @@ fun AppUpdateDetailsDialog(
     }
 }
 
+/** FULL = everything (old dialog); ACCOUNT = ID + Gmail + phone only; NAME = just the display name. */
+enum class ProfileDialogMode { FULL, ACCOUNT, NAME }
+
 @Composable
 fun ProfileModalDialog(
+    mode: ProfileDialogMode = ProfileDialogMode.FULL,
     uid: String,
     email: String?,
     fallbackDisplayName: String?,
@@ -575,12 +579,20 @@ fun ProfileModalDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Profile",
+                            text = when (mode) {
+                                ProfileDialogMode.ACCOUNT -> "Account"
+                                ProfileDialogMode.NAME -> "Edit name"
+                                ProfileDialogMode.FULL -> "Profile"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White
                         )
                         Text(
-                            text = "Your 6-digit ID & phone discovery",
+                            text = when (mode) {
+                                ProfileDialogMode.ACCOUNT -> "6-digit ID, phone number & Gmail"
+                                ProfileDialogMode.NAME -> "The name friends see"
+                                ProfileDialogMode.FULL -> "Your 6-digit ID & phone discovery"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.85f)
                         )
@@ -607,7 +619,7 @@ fun ProfileModalDialog(
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
+                        if (mode == ProfileDialogMode.FULL) Column(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -631,7 +643,7 @@ fun ProfileModalDialog(
                         }
 
                         // 6-digit Chatbox ID card
-                        Surface(
+                        if (mode != ProfileDialogMode.NAME) Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = Color(0xFFF7F5FB),
                             border = BorderStroke(1.dp, Color(0xFFE3DCF2)),
@@ -708,7 +720,30 @@ fun ProfileModalDialog(
                             NoticeBanner(text = msg, isError = isErr)
                         }
 
-                        OutlinedTextField(
+                        if (mode == ProfileDialogMode.ACCOUNT) {
+                            // The Gmail this account signs in with (read-only).
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color(0xFFF7F5FB),
+                                border = BorderStroke(1.dp, Color(0xFFE3DCF2)),
+                                modifier = Modifier.fillMaxWidth().testTag("account_gmail_card")
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                    Text(
+                                        text = "Connected Gmail",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFF8F89A3)
+                                    )
+                                    Text(
+                                        text = email?.takeIf { it.isNotBlank() } ?: "Not connected",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = Color(0xFF2A2340)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (mode != ProfileDialogMode.ACCOUNT) OutlinedTextField(
                             value = displayName,
                             onValueChange = { displayName = it.take(ChatboxConstants.MAX_DISPLAY_NAME_LENGTH) },
                             label = { Text("Name") },
@@ -718,7 +753,7 @@ fun ProfileModalDialog(
                                 .testTag("profile_name_input")
                         )
 
-                        OutlinedTextField(
+                        if (mode == ProfileDialogMode.FULL) OutlinedTextField(
                             value = about,
                             onValueChange = { about = it.take(ChatboxConstants.MAX_ABOUT_LENGTH) },
                             label = { Text("About (WhatsApp-style)") },
@@ -728,7 +763,7 @@ fun ProfileModalDialog(
                                 .testTag("profile_about_input")
                         )
 
-                        Row(
+                        if (mode == ProfileDialogMode.FULL) Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .horizontalScroll(rememberScrollState()),
@@ -747,10 +782,12 @@ fun ProfileModalDialog(
                             }
                         }
 
-                        OutlinedTextField(
+                        if (mode != ProfileDialogMode.NAME) OutlinedTextField(
                             value = phoneNumber,
                             onValueChange = { phoneNumber = it.take(ChatboxConstants.MAX_PHONE_LENGTH) },
-                            label = { Text("Phone number (optional)") },
+                            label = {
+                                Text(if (mode == ProfileDialogMode.ACCOUNT) "Phone number (friends find you by it)" else "Phone number (optional)")
+                            },
                             placeholder = { Text("+8801XXXXXXXXX") },
                             leadingIcon = { Icon(Icons.Rounded.Phone, contentDescription = null, tint = ChatboxPrimary) },
                             singleLine = true,
@@ -800,7 +837,7 @@ fun ProfileModalDialog(
                                 },
                                 modifier = Modifier.testTag("profile_save_button")
                             ) {
-                                Text(if (saving) "Saving…" else "Save Profile")
+                                Text(if (saving) "Saving…" else if (mode == ProfileDialogMode.FULL) "Save Profile" else "Save")
                             }
                         }
                     }
