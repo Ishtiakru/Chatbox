@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import androidx.core.graphics.scale
 import com.example.data.model.ChatboxConstants
 import com.example.data.model.Conversation
@@ -13,6 +14,8 @@ import com.example.data.model.UserProfile
 import com.example.util.OperationType
 import com.example.util.handleFirestoreError
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -205,11 +208,12 @@ class LiveChatRepository(private val context: Context) {
                             "displayName" to existingName,
                             "shortId" to shortId,
                             "about" to about
-                        )
+                        ),
+                        SetOptions.merge()
                     ).await()
                 }
                 // shortId index check now runs in the background (see ensureShortIdIndex).
-                Result.success(UserProfile(uid, existingName, shortId, about))
+                Result.success(UserProfile(uid, existingName, shortId, about, snap.getString("photoUrl").orEmpty()))
             }
         } catch (e: CancellationException) {
             throw e
@@ -278,13 +282,15 @@ class LiveChatRepository(private val context: Context) {
                 allocateUniqueShortId(uid, cleanName)
             }
 
+            // merge → keeps the profile photo link.
             db.collection("profiles").document(uid).set(
                 mapOf(
                     "uid" to uid,
                     "displayName" to cleanName,
                     "shortId" to shortId,
                     "about" to cleanAbout
-                )
+                ),
+                SetOptions.merge()
             ).await()
 
             runCatching {
@@ -356,7 +362,8 @@ class LiveChatRepository(private val context: Context) {
                             uid = snap.getString("uid") ?: uid,
                             displayName = snap.getString("displayName") ?: "Chatbox User",
                             shortId = snap.getString("shortId").orEmpty(),
-                            about = snap.getString("about").orEmpty()
+                            about = snap.getString("about").orEmpty(),
+                            photoUrl = snap.getString("photoUrl").orEmpty()
                         )
                     )
                 } else {
@@ -387,7 +394,9 @@ class LiveChatRepository(private val context: Context) {
                         createdBy = doc.getString("createdBy").orEmpty(),
                         status = doc.getString("status") ?: "pending",
                         createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-                        updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+                        seen = (doc.get("seen") as? Map<*, *>).orEmpty().entries
+                            .mapNotNull { (k, v) -> if (k is String && v is String) k to v else null }.toMap()
                     )
                 }.sortedByDescending { conv ->
                     conv.updatedAt?.toDate()?.time ?: conv.createdAt?.toDate()?.time ?: 0L
@@ -562,12 +571,47 @@ class LiveChatRepository(private val context: Context) {
                 uid = peerUid,
                 displayName = snap.getString("displayName")?.takeIf { it.isNotBlank() } ?: "Chatbox User",
                 shortId = snap.getString("shortId").orEmpty(),
-                about = snap.getString("about").orEmpty()
+                about = snap.getString("about").orEmpty(),
+                photoUrl = snap.getString("photoUrl").orEmpty()
             )
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** Publishes (or clears, with null) the profile photo link so other users can see it. */
+    suspend fun setOwnPhotoUrl(uid: String, url: String?): Result<Unit> {
+        if (!ChatboxConstants.VALID_ID_REGEX.matches(uid)) return Result.failure(IllegalArgumentException("bad uid"))
+        val clean = url?.trim()?.takeIf { it.startsWith("https://") && it.length <= 500 }
+        return try {
+            db.collection("profiles").document(uid)
+                .update("photoUrl", clean ?: FieldValue.delete()).await()
+            lastEnsured = null
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, "profiles/$uid")
+            Result.failure(e)
+        }
+    }
+
+    /** Tells the other participant which message this user has seen (read receipt). */
+    suspend fun markSeen(conversationId: String, uid: String, messageId: String): Result<Unit> {
+        if (!ChatboxConstants.VALID_ID_REGEX.matches(conversationId) || !ChatboxConstants.VALID_ID_REGEX.matches(uid)) {
+            return Result.failure(IllegalArgumentException("bad id"))
+        }
+        return try {
+            db.collection("conversations").document(conversationId)
+                .update(FieldPath.of("seen", uid), messageId.take(150)).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("LiveChatRepository", "markSeen failed", e)
+            Result.failure(e)
         }
     }
 

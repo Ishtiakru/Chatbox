@@ -118,7 +118,11 @@ data class ChatboxThread(
     /** Real Firebase uid of the peer (blank = local-only thread). */
     val peerUid: String = "",
     /** Firestore conversations/{id} this thread is synced with (blank = local-only). */
-    val conversationId: String = ""
+    val conversationId: String = "",
+    /** The peer's public profile photo (https link) — blank = initials. */
+    val photoUrl: String = "",
+    /** Id of the newest message the peer has seen ("live_…") — drives the Seen avatar. */
+    val peerSeenMessageId: String = ""
 )
 
 @Serializable
@@ -200,7 +204,8 @@ data class UserProfile(
     val uid: String = "",
     val displayName: String = "",
     val shortId: String = "",
-    val about: String = ""
+    val about: String = "",
+    val photoUrl: String = ""
 )
 
 @Keep
@@ -218,7 +223,9 @@ data class Conversation(
     val createdBy: String = "",
     val status: String = "pending",
     @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    @ServerTimestamp val updatedAt: Timestamp? = null,
+    /** uid → id of the newest message that participant has seen. */
+    val seen: Map<String, String> = emptyMap()
 )
 
 @Keep

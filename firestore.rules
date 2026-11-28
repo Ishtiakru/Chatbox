@@ -91,7 +91,7 @@ service cloud.firestore {
 
     function isValidProfile(data, uid) {
       return data.keys().hasAll(['uid', 'displayName'])
-        && data.keys().hasOnly(['uid', 'displayName', 'shortId', 'about'])
+        && data.keys().hasOnly(['uid', 'displayName', 'shortId', 'about', 'photoUrl'])
         && data.uid is string
         && data.uid == uid
         && data.uid.size() > 0
@@ -100,7 +100,9 @@ service cloud.firestore {
         && data.displayName.size() > 0
         && data.displayName.size() <= 80
         && (!('shortId' in data) || isValidShortId(data.shortId))
-        && (!('about' in data) || (data.about is string && data.about.size() <= 140));
+        && (!('about' in data) || (data.about is string && data.about.size() <= 140))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500
+          && data.photoUrl.matches('https://.+')));
     }
 
     function isValidDirectoryEntry(data) {
@@ -126,7 +128,7 @@ service cloud.firestore {
 
     function isValidConversation(data) {
       return data.keys().hasAll(['participants', 'createdBy', 'createdAt', 'status', 'updatedAt'])
-        && data.keys().hasOnly(['participants', 'createdBy', 'createdAt', 'status', 'updatedAt'])
+        && data.keys().hasOnly(['participants', 'createdBy', 'createdAt', 'status', 'updatedAt', 'seen'])
         && data.participants is list
         && data.participants.size() == 2
         && data.participants[0] is string && data.participants[0].size() > 0 && data.participants[0].size() <= 128
@@ -346,7 +348,7 @@ service cloud.firestore {
         && request.auth.uid == uid
         && isValidProfile(incoming(), uid)
         && incoming().uid == existing().uid
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'shortId', 'about']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'shortId', 'about', 'photoUrl']);
       allow delete: if false;
     }
 
@@ -500,6 +502,15 @@ service cloud.firestore {
             && pairUnblocked(existing().participants) && request.auth.uid != existing().createdBy)
           || (existing().status in ['pending', 'active'] && incoming().status == 'closed')
         );
+      // Read receipts: a participant may only set their own entry of the `seen` map.
+      allow update: if isSignedIn()
+        && isValidId(conversationId)
+        && request.auth.uid in existing().participants
+        && incoming().diff(existing()).affectedKeys().hasOnly(['seen'])
+        && incoming().seen is map
+        && incoming().seen.diff(existing().get('seen', {})).affectedKeys().hasOnly([request.auth.uid])
+        && incoming().seen[request.auth.uid] is string
+        && incoming().seen[request.auth.uid].size() <= 150;
       allow delete: if false;
 
       match /messages/{messageId} {

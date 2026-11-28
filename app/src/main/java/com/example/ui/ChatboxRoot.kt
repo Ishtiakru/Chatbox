@@ -190,7 +190,12 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
     val i18nContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(chosenLanguage) { com.example.ui.i18n.UiTranslator.setLanguage(i18nContext, chosenLanguage) }
     val uiDictionary by com.example.ui.i18n.UiTranslator.dictionary.collectAsState()
+    // Contacts' profile photos by name — for screens (calls) that only know the peer's name.
+    val avatarPhotos = remember(chatboxThreads) {
+        chatboxThreads.filter { !it.isGroup && it.photoUrl.isNotBlank() }.associate { it.name.trim() to it.photoUrl }
+    }
     androidx.compose.runtime.CompositionLocalProvider(
+        com.example.ui.components.LocalAvatarPhotos provides avatarPhotos,
         com.example.ui.i18n.LocalUiDictionary provides uiDictionary,
         androidx.compose.ui.platform.LocalLayoutDirection provides
             if (com.example.ui.i18n.UiTranslator.isRtl(chosenLanguage)) androidx.compose.ui.unit.LayoutDirection.Rtl
@@ -374,7 +379,8 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                                 onOpenPeer = viewModel::openChatWithPeer,
                                 onRequestLogin = viewModel::requestLogin,
                                 sairaOffThreadIds = if (oneMinAutoReplyEnabled) sairaOffThreads else chatboxThreads.map { it.id }.toSet(),
-                                onSetThreadSaira = viewModel::setThreadSairaEnabled
+                                onSetThreadSaira = viewModel::setThreadSairaEnabled,
+                                onMarkThreadSeen = viewModel::markThreadSeen
                             )
                             CoreAppTab.SAIRA -> SairaAiScreen(
                                 currentUserId = uid,
@@ -724,7 +730,8 @@ private fun NavTabIcon(
             } else {
                 MessengerAvatar(
                     label = displayName,
-                    size = 23.dp
+                    size = 23.dp,
+                    photoUrl = ""
                 )
             }
         }

@@ -83,6 +83,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.compositionLocalOf
+import coil.compose.SubcomposeAsyncImage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -256,16 +258,25 @@ private val messengerPalettes = listOf(
     listOf(Color(0xFFE0E7FF), Color(0xFFA5B4FC)) to Color(0xFF3730A3)
 )
 
+/** Display name → profile photo link of the user's contacts (fallback when a screen only knows the name). */
+val LocalAvatarPhotos = compositionLocalOf<Map<String, String>> { emptyMap() }
+
+/**
+ * Round avatar: the person's profile photo when there is one, otherwise their initial.
+ * [photoUrl] null → looked up by name in [LocalAvatarPhotos]; "" → always the initial.
+ */
 @Composable
 fun MessengerAvatar(
     label: String,
     size: Dp = 40.dp,
     modifier: Modifier = Modifier,
-    showOnlineDot: Boolean = false
+    showOnlineDot: Boolean = false,
+    photoUrl: String? = null
 ) {
     val clean = label.trim().ifEmpty { "U" }
     val initial = clean.take(1).uppercase()
     val palette = messengerPalettes[(clean.first().code) % messengerPalettes.size]
+    val photo = (photoUrl ?: LocalAvatarPhotos.current[label.trim()]).orEmpty()
     Box(modifier = modifier.size(size)) {
         Box(
             modifier = Modifier
@@ -274,12 +285,26 @@ fun MessengerAvatar(
                 .background(Brush.linearGradient(palette.first)),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = initial,
-                color = palette.second,
-                fontWeight = FontWeight.Bold,
-                fontSize = (size.value * 0.4f).coerceAtLeast(12f).sp
-            )
+            val initialText: @Composable () -> Unit = {
+                Text(
+                    text = initial,
+                    color = palette.second,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (size.value * 0.4f).coerceAtLeast(12f).sp
+                )
+            }
+            if (photo.isNotBlank()) {
+                SubcomposeAsyncImage(
+                    model = if (photo.startsWith("/")) java.io.File(photo) else photo,
+                    contentDescription = label,
+                    contentScale = ContentScale.Crop,
+                    loading = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { initialText() } },
+                    error = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { initialText() } },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                initialText()
+            }
         }
         if (showOnlineDot) {
             val dotSize = (size * 0.28f).coerceIn(10.dp, 20.dp)
@@ -627,6 +652,7 @@ fun ProfileModalDialog(
                         ) {
                             MessengerAvatar(
                                 label = displayName.ifBlank { email ?: "U" },
+                                photoUrl = "",
                                 size = 68.dp
                             )
                             Text(

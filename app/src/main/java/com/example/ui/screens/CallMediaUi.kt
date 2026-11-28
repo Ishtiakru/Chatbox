@@ -19,7 +19,13 @@ import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.VideocamOff
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.PhoneInTalk
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -56,6 +62,26 @@ internal fun mediaStatusLabel(mediaState: String, timer: String): String = when 
     "reconnecting" -> "আবার সংযোগ হচ্ছে…"
     "failed" -> "সংযোগ হয়নি — ইন্টারনেট চেক করুন"
     else -> "সংযোগ হচ্ছে…"
+}
+
+/** A press longer than this on "End" is a cheek / palm, not a tap. */
+private const val END_MAX_PRESS_MS = 800L
+
+/**
+ * A second finger (or a cheek, which the screen reports as several touches) cancels the touch, so only a
+ * single deliberate tap can press a call button.
+ */
+internal fun Modifier.singleTouchOnly(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        var blocking = false
+        while (true) {
+            val ev = awaitPointerEvent(PointerEventPass.Initial)
+            val down = ev.changes.count { it.pressed }
+            if (down > 1) blocking = true
+            if (blocking) ev.changes.forEach { it.consume() }
+            if (down == 0) blocking = false
+        }
+    }
 }
 
 /** Keeps the screen awake while a call UI is visible. */
@@ -151,10 +177,12 @@ internal fun CallControlButton(
     onClick: () -> Unit,
     background: Color = if (active) Color.White else Color.White.copy(alpha = 0.18f),
     tint: Color = if (active) Color(0xFF1E1930) else Color.White,
-    testTag: String = ""
+    testTag: String = "",
+    interactionSource: MutableInteractionSource? = null
 ) {
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         shape = CircleShape,
         color = background,
         modifier = Modifier
@@ -172,8 +200,16 @@ internal fun CallControlButton(
 internal fun CallControlsRow(
     engine: CallEngine,
     showVideoControls: Boolean,
-    onEnd: () -> Unit
+    onEnd: () -> Unit,
+    /** true while a press on "End" must be ignored (phone just taken from the ear, screen just opened). */
+    endBlocked: () -> Boolean = { false }
 ) {
+    // "End" only for a short, deliberate tap — a cheek / palm resting on the screen is a long press.
+    val endSource = remember { MutableInteractionSource() }
+    var endPressedAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(endSource) {
+        endSource.interactions.collect { if (it is PressInteraction.Press) endPressedAt = System.currentTimeMillis() }
+    }
     val muted by engine.micMuted.collectAsState()
     val speaker by engine.speakerOn.collectAsState()
     val cameraOff by engine.cameraOff.collectAsState()
@@ -189,8 +225,9 @@ internal fun CallControlsRow(
             testTag = "call_toggle_mic"
         )
         CallControlButton(
-            icon = if (speaker) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
-            label = "Speaker",
+            // On = loudspeaker; off = earpiece (hold the phone to the ear).
+            icon = if (speaker) Icons.AutoMirrored.Rounded.VolumeUp else Icons.Rounded.PhoneInTalk,
+            label = if (speaker) "Speaker on" else "Speaker off (earpiece)",
             active = speaker,
             onClick = engine::toggleSpeaker,
             testTag = "call_toggle_speaker"
@@ -215,7 +252,11 @@ internal fun CallControlsRow(
             icon = Icons.Rounded.CallEnd,
             label = "End call",
             active = false,
-            onClick = onEnd,
+            onClick = {
+                val held = System.currentTimeMillis() - endPressedAt
+                if (!endBlocked() && held <= END_MAX_PRESS_MS) onEnd()
+            },
+            interactionSource = endSource,
             background = Color(0xFFE53935),
             tint = Color.White,
             testTag = "calls_dialog_end"
@@ -240,9 +281,11 @@ internal fun InCallVideoScreen(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
     ) {
         KeepScreenOn()
+        val openedAt = remember { System.currentTimeMillis() }
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .singleTouchOnly()
                 .background(Color(0xFF0E0B18))
                 .testTag("calls_active_call_dialog")
         ) {
@@ -303,7 +346,10 @@ internal fun InCallVideoScreen(
                     .padding(bottom = 40.dp),
                 contentAlignment = Alignment.Center
             ) {
-                CallControlsRow(engine = engine, showVideoControls = true, onEnd = onEnd)
+                CallControlsRow(
+                    engine = engine, showVideoControls = true, onEnd = onEnd,
+                    endBlocked = { System.currentTimeMillis() - openedAt < 800 }
+                )
             }
         }
     }

@@ -512,7 +512,7 @@ fun ProfileScreen(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    MessengerAvatar(label = effectiveName, size = 94.dp)
+                                    MessengerAvatar(label = effectiveName, size = 94.dp, photoUrl = "")
                                 }
                             }
 
