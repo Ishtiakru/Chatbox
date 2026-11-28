@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -311,6 +312,24 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private val peerProfileJobs = ConcurrentHashMap<String, Job>()
     /** conversationId → last message id we reported as seen (avoids repeat writes). */
     private val seenReported = ConcurrentHashMap<String, String>()
+
+    init {
+        // Caller hears a ringback tone ("tring… tring…") while the other phone rings;
+        // it stops the moment they answer, decline, or the call ends.
+        viewModelScope.launch {
+            _activeCall
+                .map { it != null && !it.isIncoming && it.phase == "ringing" }
+                .distinctUntilChanged()
+                .collect { ringing ->
+                    if (ringing) com.example.call.RingbackTone.start() else com.example.call.RingbackTone.stop()
+                }
+        }
+    }
+
+    override fun onCleared() {
+        com.example.call.RingbackTone.stop()
+        super.onCleared()
+    }
 
     internal var autoReplyWaitMs: Long = DEFAULT_AUTO_REPLY_WAIT_MS
     internal var continuationDebounceMs: Long = DEFAULT_CONTINUATION_WAIT_MS
