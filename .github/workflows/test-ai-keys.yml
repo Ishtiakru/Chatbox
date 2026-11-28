@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: keys | latency | live
+        description: keys | latency | live | health
         required: false
         default: keys
 
@@ -50,7 +50,9 @@ jobs:
           python3 -m pip install --quiet google-auth || true
           # Add the keys the admin installed in-app (Firestore settings/aiKeyPool).
           python3 .github/scripts/firestore_keys.py /tmp/pool.txt || true
-          if [ "${{ inputs.mode }}" = "live" ]; then
+          if [ "${{ inputs.mode }}" = "health" ]; then
+            timeout 900s python3 .github/scripts/pool_health.py
+          elif [ "${{ inputs.mode }}" = "live" ]; then
             python3 -m pip install --quiet websockets numpy
             timeout 1500s python3 .github/scripts/live_probe.py
           elif [ "${{ inputs.mode }}" = "latency" ]; then

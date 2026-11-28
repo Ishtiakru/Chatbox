@@ -6,6 +6,7 @@ import android.util.Log
 import com.example.data.ai.AiChatMessage
 import com.example.data.ai.GeminiAiProvider
 import com.example.data.ai.GeminiKeyPool
+import com.example.data.ai.GeminiModelQuota
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +85,9 @@ class SairaVoiceBrain(context: Context) {
             io.launch {
                 val key = ordered[i]
                 // First attempts use the fastest model; later ones fall back.
-                val model = MODELS[(i / 3).coerceAtMost(MODELS.size - 1)]
+                val models = MODELS.filter { GeminiModelQuota.modelUsable(it) }.ifEmpty { MODELS }
+                val model = models.firstOrNull { GeminiModelQuota.usable(it, key) && models.indexOf(it) >= (i / 3).coerceAtMost(models.size - 1) }
+                    ?: models.firstOrNull { GeminiModelQuota.usable(it, key) } ?: models.last()
                 val (code, raw) = post("$BASE/$model:generateContent?key=$key", body)
                 when {
                     code in 200..299 -> {
@@ -93,7 +96,8 @@ class SairaVoiceBrain(context: Context) {
                         else launchAttempt()
                     }
                     code == 429 || raw.contains("RESOURCE_EXHAUSTED") -> {
-                        if (model == GeminiAiProvider.DEFAULT_MODEL) pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
+                        // only this model is out of quota on this key — the others still work
+                        GeminiModelQuota.markLimit(model, key, GeminiModelQuota.isDailyLimit(raw))
                         lastError = "quota"
                         launchAttempt()
                     }
@@ -188,7 +192,7 @@ class SairaVoiceBrain(context: Context) {
         private const val TAG = "SairaVoiceBrain"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         // Measured live (Nov 2026): flash-lite ≈ 1 s for Bengali/English audio; 3.6-flash is mostly 429/503 on the pool.
-        private val MODELS = listOf(GeminiAiProvider.DEFAULT_MODEL, GeminiAiProvider.FALLBACK_MODEL, "gemini-3.6-flash")
+        private val MODELS = listOf(GeminiAiProvider.DEFAULT_MODEL, "gemini-3.1-flash-lite", "gemini-3-flash-preview", GeminiAiProvider.FALLBACK_MODEL)
         private const val BUDGET_MS = 12_000L
         private const val HEDGE_AFTER_MS = 1_600L
         private const val MAX_TRIES = 7

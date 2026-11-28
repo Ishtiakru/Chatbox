@@ -7,6 +7,7 @@ import android.media.AudioTrack
 import android.util.Base64
 import android.util.Log
 import com.example.data.ai.GeminiKeyPool
+import com.example.data.ai.GeminiModelQuota
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,7 +93,8 @@ class SairaLiveVoice(context: Context) {
                 val outcome = tryConnect(model, key, listener)
                 if (outcome.session != null) return@withContext outcome.session
                 Log.w(TAG, "live $model failed: ${outcome.error}")
-                if (outcome.quota) pool.markCooling(key, 60_000)
+                // Live has its own quota — never cool the key for Saira's chat models.
+                if (outcome.quota) GeminiModelQuota.markLimit(model, key, daily = false)
                 if (outcome.modelMissing) break
             }
         }
