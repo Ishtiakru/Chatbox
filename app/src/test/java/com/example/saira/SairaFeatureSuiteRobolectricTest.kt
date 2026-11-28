@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Looper
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -144,7 +145,15 @@ class SairaFeatureSuiteRobolectricTest {
         // Voice mode dialog: teach voice / on-off switch
         composeRule.onNodeWithTag("saira_voice_mode_button").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("saira_voice_enroll_button").assertIsDisplayed()
+        // Default: everyone is heard, no voice training needed; the switch can start right away.
+        composeRule.onAllNodesWithTag("saira_voice_enroll_button").assertCountEquals(0)
+        composeRule.onNodeWithTag("saira_voice_mode_switch").performScrollTo().assertIsEnabled()
+        // "Only my voice" brings the voice training back.
+        composeRule.onNodeWithTag("saira_voice_owner_only_switch").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("saira_voice_enroll_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("saira_voice_owner_only_switch").performScrollTo().performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("saira_voice_mode_switch").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("saira_voice_mode_close").performClick()
         composeRule.waitForIdle()

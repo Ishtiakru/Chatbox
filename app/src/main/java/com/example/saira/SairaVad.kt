@@ -99,9 +99,30 @@ class SairaVad(
         private const val SMOOTH = 10            // 200 ms average for the end decision
         /** After 4 s without a pause the "speech" is probably the room itself — keep learning its level. */
         private const val LEARN_AFTER = 200
-        const val START_FACTOR = 3.2
-        const val END_FACTOR = 2.4
-        private const val MIN_START_RMS = 380.0
-        private const val MIN_END_RMS = 260.0
+        // Softer speech now starts an utterance (≈ half as loud as before: RMS 140 instead of 380), while a
+        // crowd / fan / clicks still do not — checked with the same simulations as the tests.
+        const val START_FACTOR = 2.8
+        const val END_FACTOR = 2.2
+        private const val MIN_START_RMS = 140.0
+        private const val MIN_END_RMS = 100.0
+
+        /**
+         * Makes a quietly spoken clip loud enough for speech recognition: the speech peaks (99.5th
+         * percentile, so a single click doesn't count) are brought to about half of full scale,
+         * at most ×10 (+20 dB). Loud clips are returned unchanged.
+         */
+        fun boost(pcm: ShortArray, target: Double = 16_000.0, maxGain: Double = 10.0): ShortArray {
+            if (pcm.isEmpty()) return pcm
+            val hist = IntArray(32_769)
+            for (x in pcm) hist[kotlin.math.abs(x.toInt())]++
+            val want = (pcm.size * 0.995).toLong()
+            var acc = 0L
+            var peak = 0
+            for (v in hist.indices) { acc += hist[v]; if (acc >= want) { peak = v; break } }
+            if (peak <= 0) return pcm
+            val gain = minOf(target / peak, maxGain)
+            if (gain <= 1.15) return pcm
+            return ShortArray(pcm.size) { (pcm[it] * gain).toInt().coerceIn(-32_767, 32_767).toShort() }
+        }
     }
 }

@@ -113,6 +113,14 @@ class SairaPhoneCommandTest {
         assertEquals("", SairaWakeWord.extract("hey saira"))
         assertNull(SairaWakeWord.extract("সারা দিন কাজ করেছি"))
         assertNull(SairaWakeWord.extract("আমি সায়রাকে বলেছি"))
+        // the name anywhere: last, after someone else's words, after a greeting word
+        assertEquals("কয়টা বাজে", SairaWakeWord.extract("কয়টা বাজে, সায়রা?"))
+        assertEquals("আম্মুকে কল দাও", SairaWakeWord.extract("ওরা আসবে না। সায়রা, আম্মুকে কল দাও"))
+        assertEquals("open YouTube", SairaWakeWord.extract("please Saira open YouTube"))
+        assertEquals("কয়টা বাজে", SairaWakeWord.extract("ভাই, সায়রা কয়টা বাজে"))
+        assertEquals("what time is it", SairaWakeWord.extract("what time is it Saira?"))
+        assertEquals("", SairaWakeWord.extract("আচ্ছা সায়রা"))
+        assertNull(SairaWakeWord.extract("সায়রার গান শুনেছি"))
         assertEquals("8801712345678", SairaPhoneCommandParser.internationalDigits("01712345678", "bd"))
         assertEquals("8801712345678", SairaPhoneCommandParser.internationalDigits("+880 1712-345678", null))
         assertEquals(

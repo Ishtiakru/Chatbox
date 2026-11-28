@@ -75,4 +75,30 @@ class SairaVadTest {
         val extra = (segs[0].count() - cmd.count()) / 16000.0
         assertTrue("extra murmur in segment: ${extra}s", abs(extra) < 1.5)
     }
+
+    @Test
+    fun `softly spoken command in a quiet room is still heard`() {
+        val sig = murmur(10.0, 40.0)
+        val cmd = place(sig, talk(2.5, 200.0), 4.0)
+        val segs = run(sig).filter { s -> s.first < cmd.last && s.last > cmd.first }
+        assertEquals(segs.toString(), 1, segs.size)
+    }
+
+    @Test
+    fun `steady fan noise alone never starts a segment`() {
+        assertEquals(0, run(murmur(20.0, 150.0)).size)
+    }
+
+    @Test
+    fun `quiet clips are made louder, loud ones are left alone`() {
+        val quiet = ShortArray(16000) { (2000 * sin(2 * PI * 200 * it / 16000.0)).toInt().toShort() }
+        val boosted = SairaVad.boost(quiet)
+        val peak = boosted.maxOf { abs(it.toInt()) }
+        assertTrue("peak $peak", peak in 12_000..17_000)
+        val loud = ShortArray(16000) { (20000 * sin(2 * PI * 200 * it / 16000.0)).toInt().toShort() }
+        assertTrue(SairaVad.boost(loud) === loud)
+        // a whisper is lifted at most ×10
+        val whisper = ShortArray(16000) { (50 * sin(2 * PI * 200 * it / 16000.0)).toInt().toShort() }
+        assertTrue(SairaVad.boost(whisper).maxOf { abs(it.toInt()) } <= 500)
+    }
 }

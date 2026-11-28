@@ -53,6 +53,7 @@ object SairaVoiceMode {
     private const val KEY_PRINT = "voiceprint"
     private const val KEY_SENS = "sensitivity"
     private const val KEY_CONFIRM = "confirm_first"
+    private const val KEY_OWNER_ONLY = "owner_only"
 
     private val _status = MutableStateFlow("")
     val status: StateFlow<String> = _status
@@ -76,8 +77,16 @@ object SairaVoiceMode {
     fun confirmFirst(c: Context) = prefs(c).getBoolean(KEY_CONFIRM, false)
     fun setConfirmFirst(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_CONFIRM, v).apply()
 
+    /**
+     * true  = only the enrolled owner's voice is obeyed;
+     * false (default) = Saira hears everyone and answers whoever calls her by name — and then only that
+     * same person for the follow-up, until someone says "Saira" again.
+     */
+    fun ownerOnly(c: Context) = prefs(c).getBoolean(KEY_OWNER_ONLY, false)
+    fun setOwnerOnly(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_OWNER_ONLY, v).apply()
+
     fun canStart(c: Context): Boolean =
-        voiceprint(c) != null &&
+        (!ownerOnly(c) || voiceprint(c) != null) &&
             ContextCompat.checkSelfPermission(c, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     /** Turn voice mode on (call while the app is on screen — Android requires it for the mic). */
@@ -103,7 +112,7 @@ object SairaVoiceMode {
 
 /**
  * Saira voice mode: listens in the background (also with the screen off), keeps only
- * speech that matches the owner's enrolled voice, and acts on "Saira, …" commands.
+ * speech addressed to "Saira, …" (from anyone, or only the enrolled owner in "owner only" mode) and acts on it.
  * Commands run immediately (optionally confirmed by voice first — see [SairaVoiceMode.confirmFirst]).
  * Saira speaks with her own female cloud voice; her fixed phrases are cached so they play instantly.
  */
@@ -135,6 +144,8 @@ class SairaVoiceService : Service() {
     /** A message waiting for its text ("কী লিখব?"). */
     @Volatile private var needsWhat: PhoneCommand? = null
     @Volatile private var needsWhatUntil = 0L
+    /** Voice of whoever last called "Saira" (everyone mode): only they may follow up without the name. */
+    @Volatile private var speakerLock: FloatArray? = null
     private val history = ArrayDeque<AiChatMessage>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -181,8 +192,10 @@ class SairaVoiceService : Service() {
         acquireWakeLock()
         SairaVoiceMode.setRunning(true)
         SairaVoiceMode.setStatus(
-            if (SairaVoiceMode.voiceprint(this)?.isNeural == false) "শুনছি — ভিড়ে চেনার জন্য Saira-র পাতায় কণ্ঠ আবার শেখান"
-            else "শুনছি — \"Saira, …\" বলুন"
+            if (SairaVoiceMode.ownerOnly(this) && SairaVoiceMode.voiceprint(this)?.isNeural == false)
+                "শুনছি — ভিড়ে চেনার জন্য Saira-র পাতায় কণ্ঠ আবার শেখান"
+            else if (SairaVoiceMode.ownerOnly(this)) "শুনছি — \"Saira, …\" বলুন"
+            else "শুনছি — যে কেউ \"Saira, …\" বললেই সাড়া দেব"
         )
         if (loopJob?.isActive != true) loopJob = scope.launch { listenLoop() }
         if (workerJob?.isActive != true) workerJob = scope.launch { for (seg in segments) handleSegment(seg) }
@@ -262,28 +275,44 @@ class SairaVoiceService : Service() {
 
     // ------------------------------------------------------------------ understanding
     private suspend fun handleSegment(pcm: ShortArray) {
-        val vp = SairaVoiceMode.voiceprint(this) ?: return
-        // Only the owner's voice is ever answered. A short "হ্যাঁ" / "না" after Saira asks may be
-        // shorter than a normal command, so it needs less audio — but the same voice check.
-        val waitingForAnswer = pending?.let { System.currentTimeMillis() < it.until } == true
-        val match = SairaVoiceId.match(this, vp, pcm, SairaVoiceMode.sensitivity(this), shortAnswer = waitingForAnswer)
-        if (!match.ok) {
-            SairaVoiceMode.setStatus(
-                if (match.reason == "too short") "খুব ছোট শব্দ — উপেক্ষা করেছি"
-                else "অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি"
-            )
-            return
+        val now = System.currentTimeMillis()
+        val waitingForAnswer = pending?.let { now < it.until } == true
+        val inConversation = waitingForAnswer || now < followUpUntil
+        val ownerOnly = SairaVoiceMode.ownerOnly(this)
+        // trusted = this voice may continue the conversation without saying "Saira" again.
+        var trusted: Boolean
+        var voice: FloatArray? = null
+        if (ownerOnly) {
+            val vp = SairaVoiceMode.voiceprint(this) ?: return
+            // A short "হ্যাঁ" / "না" after Saira asks may be shorter than a normal command, so it needs
+            // less audio — but the same voice check.
+            val match = SairaVoiceId.match(this, vp, pcm, SairaVoiceMode.sensitivity(this), shortAnswer = waitingForAnswer)
+            if (!match.ok) {
+                SairaVoiceMode.setStatus(
+                    if (match.reason == "too short") "খুব ছোট শব্দ — উপেক্ষা করেছি"
+                    else "অন্য কারো কণ্ঠ / শব্দ — উপেক্ষা করেছি"
+                )
+                return
+            }
+            trusted = true
+        } else {
+            // Everyone is heard. Mid-conversation, only the person who called Saira may go on without
+            // her name; anyone else has to say "Saira" first.
+            val lock = speakerLock
+            voice = voiceOf(pcm)
+            trusted = !inConversation || lock == null || voice == null || sameSpeaker(lock, voice, pcm)
         }
         if (!isOnline()) {
             SairaVoiceMode.setStatus("ইন্টারনেট নেই — কমান্ড বুঝতে ইন্টারনেট লাগবে")
             return
         }
-        SairaVoiceMode.setStatus("আপনার কণ্ঠ চিনেছি — বুঝে নিচ্ছি…")
-        val followUp = System.currentTimeMillis() < followUpUntil
+        SairaVoiceMode.setStatus(if (ownerOnly) "আপনার কণ্ঠ চিনেছি — বুঝে নিচ্ছি…" else "শুনেছি — বুঝে নিচ্ছি…")
+        val followUp = inConversation && trusted
         val understood = withTimeoutOrNull(14_000L) {
             brain.understand(
-                pcm, wantReply = !waitingForAnswer, followUp = followUp,
-                history = history.toList(), expectYesNo = waitingForAnswer
+                // quietly spoken words are made louder first — much easier to recognise
+                SairaVad.boost(pcm), wantReply = !(waitingForAnswer && trusted), followUp = followUp,
+                history = history.toList(), expectYesNo = waitingForAnswer && trusted
             )
         }
         if (understood == null) {
@@ -298,15 +327,39 @@ class SairaVoiceService : Service() {
             SairaVoiceMode.setStatus("পরিষ্কার কথা শুনিনি — আবার বলুন")
             return
         }
+        // Whoever calls Saira by name becomes the person she is talking with.
+        if (!ownerOnly && SairaWakeWord.extract(heard) != null) {
+            speakerLock = voice
+            trusted = true
+        }
         aiCommand = understood.commandJson
-        handleTranscript(heard, understood.reply)
+        handleTranscript(heard, understood.reply, trusted)
     }
 
-    private suspend fun handleTranscript(text: String, quickReply: String? = null) {
+    /** The speaker's voice fingerprint for this clip (on the phone), or null if too short / no model. */
+    private fun voiceOf(pcm: ShortArray): FloatArray? = runCatching {
+        val enc = SairaVoiceId.encoder(this) ?: return null
+        val speech = SairaVoiceprint.speechOnly(pcm)
+        if (speech.size < SairaVoiceprint.SAMPLE_RATE * 3 / 10) return null
+        enc.embed(if (speech.size < SairaVoiceprint.SAMPLE_RATE / 2) speech.copyOf(SairaVoiceprint.SAMPLE_RATE / 2) else speech)
+    }.getOrNull()
+
+    /** Same person as the one who called Saira? Clip-to-clip, so a little more lenient in noise. */
+    private fun sameSpeaker(lock: FloatArray, voice: FloatArray, pcm: ShortArray): Boolean {
+        val snr = SairaDenoise.snrDb(pcm)
+        val t = ((snr - 10.0) / 20.0).coerceIn(0.0, 1.0)
+        val threshold = SAME_SPEAKER_NOISY + (SAME_SPEAKER_CLEAN - SAME_SPEAKER_NOISY) * t
+        val ok = SairaVoiceEncoder.cosine(lock, voice) >= threshold
+        if (!ok) SairaVoiceMode.setStatus("অন্য কেউ বলছে — কিছু বলতে চাইলে আগে \"Saira\" বলুন")
+        return ok
+    }
+
+    private suspend fun handleTranscript(text: String, quickReply: String? = null, trusted: Boolean = true) {
         val now = System.currentTimeMillis()
         val p = pending
         val addressed = SairaWakeWord.extract(text)
-        if (p != null && now < p.until) {
+        // A "yes" only counts from the person Saira asked (or said with her name).
+        if (p != null && now < p.until && (trusted || addressed != null)) {
             val body = addressed ?: text
             when {
                 SairaPhoneCommandParser.isYes(body) -> {
@@ -321,7 +374,7 @@ class SairaVoiceService : Service() {
                 }
             }
         }
-        val command = addressed ?: if (now < followUpUntil) text else null
+        val command = addressed ?: if (now < followUpUntil && trusted) text else null
         if (command == null) {
             SairaVoiceMode.setStatus("শুনেছি: “${text.take(60)}” — শুরুতে \"Saira\" বলুন")
             return
@@ -574,6 +627,9 @@ class SairaVoiceService : Service() {
         private const val CHANNEL = "saira_voice_mode_v1"
         private const val NOTIFICATION_ID = 7401
         const val ACTION_STOP = "com.example.saira.VOICE_STOP"
+        /** Clip-to-clip voice similarity needed to continue without "Saira" (quiet room → crowd). */
+        private const val SAME_SPEAKER_CLEAN = 0.70
+        private const val SAME_SPEAKER_NOISY = 0.60
 
         const val P_CANCELLED = "ঠিক আছে, বাতিল করলাম।"
         const val P_WHO = "কাকে? নামটা বলুন।"

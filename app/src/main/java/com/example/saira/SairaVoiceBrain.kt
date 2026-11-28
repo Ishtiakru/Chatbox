@@ -28,7 +28,7 @@ data class VoiceUnderstanding(val transcript: String, val reply: String?, val co
 
 /**
  * Speech → text (and the answer, in the same round trip) for voice mode, using the Gemini key pool.
- * Audio is only sent after the on-device voice match says it is the owner speaking.
+ * In "owner only" mode audio is only sent after the on-device voice match says it is the owner.
  *
  * Speed: one request does both hearing and answering; flash-lite models answer in ~1 s
  * (measured live); a second key is raced if the first is slow ("hedging"); the TLS
@@ -129,10 +129,10 @@ class SairaVoiceBrain(context: Context) {
         val b64 = Base64.encodeToString(wav, Base64.NO_WRAP)
         val context = buildString {
             append("Now: ").append(SimpleDateFormat("EEEE d MMMM yyyy, h:mm a", Locale.US).format(Date())).append('\n')
-            append("Follow-up turn (owner may speak without saying Saira): ").append(if (followUp) "yes" else "no").append('\n')
+            append("Follow-up turn (the person Saira is talking with may speak without saying Saira): ").append(if (followUp) "yes" else "no").append('\n')
             if (history.isNotEmpty()) {
                 append("Recent conversation:\n")
-                history.takeLast(6).forEach { append(if (it.role == "user") "Owner: " else "Saira: ").append(it.text.take(300)).append('\n') }
+                history.takeLast(6).forEach { append(if (it.role == "user") "User: " else "Saira: ").append(it.text.take(300)).append('\n') }
             }
             // No "it's probably yes/no" hint here on purpose: in a live test that bias turned a spoken "না" into "হ্যাঁ".
             // An unclear answer must fail safe (Saira keeps waiting), never confirm a call.
@@ -194,24 +194,29 @@ class SairaVoiceBrain(context: Context) {
         private const val MAX_TRIES = 7
 
         private const val SYSTEM =
-            "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the owner's phone. " +
-                "You get a short audio clip of the owner speaking. The phone may be in a crowded or noisy place: " +
-                "transcribe ONLY the main voice closest to the phone (the loudest, clearest speaker — the owner) and " +
-                "ignore background talk, TV, music and other people's conversations. " +
+            "You are Saira (Bengali: সায়রা), a warm, quick female voice assistant living on the user's phone. " +
+                "You get a short audio clip from the phone's microphone. Listen carefully: the speaker may talk very " +
+                "softly or loudly, fast or slowly, in Bengali, English or Banglish, and the phone may be in a noisy or " +
+                "crowded place with several people talking. " +
+                "If someone in the clip calls Saira by name (anywhere in the sentence, e.g. \"Saira, …\", \"… সায়রা?\", " +
+                "\"এই সায়রা …\"), transcribe ONLY that person's words addressed to Saira, from the name on, and ignore " +
+                "everyone else. Otherwise transcribe the clearest voice closest to the phone; ignore TV, music and " +
+                "background conversations. The name may sound like সাইরা, সায়রা, শায়রা, Sayra or Shaira — always " +
+                "write it as Saira (but সারা as in \"সারা দিন\" is an ordinary word, not the name). " +
                 "Reply in EXACTLY this format, three lines:\n" +
                 "T: <exact transcript — Bengali speech in Bengali script, English words in English, Banglish as spoken; " +
-                "always write the name as Saira; nothing else; empty if there is no clear speech>\n" +
+                "nothing else; empty if there is no clear speech; never invent words that were not said>\n" +
                 "R: <your spoken reply, or ->\n" +
                 "C: <if the speech orders a phone action, one JSON object {\"action\":\"call|video_call|message|answer|decline|" +
                 "open_app|screen_on|screen_off\",\"app\":\"phone|sms|whatsapp|messenger|telegram|imo|viber|other\"," +
                 "\"target\":\"contact name or number as said (app name for open_app, e.g. YouTube)\",\"text\":\"message to send\"}; otherwise ->\n" +
                 "Rules for R: write - (a single dash) when the speech is a phone action (call, video call, message/SMS, " +
                 "answer or decline/cut a call, open an app, screen on/off, yes/no), when it is not addressed to Saira " +
-                "(the owner must start with Saira unless it is a follow-up turn), or when asked to transcribe only. " +
-                "Otherwise answer like a caring friend: if the owner spoke English answer in English, otherwise answer in " +
-                "Bengali written in Bengali script (never romanized Banglish — a Bengali voice reads it aloud). " +
-                "1–2 short spoken sentences, no markdown, emojis, lists or links. You are Saira; the owner is NOT Saira, " +
-                "so never call the owner Saira. Use the given time for time/date questions."
+                "(the speaker must say Saira unless it is a follow-up turn), or when asked to transcribe only. " +
+                "Otherwise answer the person who called you like a caring friend: if they spoke English answer in English, " +
+                "otherwise answer in Bengali written in Bengali script (never romanized Banglish — a Bengali voice reads it aloud). " +
+                "1–2 short spoken sentences, no markdown, emojis, lists or links. You are Saira; the user is NOT Saira, " +
+                "so never call the user Saira. Use the given time for time/date questions."
 
         fun cleanTranscript(t: String): String =
             t.trim().trim('"', '“', '”').replace(Regex("^(transcript|transcription)\\s*:\\s*", RegexOption.IGNORE_CASE), "").trim()
@@ -233,7 +238,7 @@ class SairaVoiceBrain(context: Context) {
                 (listOf(lines[rIdx].substring(2)) + lines.drop(rIdx + 1).filterNot { it.startsWith("T:", true) || it.startsWith("C:", true) })
                     .joinToString(" ").trim()
             } else ""
-            // The model sometimes tacks "…, Saira" onto the answer as if the owner were Saira — drop that.
+            // The model sometimes tacks "…, Saira" onto the answer as if the user were Saira — drop that.
             val cleaned = reply.replace(Regex("[,،]?\\s*(সায়রা|সায়রা|Saira)\\s*(?=[।!.?]|$)"), "").trim()
             val r = cleaned.takeIf { wantReply && it.isNotBlank() && it.trim('-', '—', ' ', '.').isNotEmpty() }
             return VoiceUnderstanding(transcript, r, commandJson)
