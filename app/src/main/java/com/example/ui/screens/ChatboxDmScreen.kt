@@ -14,6 +14,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,6 +79,7 @@ import androidx.compose.material3.Surface
 import com.example.ui.i18n.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -189,7 +191,8 @@ fun ChatboxDmScreen(
     onOpenPeer: (UserProfile) -> String = { "" },
     onRequestLogin: () -> Unit = {},
     sairaOffThreadIds: Set<String> = emptySet(),
-    onSetThreadSaira: (threadId: String, enabled: Boolean) -> Unit = { _, _ -> }
+    onSetThreadSaira: (threadId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onMarkThreadSeen: (threadId: String) -> Unit = {}
 ) {
     val selectedThread = remember(threads, activeThreadId) {
         threads.firstOrNull { it.id == activeThreadId } ?: threads.firstOrNull()
@@ -345,7 +348,8 @@ fun ChatboxDmScreen(
                             },
                             onSendImage = { uri -> onSendImage(selectedThread.id, uri) },
                             onSendVoice = { file, dur -> onSendVoice(selectedThread.id, file, dur) },
-                            onUnblock = { onToggleBlock(selectedThread.id) }
+                            onUnblock = { onToggleBlock(selectedThread.id) },
+                            onSeen = { onMarkThreadSeen(selectedThread.id) }
                         )
                     }
                 }
@@ -407,7 +411,8 @@ fun ChatboxDmScreen(
                         },
                         onSendImage = { uri -> onSendImage(selectedThread.id, uri) },
                         onSendVoice = { file, dur -> onSendVoice(selectedThread.id, file, dur) },
-                        onUnblock = { onToggleBlock(selectedThread.id) }
+                        onUnblock = { onToggleBlock(selectedThread.id) },
+                        onSeen = { onMarkThreadSeen(selectedThread.id) }
                     )
                 }
             }
@@ -434,7 +439,8 @@ fun ChatboxDmScreen(
                     MessengerAvatar(
                         label = shownName,
                         size = 76.dp,
-                        showOnlineDot = selectedThread.online && selectedThread.id !in blockedThreadIds
+                        showOnlineDot = selectedThread.online && selectedThread.id !in blockedThreadIds,
+                        photoUrl = selectedThread.photoUrl
                     )
                     Text(
                         text = shownName,
@@ -781,7 +787,8 @@ private fun ChatboxInboxPane(
                                 MessengerAvatar(
                                     label = shown,
                                     size = 50.dp,
-                                    showOnlineDot = true
+                                    showOnlineDot = true,
+                                    photoUrl = contact.photoUrl
                                 )
                                 Text(
                                     text = shown.substringBefore(" "),
@@ -949,7 +956,8 @@ private fun ChatboxInboxPane(
                         MessengerAvatar(
                             label = shownName,
                             size = 52.dp,
-                            showOnlineDot = thread.online && !isBlocked
+                            showOnlineDot = thread.online && !isBlocked,
+                            photoUrl = thread.photoUrl
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
@@ -1056,10 +1064,38 @@ private fun ChatboxThreadPane(
     onSendMessage: (String) -> Unit,
     onSendImage: (Uri) -> Unit,
     onSendVoice: (File, Long) -> Unit,
-    onUnblock: () -> Unit
+    onUnblock: () -> Unit,
+    onSeen: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val shownName = peerNickname?.takeIf { it.isNotBlank() } ?: thread.name
+
+    // Chat is on screen → tell the peer we've seen their newest message (read receipt).
+    val appVisible by com.example.util.AppPresence.foregroundFlow.collectAsState()
+    val lastTheirsId = messages.lastOrNull { it.from == "them" }?.id
+    LaunchedEffect(thread.id, lastTheirsId, appVisible) {
+        if (appVisible && lastTheirsId != null) onSeen()
+    }
+    // Newest of my messages the peer has seen (Messenger-style small photo under it).
+    val seenIndex = remember(messages, thread.peerSeenMessageId) {
+        if (thread.peerSeenMessageId.isBlank()) -1
+        else messages.indexOfFirst { it.id == thread.peerSeenMessageId }
+    }
+    var tappedMessageId by remember(thread.id) { mutableStateOf<String?>(null) }
+    // The peer's small photo sits under the newest seen message of mine — unless they've
+    // already replied after it (the reply itself shows they saw it).
+    val seenAvatarMessageId = remember(messages, seenIndex, thread.readReceiptsEnabled) {
+        if (seenIndex < 0 || !thread.readReceiptsEnabled) {
+            null
+        } else {
+            val lastMine = (seenIndex downTo 0).firstOrNull { messages[it].from == "me" }
+            if (lastMine == null || (lastMine + 1 until messages.size).any { messages[it].from == "them" }) null
+            else messages[lastMine].id
+        }
+    }
+    val messageIndexById = remember(messages) {
+        HashMap<String, Int>(messages.size).apply { messages.forEachIndexed { i, m -> if (m.id.isNotBlank()) put(m.id, i) } }
+    }
     val showOnlineDot = thread.online && !isBlocked
     val disappearingOption = DisappearingOption.fromKey(thread.disappearingKey)
 
@@ -1176,7 +1212,8 @@ private fun ChatboxThreadPane(
                     MessengerAvatar(
                         label = shownName,
                         size = 40.dp,
-                        showOnlineDot = showOnlineDot
+                        showOnlineDot = showOnlineDot,
+                        photoUrl = thread.photoUrl
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -1285,7 +1322,8 @@ private fun ChatboxThreadPane(
                         MessengerAvatar(
                             label = shownName,
                             size = 86.dp,
-                            showOnlineDot = showOnlineDot
+                            showOnlineDot = showOnlineDot,
+                            photoUrl = thread.photoUrl
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -1485,7 +1523,6 @@ private fun ChatboxThreadPane(
                 val nextMsg = displayedMessages.getOrNull(idx + 1)
                 val isMe = msg.from == "me"
                 val isSairaAutoReply = thread.id != "saira" && !isMe && msg.senderName == "Saira"
-                val isLastMessage = idx == displayedMessages.lastIndex
                 val showLeftAvatar = !isMe && (nextMsg == null || nextMsg.from == "me" || nextMsg.senderName != msg.senderName)
 
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -1505,7 +1542,8 @@ private fun ChatboxThreadPane(
                                     MessengerAvatar(
                                         label = shownName,
                                         size = 28.dp,
-                                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
+                                        modifier = Modifier.padding(end = 8.dp, bottom = 2.dp),
+                                        photoUrl = thread.photoUrl
                                     )
                                 }
                             } else {
@@ -1515,7 +1553,13 @@ private fun ChatboxThreadPane(
 
                         Column(
                             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                            modifier = Modifier.widthIn(max = 280.dp)
+                            modifier = Modifier
+                                .widthIn(max = 280.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { tappedMessageId = if (tappedMessageId == msg.id) null else msg.id }
+                                .testTag("message_bubble_${msg.id}")
                         ) {
                             if (isSairaAutoReply) {
                                 Text(
@@ -1643,8 +1687,27 @@ private fun ChatboxThreadPane(
                         }
                     }
 
-                    // Mini Read Receipt Avatar on last message when Read Receipts is On (matches Screenshot 2)
-                    if (isLastMessage && thread.readReceiptsEnabled && !isBlocked) {
+                    // Tap a message → small "Seen" / "Sent" (mine) or its time (theirs).
+                    if (tappedMessageId != null && tappedMessageId == msg.id && msg.from != "system") {
+                        val msgIdx = messageIndexById[msg.id] ?: -1
+                        val label = when {
+                            !isMe -> msg.time
+                            thread.readReceiptsEnabled && seenIndex >= 0 && msgIdx in 0..seenIndex -> "Seen"
+                            else -> "Sent"
+                        }
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DmInkMuted,
+                            textAlign = if (isMe) TextAlign.End else TextAlign.Start,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp, start = if (isMe) 0.dp else 40.dp, end = 4.dp)
+                                .testTag("message_status_label")
+                        )
+                    }
+                    // Messenger-style read receipt: the peer's small photo under the newest message they've seen.
+                    if (msg.id.isNotBlank() && msg.id == seenAvatarMessageId && !isBlocked) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1654,7 +1717,8 @@ private fun ChatboxThreadPane(
                             MessengerAvatar(
                                 label = shownName,
                                 size = 16.dp,
-                                modifier = Modifier.testTag("read_receipt_mini_avatar")
+                                modifier = Modifier.testTag("read_receipt_mini_avatar"),
+                                photoUrl = thread.photoUrl
                             )
                         }
                     }

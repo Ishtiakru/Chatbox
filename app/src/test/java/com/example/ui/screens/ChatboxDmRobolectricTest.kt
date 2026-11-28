@@ -240,6 +240,8 @@ class ChatboxDmRobolectricTest {
                             time = timeStr
                         )
                         messages[tid] = (messages[tid].orEmpty()) + nextMsg
+                        // Simulate the peer opening the chat right away (read receipt).
+                        threads = threads.map { if (it.id == tid) it.copy(peerSeenMessageId = nextMsg.id) else it }
                     },
                     onSendImage = { _, _ -> },
                     onSendVoice = { _, _, _ -> },
@@ -416,6 +418,10 @@ class ChatboxDmRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("ki obostha").assertIsDisplayed()
         composeRule.onNodeWithTag("read_receipt_mini_avatar").assertIsDisplayed()
+        // Tapping the message shows a small "Seen" label.
+        composeRule.onNodeWithText("ki obostha").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Seen").assertIsDisplayed()
 
         // 5) Open Details screen (Screenshot 1)
         composeRule.onNodeWithTag("chatbox_thread_settings").performClick()

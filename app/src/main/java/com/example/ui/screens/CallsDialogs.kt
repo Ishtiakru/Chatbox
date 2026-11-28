@@ -51,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -142,19 +143,27 @@ internal fun CallsActiveCallDialog(
     }
 
     // A stray touch outside the card (cheek, finger) must never end the call — only the red button does.
+    // Only the red button ends a call — never back, an edge swipe or a touch outside the card.
     Dialog(
-        onDismissRequest = if (engine != null) ({}) else onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = engine == null)
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false)
     ) {
         if (engine != null) KeepScreenOn()
         // Phone held to the ear → controls ignore touches (and the screen turns off where allowed),
         // so the cheek can't press "End".
         val nearEar = if (engine != null && !target.isVideo) rememberNearEar() else false
+        // Taking the phone away from the ear: the cheek / fingers often brush the screen — ignore "End"
+        // for a moment (also right after the screen opens).
+        var endGuardUntil by remember { mutableLongStateOf(System.currentTimeMillis() + 800) }
+        LaunchedEffect(nearEar) {
+            if (!nearEar) endGuardUntil = maxOf(endGuardUntil, System.currentTimeMillis() + 1_500)
+        }
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1E1930),
             modifier = Modifier
                 .fillMaxWidth()
+                .singleTouchOnly()
                 .testTag("calls_active_call_dialog")
         ) {
             Column(
@@ -192,7 +201,10 @@ internal fun CallsActiveCallDialog(
                 )
                 if (engine != null) {
                     Box(modifier = Modifier.padding(top = 12.dp)) {
-                        CallControlsRow(engine = engine, showVideoControls = false, onEnd = endNow)
+                        CallControlsRow(
+                            engine = engine, showVideoControls = false, onEnd = endNow,
+                            endBlocked = { nearEar || System.currentTimeMillis() < endGuardUntil }
+                        )
                     }
                 } else Row(
                     modifier = Modifier.padding(top = 12.dp),

@@ -421,7 +421,24 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         if (phoneSignInInProgress) return // completePhoneSignIn() writes the profile itself
         viewModelScope.launch {
             liveChatRepo.ensureOwnProfile(user.uid, user.displayName)
-                .onSuccess { profile -> _ownProfile.value = profile }
+                .onSuccess { profile ->
+                    _ownProfile.value = profile
+                    // Photo set before photos were shared (only on this phone) → publish it now.
+                    if (profile.photoUrl.isBlank()) {
+                        val local = prefs.observeUserAvatarPath(user.uid).first()
+                        if (!local.isNullOrBlank() && File(local).exists()) publishOwnAvatar(user.uid, local)
+                    }
+                }
+        }
+    }
+
+    /** Uploads the profile photo and puts its link on the public profile so everyone sees it. */
+    private suspend fun publishOwnAvatar(uid: String, path: String) {
+        val url = com.example.util.MediaHost.upload(File(path))
+            .onFailure { Log.w(LIVE_TAG, "avatar upload failed", it) }
+            .getOrNull() ?: return
+        liveChatRepo.setOwnPhotoUrl(uid, url).onSuccess {
+            _ownProfile.value = _ownProfile.value?.copy(photoUrl = url)
         }
     }
 
@@ -882,6 +899,7 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             }
             if (!savedPath.isNullOrBlank()) {
                 prefs.saveUserAvatarPath(avatarKey, savedPath)
+                currentUser.value?.uid?.let { uid -> publishOwnAvatar(uid, savedPath) }
             }
         }
     }
@@ -898,6 +916,30 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
             prefs.saveUserAvatarPath(avatarKey, null)
+            currentUser.value?.uid?.let { uid ->
+                liveChatRepo.setOwnPhotoUrl(uid, null).onSuccess {
+                    _ownProfile.value = _ownProfile.value?.copy(photoUrl = "")
+                }
+            }
+        }
+    }
+
+    /**
+     * The DM with [threadId] is on screen: tell the peer we've seen their newest message
+     * (Messenger-style read receipt). Skipped when read receipts are off for this chat.
+     */
+    fun markThreadSeen(threadId: String) {
+        val thread = chatboxThreads.value.firstOrNull { it.id == threadId } ?: return
+        if (thread.isGroup || thread.conversationId.isBlank() || !thread.readReceiptsEnabled) return
+        val uid = currentUser.value?.uid ?: return
+        val lastTheirs = chatboxMessages.value[threadId].orEmpty()
+            .lastOrNull { it.from == "them" && it.id.startsWith("live_") } ?: return
+        val msgId = lastTheirs.id.removePrefix("live_")
+        if (seenReported[thread.conversationId] == msgId) return
+        seenReported[thread.conversationId] = msgId
+        viewModelScope.launch {
+            liveChatRepo.markSeen(thread.conversationId, uid, msgId)
+                .onFailure { seenReported.remove(thread.conversationId, msgId) }
         }
     }
 
@@ -2372,6 +2414,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         liveConversationsJob = null
         liveMessageJobs.values.forEach { it.cancel() }
         liveMessageJobs.clear()
+        peerProfileJobs.values.forEach { it.cancel() }
+        peerProfileJobs.clear()
+        seenReported.clear()
         liveAcceptedConversations.clear()
         _activeCall.value?.let { call ->
             runCatching { ChatboxNotifier.cancelIncomingCall(getApplication(), call.callId) }
@@ -2398,6 +2443,17 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                                 .onFailure { Log.w(LIVE_TAG, "ensureLiveThread failed", it) }
                             if (!liveMessageJobs.containsKey(conv.id)) {
                                 liveMessageJobs[conv.id] = launch { syncLiveMessages(uid, conv.id) }
+                            }
+                            if (!peerProfileJobs.containsKey(peerUid)) {
+                                peerProfileJobs[peerUid] = launch { syncPeerPhoto(peerUid) }
+                            }
+                            // Read receipt: newest of OUR messages the peer has seen.
+                            val peerSeen = conv.seen[peerUid]?.takeIf { it.isNotBlank() }?.let { "live_$it" }
+                            if (peerSeen != null) {
+                                val t = chatboxThreads.value.firstOrNull { it.conversationId == conv.id }
+                                if (t != null && t.peerSeenMessageId != peerSeen) {
+                                    updateThread(t.id) { it.copy(peerSeenMessageId = peerSeen) }
+                                }
                             }
                         }
                     }
@@ -2584,7 +2640,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             online = true,
             readReceiptsEnabled = true,
             peerUid = peerUid,
-            conversationId = conversationId
+            conversationId = conversationId,
+            photoUrl = profile?.photoUrl.orEmpty()
         )
         chatboxThreadsMutex.withLock {
             val current = prefs.chatboxThreads.first()
@@ -2593,6 +2650,25 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             ) {
                 prefs.saveChatboxThreads(listOf(thread) + current)
             }
+        }
+    }
+
+    /** Keeps every 1:1 thread with [peerUid] showing that person's current profile photo. */
+    private suspend fun syncPeerPhoto(peerUid: String) {
+        while (currentCoroutineContext().isActive) {
+            try {
+                liveChatRepo.observePeerProfile(peerUid).collect { profile ->
+                    val url = profile?.photoUrl ?: return@collect
+                    chatboxThreads.value
+                        .filter { !it.isGroup && it.peerUid == peerUid && it.photoUrl != url }
+                        .forEach { t -> updateThreadNow(t.id) { it.copy(photoUrl = url) } }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(LIVE_TAG, "peer profile sync failed for $peerUid; retrying", e)
+            }
+            delay(30_000L)
         }
     }
 

@@ -3,7 +3,9 @@ package com.example.call
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
@@ -66,7 +68,8 @@ class CallEngine(
 
     private val _micMuted = MutableStateFlow(false)
     val micMuted: StateFlow<Boolean> = _micMuted.asStateFlow()
-    private val _speakerOn = MutableStateFlow(false)
+    /** Audio calls start on the earpiece (hold the phone to the ear); video calls on the loudspeaker. */
+    private val _speakerOn = MutableStateFlow(isVideo)
     val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
     private val _cameraOff = MutableStateFlow(false)
     val cameraOff: StateFlow<Boolean> = _cameraOff.asStateFlow()
@@ -156,8 +159,32 @@ class CallEngine(
             previousAudioMode = am.mode
             previousSpeaker = am.isSpeakerphoneOn
             am.mode = AudioManager.MODE_IN_COMMUNICATION
-            am.isSpeakerphoneOn = _speakerOn.value
         }
+        applyRoute(_speakerOn.value)
+    }
+
+    /**
+     * Loudspeaker or earpiece (a connected headset / Bluetooth wins over the earpiece).
+     * Android 12+ ignores the old isSpeakerphoneOn on many phones — that's why calls were always loud —
+     * so pick the communication device explicitly there.
+     */
+    @Suppress("DEPRECATION")
+    private fun applyRoute(speaker: Boolean) {
+        val am = audioManager ?: return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = am.availableCommunicationDevices
+                val target = if (speaker) {
+                    devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                } else {
+                    devices.firstOrNull { it.type in HEADSET_TYPES } ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                }
+                if (target != null) am.setCommunicationDevice(target) else am.clearCommunicationDevice()
+                if (!speaker && am.isSpeakerphoneOn) am.isSpeakerphoneOn = false
+            } else {
+                am.isSpeakerphoneOn = speaker
+            }
+        }.onFailure { Log.w(TAG, "audio route failed", it) }
     }
 
     // ---------------- signaling ----------------
@@ -233,11 +260,10 @@ class CallEngine(
         _micMuted.value = muted
     }
 
-    @Suppress("DEPRECATION")
     fun toggleSpeaker() = post {
         val on = !_speakerOn.value
-        runCatching { audioManager?.isSpeakerphoneOn = on }
         _speakerOn.value = on
+        applyRoute(on)
     }
 
     fun toggleCamera() = post {
@@ -270,6 +296,7 @@ class CallEngine(
             runCatching { adm?.release() }
             runCatching { eglBase.release() }
             runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) audioManager?.clearCommunicationDevice()
                 audioManager?.mode = previousAudioMode
                 audioManager?.isSpeakerphoneOn = previousSpeaker
             }
@@ -294,6 +321,8 @@ class CallEngine(
                 PeerConnection.IceConnectionState.FAILED -> "failed"
                 else -> _mediaState.value
             }
+            // Some phones reset the route when call audio starts — apply earpiece/speaker again.
+            if (state == PeerConnection.IceConnectionState.CONNECTED) post { if (!closed) applyRoute(_speakerOn.value) }
         }
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
@@ -323,6 +352,11 @@ class CallEngine(
     }
 
     companion object {
+        /** Wired / USB / Bluetooth headsets — used instead of the earpiece when connected. */
+        private val HEADSET_TYPES = setOf(
+            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 26 /* TYPE_BLE_HEADSET */
+        )
         private const val TAG = "ChatboxCall"
         private const val STREAM_ID = "chatbox_s0"
         private const val GATHER_TIMEOUT_MS = 5_000L

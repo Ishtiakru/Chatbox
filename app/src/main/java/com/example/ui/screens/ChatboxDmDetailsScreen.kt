@@ -209,7 +209,8 @@ fun ChatboxDmDetailsScreen(
                 MessengerAvatar(
                     label = shownName,
                     size = 88.dp,
-                    showOnlineDot = showOnlineDot
+                    showOnlineDot = showOnlineDot,
+                    photoUrl = thread.photoUrl
                 )
 
                 Text(
