@@ -164,16 +164,7 @@ fun ChatboxSplash(title: String, tagline: String, onFinished: () -> Unit) {
                     )
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            androidx.compose.material3.Text(
-                text = tagline,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF8A84A3),
-                modifier = Modifier.graphicsLayer {
-                    alpha = taglineIn.value
-                    translationY = (1f - taglineIn.value) * 10.dp.toPx()
-                }
-            )
+
         }
 
         // ---- the icon: above the name, then hops and drops onto the "x"
