@@ -307,6 +307,10 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     private var liveConversationsJob: Job? = null
     private val liveMessageJobs = ConcurrentHashMap<String, Job>()
     private val liveAcceptedConversations: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** peerUid → live profile listener (keeps the peer's profile photo up to date). */
+    private val peerProfileJobs = ConcurrentHashMap<String, Job>()
+    /** conversationId → last message id we reported as seen (avoids repeat writes). */
+    private val seenReported = ConcurrentHashMap<String, String>()
 
     internal var autoReplyWaitMs: Long = DEFAULT_AUTO_REPLY_WAIT_MS
     internal var continuationDebounceMs: Long = DEFAULT_CONTINUATION_WAIT_MS
