@@ -336,6 +336,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
     internal var aiCompleter: suspend (String, List<AiChatMessage>, String) -> String = { sys, hist, prompt ->
         SairaAiClient.complete(sys, hist, prompt)
     }
+    /** Vision: Saira looks at a picture. "" = could not analyse. */
+    internal var visionCompleter: suspend (String, List<AiChatMessage>, String, com.example.data.ai.AiImage) -> String =
+        { sys, hist, prompt, image -> SairaAiClient.completeWithImages(sys, hist, prompt, listOf(image)) }
     internal var clockHourProvider: () -> Int = { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
     internal var onlineOverride: Boolean? = null
 
@@ -1233,6 +1236,15 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                     com.example.agent.KeyIntake.install(getApplication<Application>(), ownerKeyIntake.keys)
                 }.getOrElse { "key বসাতে সমস্যা হয়েছে: ${it.message}" }
                 appendSairaMessageToThread(threadId, report, SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()))
+            } else if (threadId == "saira" && kind == ChatboxMessageKind.IMAGE && mediaPath != null) {
+                // Photo sent to Saira → she looks at it and analyses it.
+                val sairaReply = generateSairaDirectDmReply(
+                    userMessage = trimmed.ifBlank { "এই ছবিটা ভালো করে দেখে বিশ্লেষণ করো এবং দরকারি সমাধান/পরামর্শ দাও।" },
+                    historyMessages = historySnapshot.dropLast(1),
+                    imagePath = mediaPath
+                )
+                val nowStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+                appendSairaMessageToThread(threadId, sairaReply, nowStr)
             } else if (threadId == "saira" && trimmed.isNotEmpty()) {
                 val sairaReply = generateSairaDirectDmReply(
                     userMessage = trimmed,
@@ -1264,8 +1276,13 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun generateSairaDirectDmReply(
         userMessage: String,
-        historyMessages: List<ChatboxMessage>
+        historyMessages: List<ChatboxMessage>,
+        imagePath: String? = null
     ): String {
+        val image = imagePath?.let { com.example.util.AiImagePrep.fromPath(getApplication(), it) }
+        if (imagePath != null && image == null) {
+            return "ছবিটা খুলতে পারছি না 😕 আরেকবার পাঠাবেন? না হলে ছবিতে কী আছে লিখে দিন, আমি সাহায্য করছি।"
+        }
         if (effectiveIsOnline()) {
             val aiHistory = historyMessages
                 .filter { it.kind == ChatboxMessageKind.TEXT && it.text.isNotBlank() }
@@ -1295,7 +1312,11 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 ownerLabel = ownerLabel
             )
             val aiAnswer = try {
-                withTimeoutOrNull(25_000L) {
+                if (image != null) {
+                    withTimeoutOrNull(50_000L) {
+                        visionCompleter(SairaPrompts.chatSystemInstructionFor(ownerActive), aiHistory, prompt + SairaPrompts.visionGuidance, image)
+                    }?.trim().orEmpty()
+                } else withTimeoutOrNull(25_000L) {
                     aiCompleter(SairaPrompts.chatSystemInstructionFor(ownerActive), aiHistory, prompt)
                 }?.trim().orEmpty()
             } catch (e: CancellationException) {
@@ -1304,6 +1325,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 ""
             }
             if (aiAnswer.isNotEmpty()) return aiAnswer
+        }
+        if (image != null) {
+            return "এই মুহূর্তে ছবিটা বিশ্লেষণ করতে পারছি না (ইন্টারনেট/সার্ভার ব্যস্ত)। একটু পরে আবার পাঠান।"
         }
         return ChatboxCatalog.getSairaOfflineGuideReply(userMessage)
     }
@@ -1439,6 +1463,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
 
             val ownerName = ownProfile.value?.displayName?.ifBlank { null }
                 ?: localUserProfile.value.displayName
+            // A photo? Saira looks at it (catbox link / local file) and answers about it.
+            val photoPath = latest.imageUri?.takeIf { latest.kind == ChatboxMessageKind.IMAGE && it.isNotBlank() }
+            val photo = photoPath?.let { com.example.util.AiImagePrep.fromPath(getApplication(), it) }
             val result = evaluateAutoReplyInternal(
                 senderName = thread.name,
                 platform = SairaPlatform.ANY,
@@ -1449,7 +1476,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                 forceContinuation = isContinuation,
                 recentMessagesForHistory = currentMessages.map {
                     if (it.text.startsWith(SAIRA_LIVE_PREFIX)) it.copy(text = it.text.removePrefix(SAIRA_LIVE_PREFIX)) else it
-                }
+                },
+                image = photo,
+                photoUnavailable = photoPath != null && photo == null
             )
             if (!result.replied || result.replyText.isBlank()) return@launch
             // A newer message came in (or the owner answered / came on line) while Saira was
@@ -1566,9 +1595,22 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         peerIdForLocation: String?,
         isChatboxAbsence: Boolean,
         forceContinuation: Boolean,
-        recentMessagesForHistory: List<ChatboxMessage>
+        recentMessagesForHistory: List<ChatboxMessage>,
+        /** The photo the sender attached (Saira looks at it), if any. */
+        image: com.example.data.ai.AiImage? = null,
+        /** A photo was sent but couldn't be loaded — Saira must not pretend she saw it. */
+        photoUnavailable: Boolean = false
     ): SairaAutoReplyTestResult {
         val app = getApplication<Application>()
+        // One place that picks text-only or vision AI for every branch below.
+        suspend fun askAi(sys: String, hist: List<AiChatMessage>, prompt: String): String =
+            if (image != null) {
+                withTimeoutOrNull(50_000L) { visionCompleter(sys, hist, prompt + SairaPrompts.visionGuidance, image) }.orEmpty()
+            } else {
+                withTimeoutOrNull(20_000L) {
+                    aiCompleter(sys, hist, if (photoUnavailable) prompt + SairaPrompts.photoUnavailableNote else prompt)
+                }.orEmpty()
+            }
         val rules = prefs.sairaNotificationRules.first()
         val oneMinEnabled = prefs.sairaChatboxOneMinEnabled.first()
         val liveLocEnabled = prefs.sairaLiveLocationEnabled.first()
@@ -1612,7 +1654,31 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
             }
             val isContinuation = forceContinuation || priorRuleLogs.isNotEmpty()
             var usedAi = false
-            val replyText = if (!isContinuation) {
+            val replyText = if (!isContinuation && image != null && effectiveIsOnline()) {
+                // First message is a photo: owner's box text, then what the photo shows.
+                val box = SairaNotificationMatcher.buildFirstBoxReply(
+                    senderName = senderName,
+                    rule = matchedRule,
+                    locationSnapshot = locationSnapshot,
+                    hourOfDay = hour
+                )
+                val analysis = try {
+                    askAi(
+                        SairaPrompts.autoReplySystemInstruction, emptyList(),
+                        SairaPrompts.buildNotificationAutoReplyPrompt(
+                            senderName = senderName, platformLabel = platform.label, incomingMessage = incomingText,
+                            taughtGuidance = matchedRule.taughtReplyGuidance, locationText = null,
+                            chatboxUsers = chatboxUsers, hourOfDay = hour, isContinuation = true
+                        )
+                    ).trim().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    ""
+                }
+                if (analysis.isNotEmpty()) usedAi = true
+                if (analysis.isNotEmpty()) "$box\n\n$analysis" else box
+            } else if (!isContinuation) {
                 SairaNotificationMatcher.buildFirstBoxReply(
                     senderName = senderName,
                     rule = matchedRule,
@@ -1637,9 +1703,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                     isContinuation = true
                 )
                 val aiAttempt = try {
-                    withTimeoutOrNull(20_000L) {
-                        aiCompleter(SairaPrompts.autoReplySystemInstruction, history, prompt)
-                    }?.trim().orEmpty().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
+                    askAi(SairaPrompts.autoReplySystemInstruction, history, prompt)
+                        .trim().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -1706,9 +1771,8 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
                     isContinuation = forceContinuation
                 )
                 try {
-                    withTimeoutOrNull(20_000L) {
-                        aiCompleter(SairaPrompts.chatSystemInstruction, history, prompt)
-                    }?.trim().orEmpty().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
+                    askAi(SairaPrompts.chatSystemInstruction, history, prompt)
+                        .trim().let { if (AiSafeResponses.isSafetyMessage(it)) "" else it }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -2796,6 +2860,9 @@ class ChatboxAppViewModel(application: Application) : AndroidViewModel(applicati
         freshIncoming?.let { msg ->
             if (msg.kind == ChatboxMessageKind.TEXT && msg.text.isNotBlank()) {
                 scheduleIncomingAutoReply(thread, msg.id, msg.text)
+            } else if (msg.kind == ChatboxMessageKind.IMAGE && !msg.imageUri.isNullOrBlank()) {
+                // Photo (with or without caption): Saira looks at it before answering.
+                scheduleIncomingAutoReply(thread, msg.id, msg.text.ifBlank { "📷 Photo" })
             }
         }
     }

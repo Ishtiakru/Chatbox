@@ -99,7 +99,9 @@ internal fun CallsActiveCallDialog(
     engine: com.example.call.CallEngine? = null,
     onMarkMissed: () -> Unit,
     onEndCall: (durationLabel: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** "More → Message": open this person's chat while the call keeps running. */
+    onOpenChat: () -> Unit = {}
 ) {
     // Tick every second: drives the Connected timer and the End-button duration.
     var tick by remember(target.threadId, connectedAtMs) { mutableIntStateOf(0) }
@@ -131,122 +133,26 @@ internal fun CallsActiveCallDialog(
         onEndCall(String.format(Locale.US, "%d:%02d", totalSec / 60, totalSec % 60))
     }
 
-    if (engine != null && target.isVideo) {
-        InCallVideoScreen(
-            engine = engine,
-            peerName = target.peerName,
-            statusText = if (!isConnected) "Ringing…" else statusText,
-            onEnd = endNow,
-            onDismiss = {}
-        )
+    // WhatsApp-style full-screen call UI (audio + video). Minimise → small green bar over the app.
+    var minimized by remember(target.threadId) { mutableStateOf(false) }
+    val shownStatus = if (!isConnected) {
+        if (engine != null) "Ringing…" else "Calling…"
+    } else statusText
+    if (minimized) {
+        MinimizedCallBar(peerName = target.peerName, statusText = shownStatus, onReturn = { minimized = false })
         return
     }
-
-    // A stray touch outside the card (cheek, finger) must never end the call — only the red button does.
-    // Only the red button ends a call — never back, an edge swipe or a touch outside the card.
-    Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false)
-    ) {
-        if (engine != null) KeepScreenOn()
-        // Phone held to the ear → controls ignore touches (and the screen turns off where allowed),
-        // so the cheek can't press "End".
-        val nearEar = if (engine != null && !target.isVideo) rememberNearEar() else false
-        // Taking the phone away from the ear: the cheek / fingers often brush the screen — ignore "End"
-        // for a moment (also right after the screen opens).
-        var endGuardUntil by remember { mutableLongStateOf(System.currentTimeMillis() + 800) }
-        LaunchedEffect(nearEar) {
-            if (!nearEar) endGuardUntil = maxOf(endGuardUntil, System.currentTimeMillis() + 1_500)
-        }
-        Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = Color(0xFF1E1930),
-            modifier = Modifier
-                .fillMaxWidth()
-                .singleTouchOnly()
-                .testTag("calls_active_call_dialog")
-        ) {
-            Column(
-                modifier = Modifier
-                    .pointerInput(nearEar) {
-                        if (nearEar) awaitPointerEventScope {
-                            while (true) {
-                                awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
-                            }
-                        }
-                    }
-                    .drawWithContent {
-                        drawContent()
-                        if (nearEar) drawRect(Color.Black)
-                    }
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                MessengerAvatar(
-                    label = target.peerName,
-                    size = 84.dp,
-                    showOnlineDot = true
-                )
-                Text(
-                    text = target.peerName,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Text(
-                    text = "${if (target.isVideo) "Video call" else "Audio call"} · $statusText",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.8f)
-                )
-                if (engine != null) {
-                    Box(modifier = Modifier.padding(top = 12.dp)) {
-                        CallControlsRow(
-                            engine = engine, showVideoControls = false, onEnd = endNow,
-                            endBlocked = { nearEar || System.currentTimeMillis() < endGuardUntil }
-                        )
-                    }
-                } else Row(
-                    modifier = Modifier.padding(top = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = onMarkMissed,
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                    ) {
-                        Text("Mark missed")
-                    }
-                    Surface(
-                        onClick = {
-                            val totalSec = if (isConnected) {
-                                ((System.currentTimeMillis() - connectedAtMs) / 1000L)
-                                    .toInt().coerceAtLeast(1)
-                            } else {
-                                1
-                            }
-                            val dur = String.format(Locale.US, "%d:%02d", totalSec / 60, totalSec % 60)
-                            onEndCall(dur)
-                        },
-                        shape = CircleShape,
-                        color = Color(0xFFE53935),
-                        modifier = Modifier
-                            .size(56.dp)
-                            .testTag("calls_dialog_end")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.CallEnd,
-                                contentDescription = "End call",
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
+    WhatsAppCallScreen(
+        peerName = target.peerName,
+        isVideo = target.isVideo,
+        statusText = shownStatus,
+        isConnected = isConnected,
+        engine = engine,
+        onEnd = endNow,
+        onMinimize = { minimized = true },
+        onOpenChat = { minimized = true; onOpenChat() },
+        onMarkMissed = onMarkMissed
+    )
 }
 
 @Composable

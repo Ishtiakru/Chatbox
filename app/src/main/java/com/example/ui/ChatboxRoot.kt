@@ -662,7 +662,11 @@ fun ChatboxRoot(viewModel: ChatboxAppViewModel = viewModel()) {
                     engine = callEngine?.takeIf { it.callId == call.callId },
                     onMarkMissed = { viewModel.endCall(missed = true) },
                     onEndCall = { durationLabel -> viewModel.endCall(missed = false, durationLabel = durationLabel) },
-                    onDismiss = { viewModel.endCall(missed = false, dismissed = true) }
+                    onDismiss = { viewModel.endCall(missed = false, dismissed = true) },
+                    onOpenChat = {
+                        viewModel.selectThread(call.threadId)
+                        viewModel.selectTab(AppTab.Core(CoreAppTab.CHATBOX))
+                    }
                 )
             }
         }
