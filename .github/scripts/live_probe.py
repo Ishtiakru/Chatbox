@@ -213,5 +213,24 @@ def main():
     print("SUMMARY:", " | ".join(summary))
 
 
+LOG = []
+_print = print
+
+
+def print(*a, **k):  # noqa: A001 — also collect for annotations
+    line = " ".join(str(x) for x in a)
+    LOG.append(line)
+    _print(line, flush=True)
+
+
+def annotate():
+    text = "\n".join(LOG)
+    for i in range(0, min(len(text), 9 * 3500), 3500):
+        _print("::notice title=live %d::" % (i // 3500) + text[i:i + 3500].replace("%", "%25").replace("\n", "%0A"))
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        annotate()
