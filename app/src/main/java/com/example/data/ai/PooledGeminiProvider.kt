@@ -44,60 +44,42 @@ class PooledGeminiProvider(
         if (keys.isEmpty()) {
             return@withContext delegate.generate(systemInstruction, history, prompt)
         }
-        var model = GeminiAiProvider.DEFAULT_MODEL
-        var attempts = 0
-        var transientFailures = 0
         val startedAt = System.currentTimeMillis()
-        for (key in keys) {
-            if (attempts >= MAX_KEY_ATTEMPTS) break
-            if (System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break
-            attempts++
-            val outcome = try {
-                tryKey(key, model, systemInstruction, history, prompt)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                Attempt.Transient
-            }
-            when (outcome) {
-                is Attempt.Ok -> return@withContext outcome.text
-                is Attempt.Quota -> pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
-                is Attempt.DeadKey -> pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
-                is Attempt.Transient -> {
-                    // 5xx / hang / timeout: model-side capacity, not a bad key —
-                    // rotate to the next key immediately, and after a couple of
-                    // failures switch to the lighter model (usually less loaded).
-                    transientFailures++
-                    if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
-                        model != GeminiAiProvider.FALLBACK_MODEL
-                    ) {
-                        model = GeminiAiProvider.FALLBACK_MODEL
-                        Log.w(TAG, "Model '$model' under load; retrying pool on '$model'")
-                    }
+        var attempts = 0
+        models@ for (model in GeminiModelQuota.CHAT_MODELS) {
+            if (!GeminiModelQuota.modelUsable(model)) continue
+            var tried = 0
+            var transientFailures = 0
+            for (key in keys) {
+                if (tried >= PER_MODEL_ATTEMPTS) break
+                if (attempts >= MAX_KEY_ATTEMPTS || System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break@models
+                if (!GeminiModelQuota.usable(model, key)) continue
+                tried++
+                attempts++
+                val outcome = try {
+                    tryKey(key, model, systemInstruction, history, prompt)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    Attempt.Transient
                 }
-                is Attempt.ModelGone -> {
-                    model = GeminiAiProvider.FALLBACK_MODEL
-                    val retry = try {
-                        tryKey(key, model, systemInstruction, history, prompt)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        Attempt.Other(e)
+                when (outcome) {
+                    is Attempt.Ok -> {
+                        GeminiModelQuota.markOk(model)
+                        return@withContext outcome.text
                     }
-                    when (retry) {
-                        is Attempt.Ok -> return@withContext retry.text
-                        is Attempt.Quota -> pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
-                        is Attempt.DeadKey -> pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
-                        else -> Unit
+                    // A limit only parks this key for THIS model — it still works on the others.
+                    is Attempt.Quota -> GeminiModelQuota.markLimit(model, key, outcome.daily)
+                    is Attempt.DeadKey -> pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
+                    is Attempt.ModelGone -> {
+                        GeminiModelQuota.markGone(model)
+                        continue@models
                     }
-                }
-                is Attempt.Other -> {
-                    // Unexpected reply (empty candidates, 4xx…): try the next key /
-                    // model instead of abandoning the whole pool.
-                    Log.w(TAG, "REST attempt failed; rotating key", outcome.error)
-                    transientFailures++
-                    if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) {
-                        model = GeminiAiProvider.FALLBACK_MODEL
+                    is Attempt.Transient, is Attempt.Other -> {
+                        // 5xx / hang / odd reply: model-side trouble — after a couple, try the next model.
+                        if (outcome is Attempt.Other) Log.w(TAG, "REST attempt failed on $model; rotating", outcome.error)
+                        transientFailures++
+                        if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) continue@models
                     }
                 }
             }
@@ -115,52 +97,52 @@ class PooledGeminiProvider(
             delegate.stream(systemInstruction, history, prompt).collect { send(it) }
             return@channelFlow
         }
-        var model = GeminiAiProvider.DEFAULT_MODEL
         var attempts = 0
         var handled = false
         var lastStreamError: Throwable? = null
-        var transientFailures = 0
         val startedAt = System.currentTimeMillis()
-        for (key in keys) {
-            if (attempts >= MAX_KEY_ATTEMPTS) break
-            if (System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break
-            attempts++
-            try {
-                withContext(Dispatchers.IO) {
-                    streamKey(key, model, systemInstruction, history, prompt).collect {
-                        send(it)
+        models@ for (model in GeminiModelQuota.CHAT_MODELS) {
+            if (!GeminiModelQuota.modelUsable(model)) continue
+            var tried = 0
+            var transientFailures = 0
+            for (key in keys) {
+                if (tried >= PER_MODEL_ATTEMPTS) break
+                if (attempts >= MAX_KEY_ATTEMPTS || System.currentTimeMillis() - startedAt > POOL_BUDGET_MS) break@models
+                if (!GeminiModelQuota.usable(model, key)) continue
+                tried++
+                attempts++
+                var emitted = false
+                try {
+                    withContext(Dispatchers.IO) {
+                        streamKey(key, model, systemInstruction, history, prompt).collect {
+                            emitted = true
+                            send(it)
+                        }
                     }
-                }
-                handled = true
-                break
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: KeyQuotaException) {
-                pool.markCooling(key, GeminiKeyPool.QUOTA_COOLDOWN_MS)
-            } catch (e: KeyDeadException) {
-                pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
-            } catch (e: ModelGoneException) {
-                model = GeminiAiProvider.FALLBACK_MODEL
-            } catch (e: KeyTransientException) {
-                transientFailures++
-                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
-                    model != GeminiAiProvider.FALLBACK_MODEL
-                ) {
-                    model = GeminiAiProvider.FALLBACK_MODEL
-                }
-            } catch (e: java.net.SocketTimeoutException) {
-                transientFailures++
-                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS &&
-                    model != GeminiAiProvider.FALLBACK_MODEL
-                ) {
-                    model = GeminiAiProvider.FALLBACK_MODEL
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "SSE attempt failed; rotating key", e)
-                lastStreamError = e
-                transientFailures++
-                if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) {
-                    model = GeminiAiProvider.FALLBACK_MODEL
+                    GeminiModelQuota.markOk(model)
+                    handled = true
+                    break@models
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: KeyQuotaException) {
+                    GeminiModelQuota.markLimit(model, key, e.daily)
+                } catch (e: KeyDeadException) {
+                    pool.markCooling(key, GeminiKeyPool.DEAD_KEY_COOLDOWN_MS)
+                } catch (e: ModelGoneException) {
+                    GeminiModelQuota.markGone(model)
+                    continue@models
+                } catch (e: Throwable) {
+                    // Part of the answer is already on screen — don't start a second answer after it.
+                    if (emitted) {
+                        handled = true
+                        break@models
+                    }
+                    if (e !is KeyTransientException && e !is java.net.SocketTimeoutException) {
+                        Log.w(TAG, "SSE attempt failed on $model; rotating key", e)
+                        lastStreamError = e
+                    }
+                    transientFailures++
+                    if (transientFailures >= MODEL_SWITCH_AFTER_TRANSIENTS) continue@models
                 }
             }
         }
@@ -174,14 +156,14 @@ class PooledGeminiProvider(
 
     private sealed interface Attempt {
         data class Ok(val text: String) : Attempt
-        object Quota : Attempt
+        data class Quota(val daily: Boolean) : Attempt
         object DeadKey : Attempt
         object ModelGone : Attempt
         object Transient : Attempt
         data class Other(val error: Throwable) : Attempt
     }
 
-    private class KeyQuotaException : Exception("quota")
+    private class KeyQuotaException(val daily: Boolean) : Exception("quota")
     private class KeyDeadException : Exception("invalid api key")
     private class ModelGoneException : Exception("model not found")
     private class KeyTransientException : Exception("transient upstream")
@@ -269,7 +251,7 @@ class PooledGeminiProvider(
                 lower.contains("resource_exhausted") ||
                 lower.contains("resource exhausted") ||
                 lower.contains("rate limit") ||
-                lower.contains("quota") -> Attempt.Quota
+                lower.contains("quota") -> Attempt.Quota(GeminiModelQuota.isDailyLimit(raw))
             lower.contains("api_key_invalid") ||
                 lower.contains("api key not valid") ||
                 lower.contains("api_key_not_valid") ||
@@ -284,8 +266,8 @@ class PooledGeminiProvider(
     }
 
     private fun classifyToException(status: Int, raw: String): Exception {
-        return when (classify(status, raw)) {
-            is Attempt.Quota -> KeyQuotaException()
+        return when (val a = classify(status, raw)) {
+            is Attempt.Quota -> KeyQuotaException(a.daily)
             is Attempt.DeadKey -> KeyDeadException()
             is Attempt.ModelGone -> ModelGoneException()
             is Attempt.Transient -> KeyTransientException()
@@ -336,7 +318,9 @@ class PooledGeminiProvider(
         private const val TAG = "PooledGemini"
         const val ID = "gemini-pool"
         private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        private const val MAX_KEY_ATTEMPTS = 10
+        /** Limit answers come back in ~0.1 s, so walking several models stays fast. */
+        private const val MAX_KEY_ATTEMPTS = 18
+        private const val PER_MODEL_ATTEMPTS = 4
         private const val POOL_BUDGET_MS = 30_000L
         private const val MODEL_SWITCH_AFTER_TRANSIENTS = 2
         private const val GENERATE_READ_TIMEOUT_MS = 12_000

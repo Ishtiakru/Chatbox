@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.example.data.ai.GeminiKeyPool
+import com.example.data.ai.GeminiModelQuota
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +85,8 @@ class SairaAgentAi(context: Context) {
         var attempts = 0
         var useSearch = search
         for (model in MODELS) {
-            val modelKeys = keys.shuffled().take(KEYS_PER_MODEL)
+            if (!GeminiModelQuota.modelUsable(model)) continue
+            val modelKeys = keys.filter { GeminiModelQuota.usable(model, it) }.shuffled().take(KEYS_PER_MODEL)
             var i = 0
             var modelMissing = false
             while (i < modelKeys.size && !modelMissing) {
@@ -114,7 +116,8 @@ class SairaAgentAi(context: Context) {
                     continue
                 }
                 when {
-                    code == 429 || low.contains("resource_exhausted") -> pool.markCooling(key, 60_000L)
+                    code == 429 || low.contains("resource_exhausted") ->
+                        GeminiModelQuota.markLimit(model, key, GeminiModelQuota.isDailyLimit(raw))
                     code == 404 -> modelMissing = true
                 }
                 i++
@@ -199,6 +202,6 @@ class SairaAgentAi(context: Context) {
         const val TAG = "SairaAgentAi"
         const val BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         const val KEYS_PER_MODEL = 4
-        val MODELS = listOf("gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash")
+        val MODELS = listOf("gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash")
     }
 }
