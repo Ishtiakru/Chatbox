@@ -520,17 +520,36 @@ object SairaPhoneCommandParser {
 
 /** Wake word handling for voice mode: "Saira, …" at the start of what the user said. */
 object SairaWakeWord {
+    private const val NAMES =
+        "saira|sayra|saera|shaira|shayra|sahira|sairah|syra|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা"
+
     private val WAKE = rx(
         "^(?:(?:hey|hi|hello|ok|okay|oi|ei|ay|ji|জি|ওই|এই|হেই|হ্যালো|ওকে|শোনো|shono|acha|আচ্ছা)[ ,!.।]+){0,2}" +
-            "(saira|sayra|saera|shaira|shayra|sahira|sairah|syra|sarah|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা)" +
+            "($NAMES|sarah)" +
             "(?:[ ,!.।:-]+|$)",
         RegexOption.IGNORE_CASE
     )
 
-    /** Returns the command after the wake word, "" if only the name was said, or null if Saira wasn't addressed. */
+    /** The name as a word of its own anywhere ("কয়টা বাজে, সায়রা?") — not "সায়রাকে" / "সায়রার" (talking about her). */
+    private val ANYWHERE = rx("(?<![\\p{L}\\p{M}\\p{N}])($NAMES)(?![\\p{L}\\p{M}\\p{N}])", RegexOption.IGNORE_CASE)
+    private val GREETING_TAIL = rx("(?:^|[ ,])(?:hey|hi|hello|ok|okay|oi|ei|ji|জি|ওই|এই|হেই|হ্যালো|ওকে|আচ্ছা|শোনো)[ ,]*$", RegexOption.IGNORE_CASE)
+    private val HAS_WORD = Regex("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]|[\\p{L}\\p{N}]{2,}")
+    private const val EDGE = " ,،!।.:;-—\"“”'"
+
+    /**
+     * Returns the command said to Saira, "" if only the name was said, or null if Saira wasn't addressed.
+     * The name may come first ("Saira, call ammu"), last ("কয়টা বাজে, সায়রা?") or after someone
+     * else's words ("…ওরা আসবে না। সায়রা, আম্মুকে কল দাও" → only the part from the name on).
+     */
     fun extract(transcript: String): String? {
         val s = SairaPhoneCommandParser.normalize(transcript).trim().trimStart('"', '“', '\'')
-        val m = WAKE.find(s) ?: return null
-        return s.substring(m.range.last + 1).trim().trimEnd('"', '”')
+        WAKE.find(s)?.let { m -> return s.substring(m.range.last + 1).trim().trimEnd('"', '”') }
+        val m = ANYWHERE.find(s) ?: return null
+        val after = s.substring(m.range.last + 1).trim { it in EDGE }
+        if (HAS_WORD.containsMatchIn(after)) return after.trimEnd('"', '”')
+        // Name at the end: the command is the sentence just before it.
+        val before = s.substring(0, m.range.first).trim { it in EDGE }
+        val last = before.split(Regex("[।.!?]+\\s+")).lastOrNull { it.isNotBlank() }.orEmpty()
+        return last.replace(GREETING_TAIL, "").trim { it in EDGE }
     }
 }

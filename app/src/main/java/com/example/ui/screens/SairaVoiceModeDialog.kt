@@ -115,6 +115,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
     val cloudVoice = remember { SairaCloudVoice(context) }
     var previewBusy by remember { mutableStateOf(false) }
     var confirmFirst by remember { mutableStateOf(SairaVoiceMode.confirmFirst(context)) }
+    var ownerOnly by remember { mutableStateOf(SairaVoiceMode.ownerOnly(context)) }
     fun localPreview() {
         if (!ttsReady) { voiceNote = "কণ্ঠ-ইঞ্জিন এখনো তৈরি হয়নি, একটু পরে চাপুন।"; return }
         val bn = SairaTtsVoice.apply(previewTts, bengali = true)
@@ -300,10 +301,38 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                 }
                 voiceNote?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = colors.inkMuted) }
 
-                // Step 1 — voice
+                // Who may command Saira
                 Surface(shape = RoundedCornerShape(16.dp), color = colors.fieldBg, border = BorderStroke(1.dp, colors.border)) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("১. শুধু আমার কণ্ঠ মানবে", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = colors.ink)
+                            Text(
+                                if (ownerOnly) "চালু — শুধু আপনার শেখানো কণ্ঠে \"Saira\" বললে সাড়া দেবে"
+                                else "বন্ধ — সবার কথা শুনবে, কিন্তু যে \"Saira\" বলে ডাকবে শুধু তার কথার উত্তর দেবে ও কাজ করবে",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.inkMuted
+                            )
+                        }
+                        Switch(
+                            checked = ownerOnly,
+                            enabled = recording == null,
+                            onCheckedChange = { on ->
+                                ownerOnly = on
+                                SairaVoiceMode.setOwnerOnly(context, on)
+                                if (on && voiceprint == null && running) {
+                                    SairaVoiceMode.stop(context)
+                                    message = "শুধু আপনার কণ্ঠের জন্য আগে নিচে কণ্ঠ শেখান, তারপর আবার চালু করুন।" to true
+                                }
+                            },
+                            modifier = Modifier.testTag("saira_voice_owner_only_switch")
+                        )
+                    }
+                }
+
+                // Step 1b — voice (only needed for "owner only")
+                if (ownerOnly) Surface(shape = RoundedCornerShape(16.dp), color = colors.fieldBg, border = BorderStroke(1.dp, colors.border)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("১. আপনার কণ্ঠ শেখান", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = colors.ink)
+                        Text("আপনার কণ্ঠ শেখান", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = colors.ink)
                         if (recording == "enroll") {
                             Text("নিচের লাইনগুলো স্বাভাবিকভাবে পড়ুন (কমপক্ষে ১৫ সেকেন্ড):", style = MaterialTheme.typography.bodySmall, color = colors.inkMuted)
                             ENROLL_LINES.forEach {
@@ -364,7 +393,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                 }
 
                 // Step 2 — sensitivity
-                if (voiceprint != null) {
+                if (ownerOnly && voiceprint != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("কণ্ঠ মেলানোর কড়াকড়ি", style = MaterialTheme.typography.labelLarge, color = colors.ink)
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -393,7 +422,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                             Text("২. ব্যাকগ্রাউন্ডে শোনা", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = colors.ink)
                             Text(
                                 if (running) status.ifBlank { "শুনছি — \"Saira, …\" বলুন" }
-                                else if (voiceprint == null) "আগে কণ্ঠ শেখান" else "বন্ধ",
+                                else if (ownerOnly && voiceprint == null) "আগে কণ্ঠ শেখান" else "বন্ধ",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (running) ChatboxUpdateGreen else colors.inkMuted,
                                 maxLines = 2
@@ -401,7 +430,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                         }
                         Switch(
                             checked = running,
-                            enabled = voiceprint != null && recording == null,
+                            enabled = (!ownerOnly || voiceprint != null) && recording == null,
                             onCheckedChange = { on ->
                                 if (on) startPerms.launch(SairaPhoneActions.voiceModePermissions(context).ifEmpty { listOf(Manifest.permission.RECORD_AUDIO) }.toTypedArray())
                                 else { SairaVoiceMode.stop(context); message = null }
@@ -481,7 +510,8 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                     ) { Text("কণ্ঠের তথ্য মুছুন", color = Color(0xFFD14343)) }
                 }
                 Text(
-                    "দ্রষ্টব্য: কণ্ঠ মেলানো ফোনেই হয়; শুধু আপনার কণ্ঠ মিললে তবেই কথাটা লেখায় রূপান্তরের জন্য AI-তে যায়। খুব কাছাকাছি কণ্ঠ মাঝে মাঝে মিলে যেতে পারে। " +
+                    (if (ownerOnly) "দ্রষ্টব্য: কণ্ঠ মেলানো ফোনেই হয়; শুধু আপনার কণ্ঠ মিললে তবেই কথাটা লেখায় রূপান্তরের জন্য AI-তে যায়। খুব কাছাকাছি কণ্ঠ মাঝে মাঝে মিলে যেতে পারে। "
+                    else "দ্রষ্টব্য: কাছের কথাগুলো লেখায় রূপান্তরের জন্য AI-তে যায়; \"Saira\" না বললে কোনো উত্তর বা কাজ হয় না। যে ডেকেছে, পরের কথাটা শুধু তার হলেই নাম ছাড়া মানবে। ") +
                         "ফোন লক (PIN/প্যাটার্ন) থাকলে ফোন কল আর SMS হবে, কিন্তু WhatsApp-এর কাজের জন্য ফোন আনলক থাকতে হবে। ব্যাটারি একটু বেশি খরচ হবে।",
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.inkSubtle
