@@ -92,6 +92,32 @@ object SairaAiClient {
         prompt: String
     ): Flow<String> = router.stream(systemInstruction, history, prompt)
 
+    /**
+     * Saira LOOKS at the pictures (Gemini vision) and answers about what they really show.
+     * Returns "" when no model could analyse them — callers then say so honestly.
+     */
+    suspend fun completeWithImages(
+        systemInstruction: String,
+        history: List<AiChatMessage>,
+        prompt: String,
+        images: List<AiImage>
+    ): String {
+        if (images.isEmpty()) return complete(systemInstruction, history, prompt)
+        val provider = pooledProvider as? PooledGeminiProvider ?: return ""
+        return try {
+            withTimeoutOrNull(VISION_BUDGET_MS) {
+                provider.generateWithImages(systemInstruction, history, prompt, images)
+            }?.trim().orEmpty()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("SairaAiClient", "image analysis failed", e)
+            ""
+        }
+    }
+
+    private const val VISION_BUDGET_MS = 45_000L
+
     suspend fun resetCooldowns() {
         router.resetCooldowns()
     }

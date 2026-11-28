@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.flow
  */
 data class AiChatMessage(val role: String, val text: String)
 
+/** A picture sent to a vision-capable model: JPEG/PNG bytes as base64 (no line breaks). */
+class AiImage(val mimeType: String, val base64: String)
+
 /** Raised when a provider says its free quota / rate limit is used up. */
 class AiQuotaExhaustedException(message: String? = null, cause: Throwable? = null) : Exception(message, cause)
 

@@ -39,9 +39,28 @@ class PooledGeminiProvider(
         systemInstruction: String,
         history: List<AiChatMessage>,
         prompt: String
+    ): String = generateInternal(systemInstruction, history, prompt, emptyList())
+
+    /**
+     * Same model/key ladder as [generate], with pictures attached to the last user turn
+     * (all CHAT_MODELS are multimodal). Throws when no key/model could answer.
+     */
+    suspend fun generateWithImages(
+        systemInstruction: String,
+        history: List<AiChatMessage>,
+        prompt: String,
+        images: List<AiImage>
+    ): String = generateInternal(systemInstruction, history, prompt, images)
+
+    private suspend fun generateInternal(
+        systemInstruction: String,
+        history: List<AiChatMessage>,
+        prompt: String,
+        images: List<AiImage>
     ): String = withContext(Dispatchers.IO) {
         val keys = pool.availableKeys()
         if (keys.isEmpty()) {
+            if (images.isNotEmpty()) throw AiUnavailableException("no Gemini keys for image analysis")
             return@withContext delegate.generate(systemInstruction, history, prompt)
         }
         val startedAt = System.currentTimeMillis()
@@ -57,7 +76,7 @@ class PooledGeminiProvider(
                 tried++
                 attempts++
                 val outcome = try {
-                    tryKey(key, model, systemInstruction, history, prompt)
+                    tryKey(key, model, systemInstruction, history, prompt, images)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
@@ -84,6 +103,7 @@ class PooledGeminiProvider(
                 }
             }
         }
+        if (images.isNotEmpty()) throw AiUnavailableException("image analysis: every model/key is busy")
         delegate.generate(systemInstruction, history, prompt)
     }
 
@@ -171,18 +191,30 @@ class PooledGeminiProvider(
     private fun requestJson(
         systemInstruction: String,
         history: List<AiChatMessage>,
-        prompt: String
+        prompt: String,
+        images: List<AiImage> = emptyList()
     ): String = JSONObject().apply {
         put("system_instruction", JSONObject().put("parts", JSONArray().put(
             JSONObject().put("text", systemInstruction)
         )))
         val contents = JSONArray()
         for (m in history) contents.put(contentJson(m))
-        contents.put(contentJson(AiChatMessage("user", prompt)))
+        val last = contentJson(AiChatMessage("user", prompt))
+        if (images.isNotEmpty()) {
+            val parts = JSONArray()
+            for (img in images) {
+                parts.put(JSONObject().put("inline_data", JSONObject().put("mime_type", img.mimeType).put("data", img.base64)))
+            }
+            parts.put(JSONObject().put("text", prompt))
+            last.put("parts", parts)
+        }
+        contents.put(last)
         put("contents", contents)
         put(
             "generationConfig",
-            JSONObject().put("maxOutputTokens", 1024).put("temperature", 0.7)
+            // Pictures (prescriptions, documents…) need room for a full, careful analysis.
+            JSONObject().put("maxOutputTokens", if (images.isNotEmpty()) 2048 else 1024)
+                .put("temperature", if (images.isNotEmpty()) 0.3 else 0.7)
         )
     }.toString()
 
@@ -191,10 +223,14 @@ class PooledGeminiProvider(
         model: String,
         systemInstruction: String,
         history: List<AiChatMessage>,
-        prompt: String
+        prompt: String,
+        images: List<AiImage> = emptyList()
     ): Attempt {
-        val body = requestJson(systemInstruction, history, prompt)
-        val (status, raw) = post("$BASE/$model:generateContent?key=$key", body)
+        val body = requestJson(systemInstruction, history, prompt, images)
+        val (status, raw) = post(
+            "$BASE/$model:generateContent?key=$key", body,
+            if (images.isNotEmpty()) VISION_READ_TIMEOUT_MS else GENERATE_READ_TIMEOUT_MS
+        )
         classify(status, raw)?.let { return it }
         val text = parseText(raw)
             ?: return Attempt.Other(RuntimeException("No candidates in reply (status=$status)"))
@@ -288,8 +324,8 @@ class PooledGeminiProvider(
         (if (trim) sb.toString().trim() else sb.toString()).ifEmpty { null }
     }.getOrNull()
 
-    private fun post(url: String, body: String): Pair<Int, String> {
-        val conn = open(url, body, GENERATE_READ_TIMEOUT_MS)
+    private fun post(url: String, body: String, readTimeoutMs: Int = GENERATE_READ_TIMEOUT_MS): Pair<Int, String> {
+        val conn = open(url, body, readTimeoutMs)
         return try {
             val code = conn.responseCode
             val text = if (code in 200..299) {
@@ -324,6 +360,7 @@ class PooledGeminiProvider(
         private const val POOL_BUDGET_MS = 30_000L
         private const val MODEL_SWITCH_AFTER_TRANSIENTS = 2
         private const val GENERATE_READ_TIMEOUT_MS = 12_000
+        private const val VISION_READ_TIMEOUT_MS = 30_000
         private const val STREAM_READ_TIMEOUT_MS = 15_000
     }
 }

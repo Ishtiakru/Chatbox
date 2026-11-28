@@ -317,7 +317,37 @@ class SairaNotificationListenerService : NotificationListenerService() {
                 }
 
                 val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                val finalReply = if (!isContinuation) {
+                // Photos: Saira really looks at them (from the notification) before answering.
+                val photos = loadNotificationPhotos(payload, extras)
+                val photoSent = photos.isNotEmpty() || payload.imageUris.isNotEmpty() ||
+                    SairaPrompts.looksLikePhotoMessage(normalizedIncoming)
+                val photoReply = if (photos.isNotEmpty() && match.rule.useAiReply &&
+                    NetworkMonitor.isCurrentlyConnected(applicationContext)
+                ) {
+                    configureAppCheck(applicationContext, null)
+                    val prompt = SairaPrompts.buildNotificationAutoReplyPrompt(
+                        senderName = match.normalizedSender,
+                        platformLabel = match.platform.label,
+                        incomingMessage = normalizedIncoming,
+                        taughtGuidance = match.rule.taughtReplyGuidance,
+                        locationText = locationSnapshot?.toShareText(),
+                        chatboxUsers = chatboxUsers,
+                        hourOfDay = hour,
+                        isContinuation = true
+                    ) + SairaPrompts.visionGuidance
+                    SairaAiClient.completeWithImages(SairaPrompts.autoReplySystemInstruction, historySnapshot, prompt, photos)
+                        .takeUnless { AiSafeResponses.isSafetyMessage(it) }.orEmpty()
+                } else ""
+                val finalReply = if (photoReply.isNotEmpty()) {
+                    if (!isContinuation) {
+                        SairaNotificationMatcher.buildFirstBoxReply(
+                            senderName = match.normalizedSender,
+                            rule = match.rule,
+                            locationSnapshot = locationSnapshot,
+                            hourOfDay = hour
+                        ) + "\n\n" + photoReply
+                    } else photoReply
+                } else if (!isContinuation) {
                     // Turn 1: Always send the owner's designated box message as the first SMS
                     SairaNotificationMatcher.buildFirstBoxReply(
                         senderName = match.normalizedSender,
@@ -343,7 +373,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                             chatboxUsers = chatboxUsers,
                             hourOfDay = hour,
                             isContinuation = true
-                        )
+                        ) + (if (photoSent) SairaPrompts.photoUnavailableNote else "")
                         // Hard cap: a slow/blocked AI call must never hold this contact's lock.
                         withTimeoutOrNull(AI_REPLY_TIMEOUT_MS) {
                             requestAiAutoReplyWithRetry(historySnapshot, prompt)
@@ -424,6 +454,26 @@ class SairaNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    /**
+     * Pictures of the new messages: MessagingStyle data uris (WhatsApp/Messenger photo messages)
+     * or a BigPicture. Unreadable ones are skipped — then Saira says she couldn't open it.
+     */
+    private suspend fun loadNotificationPhotos(payload: IncomingPayload, extras: Bundle): List<com.example.data.ai.AiImage> {
+        val out = mutableListOf<com.example.data.ai.AiImage>()
+        for (uri in payload.imageUris.takeLast(MAX_PHOTOS)) {
+            com.example.util.AiImagePrep.fromUri(applicationContext, uri)?.let { out += it }
+        }
+        if (out.isEmpty()) {
+            @Suppress("DEPRECATION")
+            val big = runCatching { extras.getParcelable<android.graphics.Bitmap>(Notification.EXTRA_PICTURE) }.getOrNull()
+            big?.let { com.example.util.AiImagePrep.fromBitmap(it) }?.let { out += it }
+        }
+        if (payload.imageUris.isNotEmpty()) {
+            recordStatus(applicationContext, "ছবি ${payload.imageUris.size}টা · Saira দেখতে পেরেছে ${out.size}টা")
+        }
+        return out
+    }
+
     private suspend fun requestAiAutoReplyWithRetry(
         history: List<AiChatMessage>,
         prompt: String
@@ -478,7 +528,12 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
             val parsed = rawMessages.mapNotNull { item ->
                 val bundle = item as? Bundle ?: return@mapNotNull null
+                // Photo messages carry the picture as a data uri (+ "image/…" mime type).
+                val dataMime = bundle.getString("type").orEmpty()
+                @Suppress("DEPRECATION")
+                val dataUri = if (dataMime.startsWith("image/")) bundle.getParcelable<android.net.Uri>("uri") else null
                 val msgText = bundle.getCharSequence("text")?.toString()?.trim().orEmpty()
+                    .ifEmpty { if (dataUri != null) "📷 Photo" else "" }
                 if (msgText.isEmpty()) return@mapNotNull null
                 val rawTimeMs = bundle.getLong("time", 0L)
                 val timeMs = if (rawTimeMs > 0L) rawTimeMs else notificationWhenMs
@@ -503,7 +558,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     senderName.equals("You", ignoreCase = true) ||
                     senderName.equals("Me", ignoreCase = true) ||
                     senderName == "আপনি"
-                ParsedMessageEntry(text = msgText, timeMs = timeMs, isSelf = isSelf)
+                ParsedMessageEntry(text = msgText, timeMs = timeMs, isSelf = isSelf, imageUri = dataUri)
             }
             if (parsed.isNotEmpty()) {
                 // If WhatsApp/Messenger re-posted showing our own just-sent reply as the newest message, skip
@@ -520,7 +575,8 @@ class SairaNotificationListenerService : NotificationListenerService() {
                     val latestTimeMs = chronological.last().timeMs.takeIf { it > 0L } ?: notificationWhenMs
                     return IncomingPayload(
                         text = combinedText,
-                        messageTimeMs = latestTimeMs
+                        messageTimeMs = latestTimeMs,
+                        imageUris = chronological.mapNotNull { it.imageUri }.takeLast(MAX_PHOTOS)
                     )
                 }
             }
@@ -661,13 +717,16 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     private data class IncomingPayload(
         val text: String,
-        val messageTimeMs: Long
+        val messageTimeMs: Long,
+        /** Photos attached to the new incoming messages (MessagingStyle data uris). */
+        val imageUris: List<android.net.Uri> = emptyList()
     )
 
     private data class ParsedMessageEntry(
         val text: String,
         val timeMs: Long,
-        val isSelf: Boolean
+        val isSelf: Boolean,
+        val imageUri: android.net.Uri? = null
     )
 
     private data class ContactReplyState(
@@ -684,6 +743,7 @@ class SairaNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "SairaNotifListener"
+        private const val MAX_PHOTOS = 3
 
         @Volatile
         private var connected: SairaNotificationListenerService? = null

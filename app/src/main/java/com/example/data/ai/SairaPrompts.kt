@@ -82,6 +82,41 @@ object SairaPrompts {
             "If the Chatbox user list is empty, do not mention or reference it at all. " +
             "Write your name only as \"Saira\" in English letters, never in Bengali script and never twice."
 
+    /**
+     * Appended to the prompt when the photo(s) are attached: Saira must really LOOK and give an
+     * accurate, useful analysis — never generic praise.
+     */
+    val visionGuidance: String = """
+
+        [PHOTO ATTACHED — look at it carefully before answering.]
+        1. First work out exactly what it is (prescription, medicine, report/test result, document, bill, screenshot, product, food, place, person, damage/problem, math/homework, etc.).
+        2. Read every visible word and number (Bengali and English, handwriting too) and use them.
+        3. Then help with it accurately: explain what it shows and what it means, and give the practical solution or next step the sender needs.
+           - Prescription / medicine: list each medicine you can read with its dose/timing, what it is commonly used for, and key cautions; say to follow the doctor's advice and not to change doses without asking the doctor.
+           - Report / test: point out abnormal values and what they usually indicate, and suggest seeing a doctor when needed.
+           - Problem / error / damage: say what is wrong and how to fix it step by step.
+        4. Never invent anything you cannot actually see. If part is blurry or unreadable, say which part.
+        5. Never reply with generic praise like "nice photo / দারুণ হয়েছে" unless it truly is just a casual photo.
+        6. Reply in the sender's language (Bengali, Banglish or English). Be clear; use short bullets for details.
+    """.trimIndent()
+
+    /** Appended when a photo was sent but could not be opened — Saira must not pretend. */
+    val photoUnavailableNote: String = """
+
+        [The sender sent a PHOTO, but you could NOT see it.]
+        Do NOT say you saw it and do NOT praise or describe it. Say briefly and politely that the photo could not be opened right now and ask them to write what it is (or say the owner will check it).
+    """.trimIndent()
+
+    /** Text of a chat message that is only a photo placeholder ("📷 Photo", "ছবি", "sent an image"…). */
+    fun looksLikePhotoMessage(text: String): Boolean {
+        val t = text.trim().lowercase()
+        if (t.isEmpty()) return false
+        return t.startsWith("📷") || t.startsWith("🖼") || t == "photo" || t == "image" || t == "ছবি" ||
+            t.contains("sent a photo") || t.contains("sent an image") || t.contains("sent a picture") ||
+            t.contains("sent photos") || t.contains("ছবি পাঠিয়েছে") || t.contains("একটি ছবি") ||
+            Regex("""^\d+\s+(photos|images|ছবি)""").containsMatchIn(t)
+    }
+
     fun buildTurnPrompt(
         question: String,
         isFirstTurn: Boolean,
