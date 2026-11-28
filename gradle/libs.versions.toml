@@ -1,4 +1,5 @@
 [versions]
+okhttp = "4.12.0"
 agp = "9.1.1"
 kotlin = "2.2.10"
 coreKtx = "1.16.0"
@@ -19,6 +20,7 @@ androidxTestCore = "1.6.1"
 webrtc = "150.7871.09"
 
 [libraries]
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycleRuntimeKtx" }
