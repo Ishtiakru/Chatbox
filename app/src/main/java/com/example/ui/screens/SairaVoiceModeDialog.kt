@@ -116,6 +116,7 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
     var previewBusy by remember { mutableStateOf(false) }
     var confirmFirst by remember { mutableStateOf(SairaVoiceMode.confirmFirst(context)) }
     var ownerOnly by remember { mutableStateOf(SairaVoiceMode.ownerOnly(context)) }
+    var liveMode by remember { mutableStateOf(SairaVoiceMode.live(context)) }
     fun localPreview() {
         if (!ttsReady) { voiceNote = "কণ্ঠ-ইঞ্জিন এখনো তৈরি হয়নি, একটু পরে চাপুন।"; return }
         val bn = SairaTtsVoice.apply(previewTts, bengali = true)
@@ -438,6 +439,23 @@ fun SairaVoiceModeDialog(onDismiss: () -> Unit) {
                             modifier = Modifier.testTag("saira_voice_mode_switch")
                         )
                     }
+                }
+
+                if (!ownerOnly) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("দ্রুত মোড (Gemini Live)", style = MaterialTheme.typography.bodyMedium, color = colors.ink)
+                        Text(
+                            if (liveMode) "চালু — কথা বলার সময়েই শোনে, প্রায় ১ সেকেন্ডে নিজের কণ্ঠে উত্তর দেয়"
+                            else "বন্ধ — পুরো কথা রেকর্ড করে তারপর বোঝে (ধীর)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.inkSubtle
+                        )
+                    }
+                    Switch(
+                        checked = liveMode,
+                        onCheckedChange = { liveMode = it; SairaVoiceMode.setLive(context, it) },
+                        modifier = Modifier.testTag("saira_voice_live_switch")
+                    )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {

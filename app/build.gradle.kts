@@ -138,6 +138,7 @@ dependencies {
     implementation(libs.googleid)
     implementation(libs.coil.compose)
     implementation(libs.webrtc.android)
+    implementation(libs.okhttp)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

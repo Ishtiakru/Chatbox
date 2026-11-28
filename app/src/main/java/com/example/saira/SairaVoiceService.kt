@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Voice-mode settings & live status (shared by the service and the Saira screen). */
@@ -54,6 +55,7 @@ object SairaVoiceMode {
     private const val KEY_SENS = "sensitivity"
     private const val KEY_CONFIRM = "confirm_first"
     private const val KEY_OWNER_ONLY = "owner_only"
+    private const val KEY_LIVE = "live"
 
     private val _status = MutableStateFlow("")
     val status: StateFlow<String> = _status
@@ -84,6 +86,10 @@ object SairaVoiceMode {
      */
     fun ownerOnly(c: Context) = prefs(c).getBoolean(KEY_OWNER_ONLY, false)
     fun setOwnerOnly(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_OWNER_ONLY, v).apply()
+
+    /** Real-time Gemini Live voice (fast); off = the classic record → transcribe → speak pipeline. */
+    fun live(c: Context) = prefs(c).getBoolean(KEY_LIVE, true)
+    fun setLive(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_LIVE, v).apply()
 
     fun canStart(c: Context): Boolean =
         (!ownerOnly(c) || voiceprint(c) != null) &&
@@ -148,12 +154,37 @@ class SairaVoiceService : Service() {
     @Volatile private var speakerLock: FloatArray? = null
     private val history = ArrayDeque<AiChatMessage>()
 
+    // ------------------------------------------------------------------ Gemini Live state
+    private lateinit var liveVoice: SairaLiveVoice
+    private lateinit var player: SairaLivePlayer
+    @Volatile private var liveSession: SairaLiveVoice.Session? = null
+    @Volatile private var liveConnecting = false
+    @Volatile private var liveFailedUntil = 0L
+    @Volatile private var lastLiveActivity = 0L
+    /** The last ~2 s of microphone frames, so the start of the sentence survives the ~0.3 s connect. */
+    private val livePre = ArrayDeque<ShortArray>()
+    private val liveBatch = ShortArray(LIVE_BATCH)
+    private var liveBatchN = 0
+    private val turnLock = Any()
+    private val turnText = StringBuilder()
+    private val turnSaid = StringBuilder()
+    private val turnAudio = ArrayList<ByteArray>()
+    @Volatile private var turnOpen = false
+    /** null = not decided yet (audio is held back), true = addressed to Saira (play), false = ignore. */
+    private var turnDecision: Boolean? = null
+    private var turnFollowUp = false
+    private var turnLocal = false
+    private var turnActed = false
+    private var turnPlayed = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         brain = SairaVoiceBrain(this)
         cloudVoice = SairaCloudVoice(this)
+        liveVoice = SairaLiveVoice(this)
+        player = SairaLivePlayer()
         tone = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 70) }.getOrNull()
         tts = TextToSpeech(applicationContext) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
@@ -209,6 +240,8 @@ class SairaVoiceService : Service() {
         SairaVoiceMode.setRunning(false)
         scope.cancel()
         segments.close()
+        runCatching { liveSession?.close() }
+        runCatching { player.release() }
         runCatching { tts?.stop(); tts?.shutdown() }
         runCatching { track?.release() }
         runCatching { tone?.release() }
@@ -246,6 +279,7 @@ class SairaVoiceService : Service() {
                 var lastModeCheck = 0L
                 var lastWarm = 0L
                 var paused = false
+                var liveMode = !SairaVoiceMode.ownerOnly(this) && SairaVoiceMode.live(this)
                 while (scope.isActive) {
                     val n = rec.read(buf, 0, frame)
                     if (n <= 0) { kotlinx.coroutines.delay(50); continue }
@@ -254,14 +288,22 @@ class SairaVoiceService : Service() {
                         lastModeCheck = now
                         // Pause while any call is using the mic (phone, WhatsApp, Chatbox calls).
                         paused = audioManager.mode != AudioManager.MODE_NORMAL
+                        liveMode = !SairaVoiceMode.ownerOnly(this) && SairaVoiceMode.live(this)
+                        if (paused) closeLive()
                     }
                     if (paused || speaking.get() || now < mutedUntil) {
                         vad.reset()
+                        livePre.clear()
                         continue
                     }
-                    val done = vad.push(buf.copyOf(n))
-                    if (vad.justStarted && now - lastWarm > 25_000) { lastWarm = now; brain.warmUp() }
-                    if (done != null) segments.trySend(done)
+                    val frame = buf.copyOf(n)
+                    val done = vad.push(frame)
+                    val live = liveMode && now >= liveFailedUntil
+                    if (vad.justStarted && now - lastWarm > 25_000 && !live) { lastWarm = now; brain.warmUp() }
+                    if (live) {
+                        // (if Live can't connect, liveFailedUntil flips this sentence to the classic pipeline)
+                        liveFrame(frame, vad.isInSpeech, now)
+                    } else if (done != null) segments.trySend(done)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "listen loop error", e)
@@ -270,6 +312,218 @@ class SairaVoiceService : Service() {
                 runCatching { rec.stop() }
                 rec.release()
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ Gemini Live
+    private fun liveFrame(frame: ShortArray, inSpeech: Boolean, now: Long) {
+        if (inSpeech) lastLiveActivity = now
+        val s = liveSession
+        if (s == null || !s.open) {
+            if (s != null) liveSession = null
+            livePre.addLast(frame)
+            while (livePre.size > LIVE_PRE_FRAMES) livePre.removeFirst()
+            if (inSpeech && !liveConnecting) connectLive()
+            return
+        }
+        while (livePre.isNotEmpty()) queueLive(s, livePre.removeFirst())
+        queueLive(s, frame)
+        if (now - lastLiveActivity > LIVE_IDLE_MS && !turnOpen) {
+            closeLive()
+            SairaVoiceMode.setStatus("শুনছি — যে কেউ \"Saira, …\" বললেই সাড়া দেব")
+        }
+    }
+
+    private fun queueLive(s: SairaLiveVoice.Session, frame: ShortArray) {
+        var off = 0
+        while (off < frame.size) {
+            val n = minOf(frame.size - off, LIVE_BATCH - liveBatchN)
+            frame.copyInto(liveBatch, liveBatchN, off, off + n)
+            liveBatchN += n
+            off += n
+            if (liveBatchN == LIVE_BATCH) {
+                runCatching { s.sendAudio(liveBatch, liveBatchN) }
+                liveBatchN = 0
+            }
+        }
+    }
+
+    private fun connectLive() {
+        liveConnecting = true
+        lastLiveActivity = System.currentTimeMillis()
+        scope.launch {
+            val s = runCatching { liveVoice.connect(liveListener) }.getOrNull()
+            if (s == null) {
+                liveFailedUntil = System.currentTimeMillis() + 90_000
+                SairaVoiceMode.setStatus("দ্রুত (Live) মোডে যুক্ত হতে পারিনি — সাধারণ মোডে শুনছি")
+            } else {
+                lastLiveActivity = System.currentTimeMillis()
+                liveSession = s
+            }
+            liveConnecting = false
+        }
+    }
+
+    private fun closeLive() {
+        val s = liveSession ?: return
+        liveSession = null
+        liveBatchN = 0
+        runCatching { s.close() }
+    }
+
+    private fun startTurnLocked() {
+        val now = System.currentTimeMillis()
+        turnOpen = true
+        turnText.setLength(0)
+        turnSaid.setLength(0)
+        turnAudio.clear()
+        turnFollowUp = now < followUpUntil
+        // Saira asked something ("কাকে?", "হ্যাঁ / না?") — the answer is handled on the phone, not by the model.
+        turnLocal = (pending?.let { now < it.until } == true) ||
+            (needsWho != null && now < needsWhoUntil) || (needsWhat != null && now < needsWhatUntil)
+        turnDecision = if (turnLocal) false else null
+        turnActed = false
+        turnPlayed = false
+    }
+
+    /** Was this turn addressed to Saira? Until we know, her answer is held back (never spoken to strangers). */
+    private fun decideLocked(final: Boolean) {
+        if (turnDecision != null) return
+        if (turnFollowUp || SairaWakeWord.extract(turnText.toString()) != null) {
+            turnDecision = true
+            for (b in turnAudio) playLocked(b)
+            turnAudio.clear()
+        } else if (final) {
+            turnDecision = false
+            turnAudio.clear()
+        }
+    }
+
+    private fun playLocked(b: ByteArray) {
+        if (!turnPlayed) {
+            turnPlayed = true
+            speaking.set(true)
+        }
+        player.write(b)
+    }
+
+    private fun liveDoneSpeaking(followUp: Boolean) {
+        if (currentUtterance == null) speaking.set(false)
+        mutedUntil = System.currentTimeMillis() + 350
+        if (followUp) followUpUntil = System.currentTimeMillis() + 8_000
+    }
+
+    private val liveListener = object : SairaLiveVoice.Listener {
+        override fun onInputText(text: String) {
+            synchronized(turnLock) {
+                if (!turnOpen) startTurnLocked()
+                turnText.append(text)
+                lastLiveActivity = System.currentTimeMillis()
+                SairaVoiceMode.setStatus("শুনছি: “${turnText.toString().trim().takeLast(60)}”")
+                decideLocked(false)
+            }
+        }
+
+        override fun onOutputText(text: String) {
+            synchronized(turnLock) {
+                turnSaid.append(text)
+                if (turnDecision == true && !turnActed) SairaVoiceMode.setStatus("Saira: ${turnSaid.toString().trim().take(90)}")
+            }
+        }
+
+        override fun onAudio(pcm24k: ByteArray) {
+            synchronized(turnLock) {
+                if (!turnOpen) startTurnLocked()
+                lastLiveActivity = System.currentTimeMillis()
+                if (turnDecision == null && turnFollowUp) turnDecision = true
+                when (turnDecision) {
+                    true -> if (!turnActed) playLocked(pcm24k)
+                    false -> Unit
+                    null -> turnAudio.add(pcm24k)
+                }
+            }
+        }
+
+        override fun onToolCall(id: String, name: String, args: JSONObject) {
+            val run: Boolean
+            val heard: String
+            val wasPlaying: Boolean
+            synchronized(turnLock) {
+                if (!turnOpen) startTurnLocked()
+                decideLocked(false)
+                run = turnDecision == true && !turnLocal && !turnActed
+                heard = turnText.toString().trim()
+                wasPlaying = turnPlayed
+                if (run) {
+                    turnActed = true
+                    turnAudio.clear()
+                }
+            }
+            val s = liveSession
+            if (!run) {
+                runCatching { s?.sendToolResponse(id, name, "ignored: the speaker did not call Saira — stay silent") }
+                return
+            }
+            runCatching { s?.sendToolResponse(id, name, "done — say nothing") }
+            if (wasPlaying) {
+                player.stop()
+                liveDoneSpeaking(false)
+            }
+            val command = SairaWakeWord.extract(heard)?.takeIf { it.isNotBlank() } ?: heard.ifBlank { args.optString("target") }
+            SairaVoiceMode.setStatus("“$command”")
+            aiCommand = args.toString()
+            scope.launch { handleCommand(command, null, preferAi = true) }
+        }
+
+        override fun onTurnComplete() {
+            var local: String? = null
+            val played: Boolean
+            val heard: String
+            val said: String
+            val nameOnly: Boolean
+            synchronized(turnLock) {
+                if (!turnOpen) return
+                decideLocked(true)
+                heard = turnText.toString().trim()
+                said = turnSaid.toString().trim()
+                played = turnPlayed
+                if (turnLocal && heard.isNotEmpty()) local = heard
+                else if (turnDecision != true && heard.isNotEmpty() && !turnActed) {
+                    SairaVoiceMode.setStatus("শুনেছি: “${heard.take(60)}” — কিছু চাইলে \"Saira\" বলে ডাকুন")
+                }
+                nameOnly = turnDecision == true && !turnActed && !played && SairaWakeWord.extract(heard) == ""
+                turnOpen = false
+                turnAudio.clear()
+            }
+            if (played) {
+                if (heard.isNotEmpty() && said.isNotEmpty()) remember(heard, said)
+                player.finish { main.post { liveDoneSpeaking(true) } }
+            }
+            local?.let { text -> scope.launch { handleTranscript(text, null, true) } }
+            if (nameOnly) {
+                beep()
+                followUpUntil = System.currentTimeMillis() + 10_000
+                SairaVoiceMode.setStatus("জি, বলুন — শুনছি…")
+            }
+        }
+
+        override fun onInterrupted() {
+            val wasPlaying = synchronized(turnLock) { turnPlayed.also { turnPlayed = false } }
+            if (wasPlaying) {
+                player.stop()
+                main.post { liveDoneSpeaking(false) }
+            }
+        }
+
+        override fun onClosed(reason: String) {
+            Log.i(TAG, "live closed: $reason")
+            liveSession = null
+            val wasPlaying = synchronized(turnLock) {
+                turnOpen = false
+                turnAudio.clear()
+                turnPlayed
+            }
+            if (wasPlaying) player.finish { main.post { liveDoneSpeaking(true) } }
         }
     }
 
@@ -392,7 +646,7 @@ class SairaVoiceService : Service() {
         handleCommand(command, quickReply)
     }
 
-    private suspend fun handleCommand(command: String, quickReply: String? = null) {
+    private suspend fun handleCommand(command: String, quickReply: String? = null, preferAi: Boolean = false) {
         var parsed: PhoneCommand? = SairaPhoneCommandParser.parse(command)
         // Answer to "কাকে?": just a name / number completes the earlier command.
         val waiting = needsWho?.takeIf { System.currentTimeMillis() < needsWhoUntil }
@@ -411,6 +665,8 @@ class SairaVoiceService : Service() {
         }
         val fromHearing = aiCommand?.let { SairaPhoneActions.parseAiJson(it) }
         aiCommand = null
+        // Gemini Live's own phone_action call heard the whole sentence — trust it over the transcript rules.
+        if (preferAi && fromHearing != null && waiting == null && waitingText == null) parsed = fromHearing
         if (parsed == null && fromHearing != null) parsed = fromHearing
         // Gemini writes app names in English ("YouTube", "camera") — easier to find on the launcher.
         if (parsed?.action == PhoneAction.OPEN_APP && fromHearing?.action == PhoneAction.OPEN_APP &&
@@ -615,7 +871,7 @@ class SairaVoiceService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_saira)
             .setContentTitle("Saira শুনছে")
-            .setContentText("শুধু আপনার কণ্ঠে \"Saira, …\" বললে কাজ করবে")
+            .setContentText("\"Saira, …\" বলে ডাকলে সাড়া দেবে")
             .setOngoing(true)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "বন্ধ করুন", stop).build())
@@ -641,6 +897,10 @@ class SairaVoiceService : Service() {
 
         /** 1.1 s of quiet ends what the owner is saying — short pauses inside a command don't cut it. */
         private const val END_SILENCE_FRAMES = 55
+        /** Gemini Live: 100 ms audio messages, 2 s pre-roll, close the connection after 20 s of quiet. */
+        private const val LIVE_BATCH = 1600
+        private const val LIVE_PRE_FRAMES = 100
+        private const val LIVE_IDLE_MS = 20_000L
         private const val VOICE_SYSTEM =
             "You are Saira, a warm female voice assistant on the user's phone. Reply in the user's language " +
                 "(Bengali, Banglish or English) in 1–3 short spoken sentences. No markdown, lists, emojis or links."

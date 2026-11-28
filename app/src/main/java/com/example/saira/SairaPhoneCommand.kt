@@ -521,7 +521,10 @@ object SairaPhoneCommandParser {
 /** Wake word handling for voice mode: "Saira, …" at the start of what the user said. */
 object SairaWakeWord {
     private const val NAMES =
-        "saira|sayra|saera|shaira|shayra|sahira|sairah|syra|সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা"
+        "saira|sayra|saera|shaira|shayra|sahira|sairah|syra|cyra|sayira|saaira|shayira|" +
+            "সায়রা|সাইরা|সায়েরা|শায়রা|শাইরা|সাইরাহ|সাইরা|সায়রা|সায়রা|" +
+            // live transcription sometimes writes the name in Devanagari
+            "सायरा|शायरा|साइरा|सैरा|शाइरा"
 
     private val WAKE = rx(
         "^(?:(?:hey|hi|hello|ok|okay|oi|ei|ay|ji|জি|ওই|এই|হেই|হ্যালো|ওকে|শোনো|shono|acha|আচ্ছা)[ ,!.।]+){0,2}" +

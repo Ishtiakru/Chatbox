@@ -121,6 +121,11 @@ class SairaPhoneCommandTest {
         assertEquals("what time is it", SairaWakeWord.extract("what time is it Saira?"))
         assertEquals("", SairaWakeWord.extract("আচ্ছা সায়রা"))
         assertNull(SairaWakeWord.extract("সায়রার গান শুনেছি"))
+        // spellings Gemini Live's transcription actually produced
+        assertEquals("what is the capital of Japan?", SairaWakeWord.extract("Cyra, what is the capital of Japan?"))
+        assertEquals("अम्मू के कौन रहा", SairaWakeWord.extract("सायरा अम्मू के कौन रहा"))
+        assertEquals(SairaPhoneCommandParser.normalize("এখন কয়টা বাজে?"), SairaWakeWord.extract("Shaira এখন কয়টা বাজে?"))
+        assertNull(SairaWakeWord.extract("আজকে বাজারে অনেক ভিড় ছিল তাই আসতে দেরি হলো।"))
         assertEquals("8801712345678", SairaPhoneCommandParser.internationalDigits("01712345678", "bd"))
         assertEquals("8801712345678", SairaPhoneCommandParser.internationalDigits("+880 1712-345678", null))
         assertEquals(
